@@ -16,15 +16,17 @@ namespace BuhCombat
 		int32 Damage;
 		int32 Range;
 		int32 Movement;
+		int32 ReactionDelay;
 	};
 
-	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk
-	static const FMoveData MoveData[5] = {
-		{ 6, 1, 8, 10, 300, 0 },
-		{ 13, 1, 8, 24, 400, 0 },
-		{ 0, 10, 0, 0, 9999, 0 },
-		{ 3, 2, 3, 0, 9999, 0 },
-		{ 0, 5, 0, 0, 9999, 30 },
+	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away
+	static const FMoveData MoveData[6] = {
+		{ 6, 1, 8, 10, 300, 0, 9999 },
+		{ 13, 1, 8, 24, 400, 0, 9999 },
+		{ 0, 10, 0, 0, 9999, 0, 9999 },
+		{ 3, 2, 3, 0, 9999, 30, 9999 },
+		{ 0, 5, 0, 0, 9999, 30, 0 },
+		{ 0, 5, 0, 0, 9999, 30, 0 },
 	};
 
 	static const int32 Approach = 30;
@@ -40,7 +42,8 @@ namespace BuhCombat
 		case 1: return TEXT("Heavy");
 		case 2: return TEXT("Guard");
 		case 3: return TEXT("Dodge");
-		case 4: return TEXT("Walk");
+		case 4: return TEXT("Walk Toward");
+		case 5: return TEXT("Walk Away");
 		default: return TEXT("Idle");
 		}
 	}
@@ -73,10 +76,48 @@ FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 Opponent
 
 struct FBuhOutcome { int32 Fighter; int32 Type; int32 Damage; };
 
-static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeDist[2], bool bJustActive[2])
+static void EnforceMinSeparation(FBuhCombatState& S, const bool bMoved[2])
 {
+	const float D = S.Fighters[1].X - S.Fighters[0].X;
+	if (D >= 0.f)
+	{
+		if (D < static_cast<float>(BuhCombat::MinSeparation))
+		{
+			const float Deficit = static_cast<float>(BuhCombat::MinSeparation) - D;
+			if (bMoved[0] && bMoved[1])
+			{
+				const float Half = Deficit * 0.5f;
+				S.Fighters[0].X -= Half;
+				S.Fighters[1].X += Half;
+			}
+			else if (bMoved[0]) S.Fighters[0].X -= Deficit;
+			else if (bMoved[1]) S.Fighters[1].X += Deficit;
+		}
+	}
+	else
+	{
+		const float Dist = -D;
+		if (Dist < static_cast<float>(BuhCombat::MinSeparation))
+		{
+			const float Deficit = static_cast<float>(BuhCombat::MinSeparation) - Dist;
+			if (bMoved[0] && bMoved[1])
+			{
+				const float Half = Deficit * 0.5f;
+				S.Fighters[0].X += Half;
+				S.Fighters[1].X -= Half;
+			}
+			else if (bMoved[0]) S.Fighters[0].X += Deficit;
+			else if (bMoved[1]) S.Fighters[1].X -= Deficit;
+		}
+	}
+}
+
+static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeDist[2], bool bJustActive[2], int32 AttackStart[2])
+{
+	AttackStart[0] = -1;
+	AttackStart[1] = -1;
 	const float RawDist = S.Fighters[1].X - S.Fighters[0].X;
-	const float Dist = FMath::Abs(RawDist);
+	bool bMoved[2] = { false, false };
 	for (int32 i = 0; i < 2; ++i)
 	{
 		FBuhFighterState& F = S.Fighters[i];
@@ -87,14 +128,17 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 			const bool bMoveToward = (F.Action == 4);
 			const float Dir = (F.X < OpponentX) ? (bMoveToward ? 1.f : -1.f) : (bMoveToward ? -1.f : 1.f);
 			F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
+			bMoved[i] = true;
 		}
 	}
+	EnforceMinSeparation(S, bMoved);
 	S.Fighters[0].Facing = (RawDist >= 0.f) ? 1 : -1;
 	S.Fighters[1].Facing = (RawDist >= 0.f) ? -1 : 1;
 
 	for (int32 i = 0; i < 2; ++i)
 	{
 		FBuhFighterState& F = S.Fighters[i];
+		const int32 PrevPhase = F.Phase;
 		if (F.Phase == 1)
 		{
 			++F.PhaseInstants;
@@ -123,6 +167,14 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 				F.PhaseInstants = 0;
 			}
 		}
+		if (PrevPhase == 0 && F.Phase == 1 && (F.Action == 0 || F.Action == 1))
+		{
+			AttackStart[i] = i;
+		}
+		if (F.Phase == 0 && S.Fighters[1 - i].ReactedThreatFighter == i)
+		{
+			S.Fighters[1 - i].ReactedThreatFighter = -1;
+		}
 	}
 
 	const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
@@ -150,22 +202,61 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 	return Outcomes;
 }
 
+static bool IsReactableWalk(const FBuhFighterState& F)
+{
+	return (F.Action == 4 || F.Action == 5) && (F.Phase == 1 || F.Phase == 2) && BuhCombat::MoveData[F.Action].ReactionDelay <= 0;
+}
+
+static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 AttackStart[2], FBuhCombatEvent& OutEvent)
+{
+	for (int32 Threat = 0; Threat < 2; ++Threat)
+	{
+		if (AttackStart[Threat] != Threat) continue;
+		const int32 Defender = 1 - Threat;
+		FBuhFighterState& Def = S.Fighters[Defender];
+		if (!IsReactableWalk(Def)) continue;
+		if (Def.ReactedThreatFighter == Threat) continue;
+		Def.ReactedThreatFighter = Threat;
+		OutEvent.Instant = Inst;
+		OutEvent.Type = 6;
+		OutEvent.Fighter = Defender;
+		OutEvent.Damage = 0;
+		OutEvent.Detail = FString::Printf(TEXT("F%d sees F%d begin %s; reaction opportunity"),
+			Def.Team, S.Fighters[Threat].Team, BuhCombat::MoveName(S.Fighters[Threat].Action));
+		return true;
+	}
+	return false;
+}
+
 FBuhCombatResult UBuhCombatSim::ResolveCombat(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
 {
 	FBuhCombatResult Result;
 	Result.MinDistanceSeen = 1e9f;
 	FBuhCombatState S = InState;
 	float PreDodgeDist[2] = { 1e9f, 1e9f };
+	int32 PendingAttackStart[2] = { -1, -1 };
 
-	// Commit decisions only for fighters that are ready (Phase 0) at the start.
+	// Commit decisions for ready fighters, and allow a reactable walking fighter
+	// to commit a reaction even while it is already busy.
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (S.Fighters[i].Phase == 0 && Decision >= 0 && Decision < 5)
+		if (Decision < 0 || Decision >= 6) continue;
+		FBuhFighterState& F = S.Fighters[i];
+		if (F.Phase == 0)
 		{
-			S.Fighters[i].Action = Decision;
-			S.Fighters[i].Phase = 1;
-			S.Fighters[i].PhaseInstants = 0;
+			F.Action = Decision;
+			F.Phase = 1;
+			F.PhaseInstants = 0;
+			F.bCommitted = true;
+			if (Decision == 0 || Decision == 1) PendingAttackStart[i] = i;
+		}
+		else if (IsReactableWalk(F))
+		{
+			F.Action = Decision;
+			F.Phase = 1;
+			F.PhaseInstants = 0;
+			F.bCommitted = true;
 		}
 	}
 
@@ -175,7 +266,24 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(const FBuhCombatState& InState, in
 	{
 		S.Instant = inst;
 
-		const TArray<FBuhOutcome> Outcomes = StepCombatInstant(S, PreDodgeDist, bJustActive);
+		int32 AttackStart[2] = { PendingAttackStart[0], PendingAttackStart[1] };
+		PendingAttackStart[0] = -1;
+		PendingAttackStart[1] = -1;
+
+		FBuhCombatEvent ReactionEvent;
+		if (CheckReactionPause(S, inst, AttackStart, ReactionEvent))
+		{
+			Result.Events.Add(ReactionEvent);
+			Result.bReactionOpportunity = true;
+			Result.ReactionInstant = inst;
+			Result.ReactionFighter = ReactionEvent.Fighter;
+			Result.ObservedThreatAction = S.Fighters[1 - ReactionEvent.Fighter].Action;
+			Result.StoppedReason = 5;
+			Result.FinalState = S;
+			return Result;
+		}
+
+		const TArray<FBuhOutcome> Outcomes = StepCombatInstant(S, PreDodgeDist, bJustActive, AttackStart);
 		const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
 		Result.MinDistanceSeen = FMath::Min(Result.MinDistanceSeen, D);
 
@@ -255,6 +363,8 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(const FBuhCombatState& InState, in
 			S.Fighters[1].Action = BuhCombat::AI_MOVE;
 			S.Fighters[1].Phase = 1;
 			S.Fighters[1].PhaseInstants = 0;
+			S.Fighters[1].bCommitted = true;
+			if (BuhCombat::AI_MOVE == 0 || BuhCombat::AI_MOVE == 1) PendingAttackStart[1] = 1;
 			FBuhCombatEvent E;
 			E.Instant = inst;
 			E.Type = 4;
@@ -281,7 +391,10 @@ namespace BuhCombatTest
 			const FBuhFighterState& a = A.Fighters[i];
 			const FBuhFighterState& b = B.Fighters[i];
 			if (a.Health != b.Health || a.Action != b.Action || a.Phase != b.Phase ||
-				a.PhaseInstants != b.PhaseInstants || a.Team != b.Team) return false;
+				a.PhaseInstants != b.PhaseInstants || a.Team != b.Team ||
+				a.bCommitted != b.bCommitted || a.PendingAction != b.PendingAction ||
+				a.WalkDir != b.WalkDir || a.WalkRemaining != b.WalkRemaining ||
+				a.ReactedThreatFighter != b.ReactedThreatFighter) return false;
 			if (FMath::Abs(a.X - b.X) > 0.01f) return false;
 		}
 		return true;
@@ -356,6 +469,24 @@ int32 UBuhCombatSim::ChooseOpponentMove(const FBuhCombatState& State, int32 Last
 	return Move;
 }
 
+static FString TimelineSignature(const TArray<FBuhTimelineSnapshot>& T)
+{
+	FString Out;
+	for (const FBuhTimelineSnapshot& Snap : T)
+	{
+		Out += FString::Printf(TEXT("%d:%.2f/%.2f:%d/%d:%d/%d:%d/%d:%d|"),
+			Snap.Instant, Snap.PlayerX, Snap.OpponentX,
+			Snap.PlayerAction, Snap.OpponentAction,
+			Snap.PlayerPhase, Snap.OpponentPhase,
+			Snap.PlayerHealth, Snap.OpponentHealth, Snap.Events.Num());
+		for (const FBuhCombatEvent& E : Snap.Events)
+		{
+			Out += FString::Printf(TEXT("%d:%d:%d:"), E.Type, E.Fighter, E.Damage);
+		}
+	}
+	return Out;
+}
+
 void UBuhCombatSim::RunTimelineTests11to17(FString& Report, int32& Passed, int32& Failed)
 {
 	auto Check = [&Report, &Passed, &Failed](const TCHAR* Name, bool bOk, const FString& Detail)
@@ -375,6 +506,8 @@ void UBuhCombatSim::RunTimelineTests11to17(FString& Report, int32& Passed, int32
 	};
 
 	// Timeline Test 11 — branch selection produces the correct timeline for each opponent response.
+	// As with T5, distinctness is judged on snapshot content because the player's
+	// action fixes the planning-pause instant for every branch.
 	{
 		const FBuhCombatState S = MakeState(-250, 250, 100, 100, 0);
 		TArray<FBuhTimelineSnapshot> TQuick = GenerateTimeline(S, 0, 0, 30);
@@ -382,7 +515,9 @@ void UBuhCombatSim::RunTimelineTests11to17(FString& Report, int32& Passed, int32
 		TArray<FBuhTimelineSnapshot> TGuard = GenerateTimeline(S, 0, 2, 30);
 		TArray<FBuhTimelineSnapshot> TDodge = GenerateTimeline(S, 0, 3, 30);
 		const bool bAllNonEmpty = TQuick.Num() > 0 && THeavy.Num() > 0 && TGuard.Num() > 0 && TDodge.Num() > 0;
-		const bool bDistinct = (TQuick.Num() != THeavy.Num()) || (TQuick.Num() != TGuard.Num()) || (TQuick.Num() != TDodge.Num());
+		bool bDistinct = (TimelineSignature(TQuick) != TimelineSignature(THeavy)) ||
+			(TimelineSignature(TQuick) != TimelineSignature(TGuard)) ||
+			(TimelineSignature(TQuick) != TimelineSignature(TDodge));
 		Check(TEXT("T11 branch-selection-correct-timelines"), bAllNonEmpty && bDistinct,
 			FString::Printf(TEXT("quick=%d heavy=%d guard=%d dodge=%d distinct=%d"),
 				TQuick.Num(), THeavy.Num(), TGuard.Num(), TDodge.Num(), bDistinct));
@@ -544,7 +679,7 @@ FString UBuhCombatSim::RunAllTests()
 
 	// Test A — faster move misses, slower move connects.
 	{
-		const FBuhCombatState S = MakeState(-250, 250, 100, 100, 0);
+		const FBuhCombatState S = MakeState(-200, 200, 100, 100, 0);
 		const FBuhCombatResult R = ResolveCombat(S, 0, 1, 200);
 		const bool bMiss = HasEvent(R, 2, 0);
 		const bool bHit = HasEvent(R, 0, 1, 24);
@@ -555,7 +690,7 @@ FString UBuhCombatSim::RunAllTests()
 
 	// Test B — recovery punish (recovering fighter hit, no free guard).
 	{
-		const FBuhCombatState S = MakeState(-250, 250, 100, 100, 0);
+		const FBuhCombatState S = MakeState(-200, 200, 100, 100, 0);
 		const FBuhCombatResult R = ResolveCombat(S, 0, 1, 200);
 		const bool bNoGuard = !HasEvent(R, 1, 0);
 		const bool bHealth = R.FinalState.Fighters[0].Health == 76;
@@ -623,7 +758,7 @@ FString UBuhCombatSim::RunAllTests()
 
 	// Test G — multiple exchanges (state persists across planning opportunities).
 	{
-		FBuhCombatState S = MakeState(-250, 250, 100, 100, 0);
+		FBuhCombatState S = MakeState(-200, 200, 100, 100, 0);
 		int32 Exchanges = 0;
 		int32 PlayerHealthStart = 100;
 		for (int32 i = 0; i < 5; ++i)
@@ -652,7 +787,7 @@ FString UBuhCombatSim::RunAllTests()
 	// Test I — opposing approaches reach minimum separation without crossing.
 	{
 		const FBuhCombatState S = MakeState(-100, 100, 100, 100, 0);
-		const FBuhCombatResult R = ResolveCombat(S, 1, 1, 200);
+		const FBuhCombatResult R = ResolveCombat(S, 4, 4, 200);
 		const float FinalDist = FMath::Abs(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X);
 		const bool bMinSep = FMath::Abs(FinalDist - 100.f) < 1.f;
 		const bool bNoCross = (R.FinalState.Fighters[0].X < R.FinalState.Fighters[1].X);
@@ -663,7 +798,7 @@ FString UBuhCombatSim::RunAllTests()
 	// Test J — nonnegative distance at all times (never dips below minimum separation).
 	{
 		const FBuhCombatState S = MakeState(-250, 250, 100, 100, 0);
-		const FBuhCombatResult R = ResolveCombat(S, 1, 1, 200);
+		const FBuhCombatResult R = ResolveCombat(S, 4, 4, 200);
 		const bool bNonNeg = R.MinDistanceSeen >= 100.f - 1.f;
 		Check(TEXT("J nonnegative-distance-always"), bNonNeg,
 			FString::Printf(TEXT("minDistanceSeen=%.2f"), R.MinDistanceSeen));
@@ -673,8 +808,8 @@ FString UBuhCombatSim::RunAllTests()
 	{
 		const FBuhCombatState Sc = MakeState(-250, 250, 100, 100, 0);
 		const FBuhCombatState Sm = MakeState(250, -250, 100, 100, 0);
-		const FBuhCombatResult Rc = ResolveCombat(Sc, 1, 1, 200);
-		const FBuhCombatResult Rm = ResolveCombat(Sm, 1, 1, 200);
+		const FBuhCombatResult Rc = ResolveCombat(Sc, 4, 4, 200);
+		const FBuhCombatResult Rm = ResolveCombat(Sm, 4, 4, 200);
 		const bool bHealthMatch = (Rc.FinalState.Fighters[0].Health == Rm.FinalState.Fighters[0].Health) &&
 			(Rc.FinalState.Fighters[1].Health == Rm.FinalState.Fighters[1].Health);
 		const bool bPosMirrored = FMath::Abs(Rc.FinalState.Fighters[0].X + Rm.FinalState.Fighters[0].X) < 1.f &&
@@ -785,7 +920,7 @@ FString UBuhCombatSim::RunAllTests()
 	// Quick Strike (startup 6, lands during the dodge's recovery) misses and is
 	// credited as an evasion.
 	{
-		const FBuhCombatState S = MakeState(-200, 200, 100, 100, 0);
+		const FBuhCombatState S = MakeState(-140, 140, 100, 100, 0);
 		const FBuhCombatResult R = ResolveCombat(S, 3, 0, 200);
 		const bool bEvaded = HasEvent(R, 3, 1);
 		const bool bNoDamage = (R.FinalState.Fighters[0].Health == 100);
@@ -849,9 +984,10 @@ FString UBuhCombatSim::RunAllTests()
 	// instants). When the player becomes ready at instant 8 the opponent's Heavy is
 	// still in startup (Phase 1, PhaseInstants 8). The player makes a second decision
 	// and the Heavy continues from its remaining 5 instants, connecting after the
-	// dodge is over. Starting distance 400 keeps the Heavy in range after closure.
+	// dodge is over. Starting distance 300 keeps the Heavy in range after the dodge
+	// displacement.
 	{
-		const FBuhCombatState S0 = MakeState(-200, 200, 100, 100, 0);
+		const FBuhCombatState S0 = MakeState(-150, 150, 100, 100, 0);
 		const FBuhCombatResult R1 = ResolveCombat(S0, 3, 1, 200);
 		const bool bOpponentInStartup = (R1.FinalState.Fighters[1].Phase == 1)
 			&& (R1.FinalState.Fighters[1].PhaseInstants < BuhCombat::MoveData[1].Startup);
@@ -944,6 +1080,9 @@ FString UBuhCombatSim::RunAllTests()
 	}
 
 	// Timeline Test 5 — different opponent responses producing appropriate timelines.
+	// The timelines may share the same length (the player's action determines when
+	// the planning pause occurs), so distinctness is judged on the full snapshot
+	// content, not the count.
 	{
 		const FBuhCombatState S = MakeState(-250, 250, 100, 100, 0);
 		TArray<FBuhTimelineSnapshot> T0 = GenerateTimeline(S, 0, 0, 30);
@@ -951,7 +1090,9 @@ FString UBuhCombatSim::RunAllTests()
 		TArray<FBuhTimelineSnapshot> T2 = GenerateTimeline(S, 0, 2, 30);
 		TArray<FBuhTimelineSnapshot> T3 = GenerateTimeline(S, 0, 3, 30);
 		const bool bAllNonEmpty = T0.Num() > 0 && T1.Num() > 0 && T2.Num() > 0 && T3.Num() > 0;
-		const bool bDifferent = (T0.Num() != T1.Num()) || (T0.Num() != T2.Num()) || (T0.Num() != T3.Num());
+		bool bDifferent = (TimelineSignature(T0) != TimelineSignature(T1)) ||
+			(TimelineSignature(T0) != TimelineSignature(T2)) ||
+			(TimelineSignature(T0) != TimelineSignature(T3));
 		Check(TEXT("T5 different-branches-different-timelines"), bAllNonEmpty && bDifferent,
 			FString::Printf(TEXT("T0=%d T1=%d T2=%d T3=%d different=%d"), T0.Num(), T1.Num(), T2.Num(), T3.Num(), bDifferent));
 	}
@@ -1049,6 +1190,128 @@ FString UBuhCombatSim::RunAllTests()
 			bSameCount ? TEXT("identical") : TEXT("repeated run diverged"));
 	}
 
+	// Test W1 — Walking Toward moves the fighter toward the opponent.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 1, 0);
+		S.Fighters[1].Action = 1;
+		const FBuhCombatResult R = ResolveCombat(S, 4, -1, 200);
+		const bool bMoved = FMath::Abs(R.FinalState.Fighters[0].X - (-350.f)) < 1.f;
+		Check(TEXT("W1 walking-toward-moves-fighter"), bMoved,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test W2 — Walking Away moves the fighter away from the opponent.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 1, 0);
+		S.Fighters[1].Action = 1;
+		const FBuhCombatResult R = ResolveCombat(S, 5, -1, 200);
+		const bool bMoved = FMath::Abs(R.FinalState.Fighters[0].X - (-650.f)) < 1.f;
+		Check(TEXT("W2 walking-away-moves-fighter"), bMoved,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test W3 — an observable attack start while the player is Walking pauses the simulation.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		const FBuhCombatResult R = ResolveCombat(S, -1, 1, 200);
+		const bool bPaused = (R.StoppedReason == 5) && R.bReactionOpportunity &&
+			(R.ReactionInstant == 0) && (R.ReactionFighter == 0) && (R.ObservedThreatAction == 1);
+		Check(TEXT("W3 reaction-pause-on-observable-attack"), bPaused,
+			FString::Printf(TEXT("reason=%d instant=%d fighter=%d threat=%d"),
+				R.StoppedReason, R.ReactionInstant, R.ReactionFighter, R.ObservedThreatAction));
+	}
+
+	// Test W4 — a hidden pending action alone does not trigger a reaction.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		S.Fighters[1].PendingAction = 1;
+		float PreDodgeDist[2] = { 1e9f, 1e9f };
+		bool bJustActive[2] = { false, false };
+		int32 AttackStart[2] = { -1, -1 };
+		StepCombatInstant(S, PreDodgeDist, bJustActive, AttackStart);
+		const bool bNoReaction = (AttackStart[1] == -1);
+		Check(TEXT("W4 secret-selection-no-reaction"), bNoReaction,
+			FString::Printf(TEXT("attackStart=%d"), AttackStart[1]));
+	}
+
+	// Test W5 — reacting with Guard blocks a Quick Strike that becomes observable.
+	{
+		FBuhCombatState S = MakeState(-100, 100, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		const FBuhCombatResult R1 = ResolveCombat(S, -1, 0, 200);
+		const FBuhCombatResult R2 = ResolveCombat(R1.FinalState, 2, -1, 200);
+		const bool bBlocked = HasEvent(R2, 1, 1);
+		const bool bNoDamage = (R2.FinalState.Fighters[0].Health == 100);
+		Check(TEXT("W5 guard-reaction-blocks-quick"), bBlocked && bNoDamage,
+			FString::Printf(TEXT("blocked=%d playerHealth=%d"), bBlocked, R2.FinalState.Fighters[0].Health));
+	}
+
+	// Test W6 — reacting with Guard is too late against a Heavy Strike: the Guard
+	// ends before the Heavy lands, the player becomes ready, and a follow-up Walk
+	// leaves the player vulnerable to the continuing Heavy.
+	{
+		FBuhCombatState S = MakeState(-100, 100, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		const FBuhCombatResult R1 = ResolveCombat(S, -1, 1, 200);
+		const FBuhCombatResult R2 = ResolveCombat(R1.FinalState, 2, -1, 200);
+		const FBuhCombatResult R3 = ResolveCombat(R2.FinalState, 4, -1, 200);
+		const bool bHit = HasEvent(R3, 0, 1, 24);
+		const bool bDamaged = (R3.FinalState.Fighters[0].Health < 100);
+		Check(TEXT("W6 guard-reaction-too-late-vs-heavy"), bHit && bDamaged,
+			FString::Printf(TEXT("hit=%d playerHealth=%d"), bHit, R3.FinalState.Fighters[0].Health));
+	}
+
+	// Test W7 — reacting with Dodge evades an incoming Quick Strike.
+	{
+		FBuhCombatState S = MakeState(-140, 140, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		const FBuhCombatResult R1 = ResolveCombat(S, -1, 0, 200);
+		const FBuhCombatResult R2 = ResolveCombat(R1.FinalState, 3, -1, 200);
+		const bool bEvaded = HasEvent(R2, 3, 1);
+		const bool bNoDamage = (R2.FinalState.Fighters[0].Health == 100);
+		Check(TEXT("W7 dodge-reaction-evades-quick"), bEvaded && bNoDamage,
+			FString::Printf(TEXT("evaded=%d playerHealth=%d"), bEvaded, R2.FinalState.Fighters[0].Health));
+	}
+
+	// Test W8 — continuing to Walk after a reaction does not trigger the same pause again.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		const FBuhCombatResult R1 = ResolveCombat(S, -1, 1, 200);
+		const FBuhCombatResult R2 = ResolveCombat(R1.FinalState, 4, -1, 200);
+		const bool bNoRepeat = !HasEvent(R2, 6, 0);
+		const bool bPlayerReady = R2.bPlayerReady;
+		Check(TEXT("W8 continue-walk-no-repeat-pause"), bNoRepeat && bPlayerReady,
+			FString::Printf(TEXT("noRepeat=%d playerReady=%d reason=%d"), bNoRepeat, bPlayerReady, R2.StoppedReason));
+	}
+
+	// Test W9 — the timeline stops at a reaction opportunity.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 4;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		const TArray<FBuhTimelineSnapshot> Timeline = GenerateTimeline(S, -1, 1, 30);
+		const bool bNonEmpty = Timeline.Num() > 0;
+		const bool bReaction = bNonEmpty && Timeline[Timeline.Num() - 1].bReactionOpportunity;
+		Check(TEXT("W9 timeline-stops-at-reaction"), bNonEmpty && bReaction,
+			FString::Printf(TEXT("count=%d reaction=%d"), Timeline.Num(), bReaction));
+	}
+
 	RunTimelineTests11to17(Report, Passed, Failed);
 
 	Report += FString::Printf(TEXT("\nSUMMARY: %d passed, %d failed\n"), Passed, Failed);
@@ -1096,20 +1359,57 @@ int32 UBuhCombatSim::GetFinalOpponentPhaseInstants(const FBuhCombatResult& Resul
 	return Result.FinalState.Fighters[1].PhaseInstants;
 }
 
+FBuhCombatState UBuhCombatSim::GetFinalState(const FBuhCombatResult& Result)
+{
+	return Result.FinalState;
+}
+
+bool UBuhCombatSim::IsReactionOpportunity(const FBuhCombatResult& Result)
+{
+	return Result.bReactionOpportunity;
+}
+
+int32 UBuhCombatSim::GetReactionInstant(const FBuhCombatResult& Result)
+{
+	return Result.ReactionInstant;
+}
+
+int32 UBuhCombatSim::GetReactionFighter(const FBuhCombatResult& Result)
+{
+	return Result.ReactionFighter;
+}
+
+int32 UBuhCombatSim::GetObservedThreatAction(const FBuhCombatResult& Result)
+{
+	return Result.ObservedThreatAction;
+}
+
 TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
 {
 	TArray<FBuhTimelineSnapshot> Snapshots;
 	FBuhCombatState S = InState;
 	float PreDodgeDist[2] = { 1e9f, 1e9f };
+	int32 PendingAttackStart[2] = { -1, -1 };
 
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (S.Fighters[i].Phase == 0 && Decision >= 0 && Decision < 5)
+		if (Decision < 0 || Decision >= 6) continue;
+		FBuhFighterState& F = S.Fighters[i];
+		if (F.Phase == 0)
 		{
-			S.Fighters[i].Action = Decision;
-			S.Fighters[i].Phase = 1;
-			S.Fighters[i].PhaseInstants = 0;
+			F.Action = Decision;
+			F.Phase = 1;
+			F.PhaseInstants = 0;
+			F.bCommitted = true;
+			if (Decision == 0 || Decision == 1) PendingAttackStart[i] = i;
+		}
+		else if (IsReactableWalk(F))
+		{
+			F.Action = Decision;
+			F.Phase = 1;
+			F.PhaseInstants = 0;
+			F.bCommitted = true;
 		}
 	}
 
@@ -1119,7 +1419,38 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 	{
 		S.Instant = inst;
 
-		const TArray<FBuhOutcome> Outcomes = StepCombatInstant(S, PreDodgeDist, bJustActive);
+		int32 AttackStart[2] = { PendingAttackStart[0], PendingAttackStart[1] };
+		PendingAttackStart[0] = -1;
+		PendingAttackStart[1] = -1;
+
+		FBuhCombatEvent ReactionEvent;
+		if (CheckReactionPause(S, inst, AttackStart, ReactionEvent))
+		{
+			FBuhTimelineSnapshot Snap;
+			Snap.Instant = inst;
+			Snap.PlayerX = S.Fighters[0].X;
+			Snap.OpponentX = S.Fighters[1].X;
+			Snap.PlayerFacing = S.Fighters[0].Facing;
+			Snap.OpponentFacing = S.Fighters[1].Facing;
+			Snap.PlayerAction = S.Fighters[0].Action;
+			Snap.OpponentAction = S.Fighters[1].Action;
+			Snap.PlayerPhase = S.Fighters[0].Phase;
+			Snap.OpponentPhase = S.Fighters[1].Phase;
+			Snap.PlayerPhaseInstants = S.Fighters[0].PhaseInstants;
+			Snap.OpponentPhaseInstants = S.Fighters[1].PhaseInstants;
+			Snap.PlayerHealth = S.Fighters[0].Health;
+			Snap.OpponentHealth = S.Fighters[1].Health;
+			Snap.bPlayerReady = (S.Fighters[0].Phase == 0);
+			Snap.bOpponentReady = (S.Fighters[1].Phase == 0);
+			Snap.bReactionOpportunity = true;
+			Snap.ReactionFighter = ReactionEvent.Fighter;
+			Snap.ObservedThreatAction = S.Fighters[1 - ReactionEvent.Fighter].Action;
+			Snap.Events.Add(ReactionEvent);
+			Snapshots.Add(Snap);
+			break;
+		}
+
+		const TArray<FBuhOutcome> Outcomes = StepCombatInstant(S, PreDodgeDist, bJustActive, AttackStart);
 		const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
 		TArray<FBuhCombatEvent> InstEvents;
 
@@ -1210,6 +1541,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			S.Fighters[1].Action = BuhCombat::AI_MOVE;
 			S.Fighters[1].Phase = 1;
 			S.Fighters[1].PhaseInstants = 0;
+			S.Fighters[1].bCommitted = true;
+			if (BuhCombat::AI_MOVE == 0 || BuhCombat::AI_MOVE == 1) PendingAttackStart[1] = 1;
 		}
 	}
 
@@ -1429,7 +1762,7 @@ FString UBuhCombatSim::GetMoveNameText(int32 Move)
 
 FString UBuhCombatSim::GetMoveDurationText(int32 Move)
 {
-	if (Move < 0 || Move >= 4) return TEXT("Unknown");
+	if (Move < 0 || Move >= 6) return TEXT("Unknown");
 	const BuhCombat::FMoveData& M = BuhCombat::MoveData[Move];
 	return FString::Printf(TEXT("Prep %d / Active %d / Recovery %d"), M.Startup, M.Active, M.Recovery);
 }

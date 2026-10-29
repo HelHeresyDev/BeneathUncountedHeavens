@@ -19,8 +19,8 @@ set -uo pipefail
 # --- Configuration ---------------------------------------------------------
 UE_ROOT="/home/depressedtsukasa/Apps/Linux_Unreal_Engine_5.8.4"
 UE_CMD="$UE_ROOT/Engine/Binaries/Linux/UnrealEditor-Cmd"
-PROJECT="/home/depressedtsukasa/Documents/Beneath Uncounted Heavens/BeneathUncountedHeav/BeneathUncountedHeav.uproject"
-OUT_ROOT="/home/depressedtsukasa/Documents/Beneath Uncounted Heavens/tmp_opencode/unreal_test"
+PROJECT="/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/BeneathUncountedHeav.uproject"
+OUT_ROOT="/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/tmp_opencode/unreal_test"
 VRAM_USED="/sys/class/drm/card1/device/mem_info_vram_used"
 VRAM_TOTAL="/sys/class/drm/card1/device/mem_info_vram_total"
 VRAM_FREE_THRESHOLD=4294967296   # 4 GiB — below this the model is off the GPU

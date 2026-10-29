@@ -18,6 +18,9 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 Facing = 1;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") bool bCommitted = false;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 PendingAction = -1;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkDir = 0;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkRemaining = 0;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactedThreatFighter = -1;
 };
 
 USTRUCT(BlueprintType)
@@ -53,6 +56,10 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhCombatResult
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") bool bOpponentReady = false;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 StoppedReason = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float MinDistanceSeen = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") bool bReactionOpportunity = false;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactionInstant = -1;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactionFighter = -1;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ObservedThreatAction = -1;
 };
 
 USTRUCT(BlueprintType)
@@ -75,6 +82,9 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhTimelineSnapshot
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 OpponentHealth = 100;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") bool bPlayerReady = false;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") bool bOpponentReady = false;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") bool bReactionOpportunity = false;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 ReactionFighter = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 ObservedThreatAction = -1;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") TArray<FBuhCombatEvent> Events;
 };
 
@@ -121,6 +131,21 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetFinalOpponentPhaseInstants(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState GetFinalState(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static bool IsReactionOpportunity(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 GetReactionInstant(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 GetReactionFighter(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 GetObservedThreatAction(const FBuhCombatResult& Result);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
