@@ -16,6 +16,8 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 PhaseInstants = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 Team = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 Facing = 1;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") bool bCommitted = false;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 PendingAction = -1;
 };
 
 USTRUCT(BlueprintType)
