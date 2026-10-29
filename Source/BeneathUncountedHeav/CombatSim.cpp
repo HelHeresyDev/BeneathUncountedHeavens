@@ -15,14 +15,16 @@ namespace BuhCombat
 		int32 Recovery;
 		int32 Damage;
 		int32 Range;
+		int32 Movement;
 	};
 
-	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge
-	static const FMoveData MoveData[4] = {
-		{ 6, 1, 8, 10, 300 },
-		{ 13, 1, 8, 24, 400 },
-		{ 0, 10, 0, 0, 9999 },
-		{ 3, 2, 3, 0, 9999 },
+	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk
+	static const FMoveData MoveData[5] = {
+		{ 6, 1, 8, 10, 300, 0 },
+		{ 13, 1, 8, 24, 400, 0 },
+		{ 0, 10, 0, 0, 9999, 0 },
+		{ 3, 2, 3, 0, 9999, 0 },
+		{ 0, 5, 0, 0, 9999, 30 },
 	};
 
 	static const int32 Approach = 30;
@@ -38,6 +40,7 @@ namespace BuhCombat
 		case 1: return TEXT("Heavy");
 		case 2: return TEXT("Guard");
 		case 3: return TEXT("Dodge");
+		case 4: return TEXT("Walk");
 		default: return TEXT("Idle");
 		}
 	}
@@ -74,23 +77,16 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 {
 	const float RawDist = S.Fighters[1].X - S.Fighters[0].X;
 	const float Dist = FMath::Abs(RawDist);
-	const float MinSep = static_cast<float>(BuhCombat::MinSeparation);
-	if (Dist > MinSep)
-	{
-		const float Closure = FMath::Min(static_cast<float>(BuhCombat::Approach), Dist - MinSep);
-		const float Dir = (RawDist >= 0.f) ? 1.f : -1.f;
-		S.Fighters[0].X += Closure * 0.5f * Dir;
-		S.Fighters[1].X -= Closure * 0.5f * Dir;
-	}
 	for (int32 i = 0; i < 2; ++i)
 	{
 		FBuhFighterState& F = S.Fighters[i];
-		if (F.Phase == 2 && F.Action == 3)
+		if (F.Phase == 2 && BuhCombat::MoveData[F.Action].Movement > 0)
 		{
 			if (PreDodgeDist[i] > 1e8f) PreDodgeDist[i] = FMath::Abs(S.Fighters[1 - i].X - F.X);
 			const float OpponentX = S.Fighters[1 - i].X;
-			const float DodgeDir = (F.X < OpponentX) ? -1.f : 1.f;
-			F.X += (static_cast<float>(BuhCombat::DodgeDistance) / static_cast<float>(BuhCombat::MoveData[3].Active)) * DodgeDir;
+			const bool bMoveToward = (F.Action == 4);
+			const float Dir = (F.X < OpponentX) ? (bMoveToward ? 1.f : -1.f) : (bMoveToward ? -1.f : 1.f);
+			F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
 		}
 	}
 	S.Fighters[0].Facing = (RawDist >= 0.f) ? 1 : -1;
@@ -165,7 +161,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(const FBuhCombatState& InState, in
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (S.Fighters[i].Phase == 0 && Decision >= 0 && Decision < 4)
+		if (S.Fighters[i].Phase == 0 && Decision >= 0 && Decision < 5)
 		{
 			S.Fighters[i].Action = Decision;
 			S.Fighters[i].Phase = 1;
@@ -1109,7 +1105,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (S.Fighters[i].Phase == 0 && Decision >= 0 && Decision < 4)
+		if (S.Fighters[i].Phase == 0 && Decision >= 0 && Decision < 5)
 		{
 			S.Fighters[i].Action = Decision;
 			S.Fighters[i].Phase = 1;
