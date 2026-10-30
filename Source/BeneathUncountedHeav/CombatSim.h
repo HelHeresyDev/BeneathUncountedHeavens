@@ -20,6 +20,7 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 PendingAction = -1;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkDir = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkRemaining = 0;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float WalkTarget = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactedThreatFighter = -1;
 };
 
@@ -95,13 +96,16 @@ class BENEATHUNCOUNTEDHEAV_API UBuhCombatSim : public UBlueprintFunctionLibrary
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatResult ResolveCombat(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants);
+	static FBuhCombatResult ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString RunAllTests();
@@ -225,4 +229,29 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetPreviewDistanceText(int32 Instant);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 ComputeOpponentMoveWithVars(
+		bool bHasCurrentState,
+		const FBuhCombatState& CurrentState,
+		int32 PlayerX,
+		int32 OpponentX,
+		int32 PlayerHealth,
+		int32 OpponentHealth,
+		int32 Seed,
+		int32 StoredOpponentMove,
+		int32 LastPlayerMove);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatResult ExecuteMoveWithVars(
+		bool bHasCurrentState,
+		const FBuhCombatState& CurrentState,
+		int32 PlayerX,
+		int32 OpponentX,
+		int32 PlayerHealth,
+		int32 OpponentHealth,
+		int32 Seed,
+		int32 PlayerMove,
+		int32 OpponentMove,
+		float WalkTarget);
 };

@@ -19,14 +19,15 @@ namespace BuhCombat
 		int32 ReactionDelay;
 	};
 
-	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away
-	static const FMoveData MoveData[6] = {
+	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away, 6 Walk (destination)
+	static const FMoveData MoveData[7] = {
 		{ 6, 1, 8, 10, 300, 0, 9999 },
 		{ 13, 1, 8, 24, 400, 0, 9999 },
 		{ 0, 10, 0, 0, 9999, 0, 9999 },
 		{ 3, 2, 3, 0, 9999, 30, 9999 },
 		{ 0, 5, 0, 0, 9999, 30, 0 },
 		{ 0, 5, 0, 0, 9999, 30, 0 },
+		{ 0, 9999, 0, 0, 9999, 30, 0 },
 	};
 
 	static const int32 Approach = 30;
@@ -44,6 +45,7 @@ namespace BuhCombat
 		case 3: return TEXT("Dodge");
 		case 4: return TEXT("Walk Toward");
 		case 5: return TEXT("Walk Away");
+		case 6: return TEXT("Walk");
 		default: return TEXT("Idle");
 		}
 	}
@@ -56,9 +58,11 @@ FBuhCombatState UBuhCombatSim::MakeState(int32 PlayerX, int32 OpponentX, int32 P
 	S.Fighters[0].X = static_cast<float>(PlayerX);
 	S.Fighters[0].Health = PlayerHealth;
 	S.Fighters[0].Team = 0;
+	S.Fighters[0].WalkTarget = static_cast<float>(PlayerX);
 	S.Fighters[1].X = static_cast<float>(OpponentX);
 	S.Fighters[1].Health = OpponentHealth;
 	S.Fighters[1].Team = 1;
+	S.Fighters[1].WalkTarget = static_cast<float>(OpponentX);
 	S.Instant = 0;
 	S.Seed = Seed;
 	return S;
@@ -71,6 +75,13 @@ FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 Opponent
 	S.Fighters[0].PhaseInstants = PlayerPhaseInstants;
 	S.Fighters[1].Phase = OpponentPhase;
 	S.Fighters[1].PhaseInstants = OpponentPhaseInstants;
+	return S;
+}
+
+FBuhCombatState UBuhCombatSim::WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX)
+{
+	FBuhCombatState S = InState;
+	S.Fighters[0].WalkTarget = TargetX;
 	return S;
 }
 
@@ -124,11 +135,31 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 		if (F.Phase == 2 && BuhCombat::MoveData[F.Action].Movement > 0)
 		{
 			if (PreDodgeDist[i] > 1e8f) PreDodgeDist[i] = FMath::Abs(S.Fighters[1 - i].X - F.X);
-			const float OpponentX = S.Fighters[1 - i].X;
-			const bool bMoveToward = (F.Action == 4);
-			const float Dir = (F.X < OpponentX) ? (bMoveToward ? 1.f : -1.f) : (bMoveToward ? -1.f : 1.f);
-			F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
-			bMoved[i] = true;
+			if (F.Action == 6)
+			{
+				const float Remaining = F.WalkTarget - F.X;
+				if (FMath::Abs(Remaining) <= static_cast<float>(BuhCombat::MoveData[F.Action].Movement))
+				{
+					F.X = F.WalkTarget;
+					F.Phase = 3;
+					F.PhaseInstants = 0;
+					bMoved[i] = true;
+				}
+				else
+				{
+					const float Dir = (Remaining > 0.f) ? 1.f : -1.f;
+					F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
+					bMoved[i] = true;
+				}
+			}
+			else
+			{
+				const float OpponentX = S.Fighters[1 - i].X;
+				const bool bMoveToward = (F.Action == 4);
+				const float Dir = (F.X < OpponentX) ? (bMoveToward ? 1.f : -1.f) : (bMoveToward ? -1.f : 1.f);
+				F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
+				bMoved[i] = true;
+			}
 		}
 	}
 	EnforceMinSeparation(S, bMoved);
@@ -204,7 +235,7 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 
 static bool IsReactableWalk(const FBuhFighterState& F)
 {
-	return (F.Action == 4 || F.Action == 5) && (F.Phase == 1 || F.Phase == 2) && BuhCombat::MoveData[F.Action].ReactionDelay <= 0;
+	return (F.Action == 4 || F.Action == 5 || F.Action == 6) && (F.Phase == 1 || F.Phase == 2) && BuhCombat::MoveData[F.Action].ReactionDelay <= 0;
 }
 
 static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 AttackStart[2], FBuhCombatEvent& OutEvent)
@@ -228,8 +259,14 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 	return false;
 }
 
-FBuhCombatResult UBuhCombatSim::ResolveCombat(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
+FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
 {
+	if (InState.Fighters.Num() < 2)
+	{
+		FBuhCombatResult Err;
+		Err.StoppedReason = 1;
+		return Err;
+	}
 	FBuhCombatResult Result;
 	Result.MinDistanceSeen = 1e9f;
 	FBuhCombatState S = InState;
@@ -241,7 +278,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(const FBuhCombatState& InState, in
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 6) continue;
+		if (Decision < 0 || Decision >= 7) continue;
 		FBuhFighterState& F = S.Fighters[i];
 		if (F.Phase == 0)
 		{
@@ -396,6 +433,7 @@ namespace BuhCombatTest
 				a.WalkDir != b.WalkDir || a.WalkRemaining != b.WalkRemaining ||
 				a.ReactedThreatFighter != b.ReactedThreatFighter) return false;
 			if (FMath::Abs(a.X - b.X) > 0.01f) return false;
+			if (FMath::Abs(a.WalkTarget - b.WalkTarget) > 0.01f) return false;
 		}
 		return true;
 	}
@@ -1312,6 +1350,99 @@ FString UBuhCombatSim::RunAllTests()
 			FString::Printf(TEXT("count=%d reaction=%d"), Timeline.Num(), bReaction));
 	}
 
+	// Test D1 — a destination Walk moves the fighter to the target and stops (variable length).
+	// Opponent is busy Guarding (Phase 2, Action 2) so it never becomes ready to commit an
+	// attack, and the short walk completes before the guard ends.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].WalkTarget = -350.f;
+		const FBuhCombatResult R = ResolveCombat(S, 6, -1, 200);
+		const bool bReached = FMath::Abs(R.FinalState.Fighters[0].X - (-350.f)) < 1.f;
+		const bool bReady = R.bPlayerReady;
+		Check(TEXT("D1 destination-walk-reaches-target"), bReached && bReady,
+			FString::Printf(TEXT("finalX=%.2f ready=%d reason=%d"), R.FinalState.Fighters[0].X, bReady, R.StoppedReason));
+	}
+
+	// Test D2 — a destination Walk behind the fighter walks away to the target.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].WalkTarget = -650.f;
+		const FBuhCombatResult R = ResolveCombat(S, 6, -1, 200);
+		const bool bReached = FMath::Abs(R.FinalState.Fighters[0].X - (-650.f)) < 1.f;
+		Check(TEXT("D2 destination-walk-away-reaches-target"), bReached,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test D3 — a destination Walk clamps to the target and does not overshoot.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].WalkTarget = -480.f;
+		const FBuhCombatResult R = ResolveCombat(S, 6, -1, 200);
+		const bool bNoOvershoot = FMath::Abs(R.FinalState.Fighters[0].X - (-480.f)) < 1.f;
+		Check(TEXT("D3 destination-walk-no-overshoot"), bNoOvershoot,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test D4 — an unset destination (target == current position) is a no-op walk.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		const FBuhCombatResult R = ResolveCombat(S, 6, -1, 200);
+		const bool bStayed = FMath::Abs(R.FinalState.Fighters[0].X - (-500.f)) < 1.f;
+		const bool bReady = R.bPlayerReady;
+		Check(TEXT("D4 destination-walk-unset-noop"), bStayed && bReady,
+			FString::Printf(TEXT("finalX=%.2f ready=%d"), R.FinalState.Fighters[0].X, bReady));
+	}
+
+	// Test D5 — an observable attack start while the player is on a destination Walk pauses the sim.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 6;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;
+		S.Fighters[0].WalkTarget = -100.f;
+		const FBuhCombatResult R = ResolveCombat(S, -1, 1, 200);
+		const bool bPaused = (R.StoppedReason == 5) && R.bReactionOpportunity &&
+			(R.ReactionInstant == 0) && (R.ReactionFighter == 0) && (R.ObservedThreatAction == 1);
+		Check(TEXT("D5 destination-walk-reaction-pause"), bPaused,
+			FString::Printf(TEXT("reason=%d instant=%d fighter=%d threat=%d"),
+				R.StoppedReason, R.ReactionInstant, R.ReactionFighter, R.ObservedThreatAction));
+	}
+
+	// Test V1 — ResolveCombat with fewer than two fighters returns a controlled error.
+	{
+		FBuhCombatState S;
+		const FBuhCombatResult R = ResolveCombat(S, 0, 1, 200);
+		const bool bErr = (R.StoppedReason == 1);
+		Check(TEXT("V1 resolve-combat-empty-fighters-error"), bErr,
+			FString::Printf(TEXT("reason=%d"), R.StoppedReason));
+	}
+
+	// Test V2 — ExecuteMoveWithVars with fewer than two fighters returns a controlled error.
+	{
+		FBuhCombatState S;
+		const FBuhCombatResult R = ExecuteMoveWithVars(false, S, -500, 500, 100, 100, 0, 0, 1, 0.f);
+		const bool bErr = (R.StoppedReason == 1);
+		Check(TEXT("V2 execute-move-empty-fighters-error"), bErr,
+			FString::Printf(TEXT("reason=%d"), R.StoppedReason));
+	}
+
+	// Test V3 — State persistence across Walk and a subsequent action.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		const FBuhCombatResult R1 = ExecuteMoveWithVars(false, S, -500, 500, 100, 100, 0, 6, 2, -300.f);
+		const FBuhCombatState S1 = GetFinalState(R1);
+		const bool bWalked = (S1.Fighters[0].X == -300) && (S1.Fighters[0].Phase == 0);
+		const FBuhCombatResult R2 = ExecuteMoveWithVars(true, S1, static_cast<int32>(S1.Fighters[0].X), static_cast<int32>(S1.Fighters[1].X), S1.Fighters[0].Health, S1.Fighters[1].Health, 0, 0, 2, -300.f);
+		const bool bPreserved = (R2.FinalState.Fighters[0].X == -300) && (R2.FinalState.Fighters[1].X == 500);
+		Check(TEXT("V3 state-persistence-walk-then-strike"), bWalked && bPreserved,
+			FString::Printf(TEXT("walked_x=%f phase=%d preserved_player_x=%f opponent_x=%f"),
+				S1.Fighters[0].X, S1.Fighters[0].Phase, R2.FinalState.Fighters[0].X, R2.FinalState.Fighters[1].X));
+	}
+
 	RunTimelineTests11to17(Report, Passed, Failed);
 
 	Report += FString::Printf(TEXT("\nSUMMARY: %d passed, %d failed\n"), Passed, Failed);
@@ -1394,7 +1525,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 6) continue;
+		if (Decision < 0 || Decision >= 7) continue;
 		FBuhFighterState& F = S.Fighters[i];
 		if (F.Phase == 0)
 		{
@@ -1762,7 +1893,8 @@ FString UBuhCombatSim::GetMoveNameText(int32 Move)
 
 FString UBuhCombatSim::GetMoveDurationText(int32 Move)
 {
-	if (Move < 0 || Move >= 6) return TEXT("Unknown");
+	if (Move < 0 || Move >= 7) return TEXT("Unknown");
+	if (Move == 6) return TEXT("Walks to destination marker");
 	const BuhCombat::FMoveData& M = BuhCombat::MoveData[Move];
 	return FString::Printf(TEXT("Prep %d / Active %d / Recovery %d"), M.Startup, M.Active, M.Recovery);
 }
@@ -1908,3 +2040,47 @@ static FAutoConsoleCommand GBUHDebugSnapshotCmd(
 		UE_LOG(LogTemp, Display, TEXT("BUH.DebugSnapshot: Index=%d Instant=%d PlayerAction=%d OpponentAction=%d PlayerPhase=%d OpponentPhase=%d PlayerX=%.0f OpponentX=%.0f"),
 			Index, S.Instant, S.PlayerAction, S.OpponentAction, S.PlayerPhase, S.OpponentPhase, S.PlayerX, S.OpponentX);
 	}));
+
+int32 UBuhCombatSim::ComputeOpponentMoveWithVars(
+	bool bHasCurrentState,
+	const FBuhCombatState& CurrentState,
+	int32 PlayerX,
+	int32 OpponentX,
+	int32 PlayerHealth,
+	int32 OpponentHealth,
+	int32 Seed,
+	int32 StoredOpponentMove,
+	int32 LastPlayerMove)
+{
+	if (bHasCurrentState)
+	{
+		return StoredOpponentMove;
+	}
+	FBuhCombatState State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed);
+	return ChooseOpponentMove(State, LastPlayerMove, Seed);
+}
+
+FBuhCombatResult UBuhCombatSim::ExecuteMoveWithVars(
+	bool bHasCurrentState,
+	const FBuhCombatState& CurrentState,
+	int32 PlayerX,
+	int32 OpponentX,
+	int32 PlayerHealth,
+	int32 OpponentHealth,
+	int32 Seed,
+	int32 PlayerMove,
+	int32 OpponentMove,
+	float WalkTarget)
+{
+	FBuhCombatState State;
+	if (bHasCurrentState)
+	{
+		State = CurrentState;
+	}
+	else
+	{
+		State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed);
+	}
+	State = WithPlayerWalkTarget(State, WalkTarget);
+	return ResolveCombat(State, PlayerMove, OpponentMove, 200);
+}
