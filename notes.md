@@ -389,3 +389,13 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 - Headless `-nullrhi` `CaptureEditorImage` returns 1×1 placeholder; graphical capture required for visual ghost/color evidence. MCP cannot click/drag UMG sliders; graphical interaction verification requires manual steps.
 
 **Lesson:** When a predictive ghost system stops working, check (1) whether the ghost actors still exist in the level, (2) whether the slider handler actually repositions them, (3) whether the slider's value range matches the expected world-space coordinate space, and (4) whether C++ and Blueprint targeting use the same actor identification (tags vs names). A slider with range `0..1` is a fraction, not a world coordinate — always map it explicitly.
+
+### 9.13 Destination ghost rendered grey after editor relaunch (RESOLVED)
+
+**Problem:** In Walk mode the destination ghost (`BP_DestGhost`) rendered grey (default Cylinder) instead of yellow.
+
+**Cause:** `MI_GhostDest` was created in the editor's memory but **never saved to disk**. The `BP_DestGhost` ConstructionScript's `SetMaterial` referenced `/Game/.../MI_GhostDest.MI_GhostDest`; when the headless editor was relaunched (after the graphical visual test), the unsaved material instance was lost. `SetMaterial` on a non-existent material reference fails silently, so the mesh fell back to the default grey Cylinder. The material file was absent from `Content/.../Materials/` on disk.
+
+**Fix:** Recreated `MI_GhostDest` via `MaterialInstanceTools.create` (parent `M_GhostBase`), set `Color` to yellow `(1.0, 0.85, 0.2, 1.0)`, **saved it with `AssetTools.save_assets`**, recompiled `BP_DestGhost`, and saved it. Verified by placing a temporary untagged `BP_DestGhost` at center, saving the level, and doing a graphical capture — the center cylinder rendered yellow while the orange opponent and cyan player stayed correct. Removed the temp actor and re-saved the level.
+
+**Lesson:** A material instance (or any asset) created via MCP exists only in the editor's memory until `AssetTools.save_assets` persists it. An editor relaunch discards unsaved assets, and a `SetMaterial`/soft-reference to a missing asset fails **silently** (no log error), leaving the mesh on its default material. After creating any asset that another asset references, save it before relaunching the editor. To verify a material's on-screen color when the target actor is hidden by UI logic, place a temporary untagged instance of that actor in the level, save the level, and do a graphical capture.
