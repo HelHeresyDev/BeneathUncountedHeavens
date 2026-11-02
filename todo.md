@@ -1,125 +1,159 @@
-# Beneath Uncounted Heavens — Phase 9B: Repair Combat Execution
+# Beneath Uncounted Heavens — Fighter Mesh Cleanup and Editor-Visible Team Colors
 
-Review `phase9b_report.md` and the current combat C++ and Blueprint implementation.
+The fighter colors now render correctly in graphical PIE:
 
-The destination-based Walk logic passes C++ tests, but its Unreal integration is not complete. There are possible crashes, temporary test code, and broken state persistence.
+- **Team 0 (Player): Blue**
+- **Team 1 (Opponent): Red**
+- Left cylinder is the opponent; right cylinder is the player.
 
-**Priority: fix these issues before adding movement features or continuing the UI redesign.**
+However, the cylinders remain gray in the Unreal Editor before pressing Play because their materials are assigned during `BeginPlay`.
 
-## 1. Remove the temporary EventTick trigger [DONE]
+Additionally, the latest diagnostic report confirms that `BP_Fighter` contains a duplicate `StaticMeshComponent` named `BodyMesh1`, which previously caused material assignments to target the wrong mesh.
 
-Locate and remove the temporary test logic that automatically sets PlayerX to -350 and runs ResolveCombat.
+**Goal:** Make fighter colors visible both before and during PIE, permanently fix the duplicate-component problem, and preserve all existing combat functionality.
 
-It must not execute during ordinary gameplay.
+## 1. Inspect the existing BP_Fighter
 
-If the Blueprint DSL cannot safely edit the graph, use another reliable asset-editing method. Do not leave temporary gameplay-changing test logic in EventTick.
+Before modifying anything:
 
-Verify that starting PIE leaves the fighters at their intended initial positions.
+- Inspect the Blueprint's component hierarchy.
+- Identify `BodyMesh` and `BodyMesh1`.
+- Determine which component is the intended visible cylinder.
+- Identify any Blueprint graphs or C++ code referencing either component.
+- Check the placed fighter instances in `Lvl_TacticalDuel`.
+- Confirm how the `Team` variable is currently assigned.
 
-## 2. Fix ExecuteMove's struct crash [DONE]
+Do not assume that removing a duplicate component from a placed actor also removes it from the Blueprint class.
 
-Investigate why the Blueprint `Select` node loses the `FBuhCombatState.Fighters` array.
+Create a backup of the affected Blueprint asset before making structural changes.
 
-Do not merely avoid the crashing action while leaving the underlying problem unresolved.
+## 2. Permanently remove the duplicate mesh
 
-Prefer a small C++ BlueprintCallable interface that handles combat-state selection and execution reliably, rather than passing complex combat-state structs through unreliable Blueprint Select nodes.
+Remove the unnecessary `BodyMesh1` component from the `BP_Fighter` Blueprint asset itself, not merely the existing level instances.
 
-If appropriate, centralize persistent combat state in a C++ session object or component used by `BP_CombatManager`.
+Preserve the legitimate `BodyMesh` component and its:
 
-Keep this change minimal. Do not rewrite the authoritative combat resolver.
+- Cylinder StaticMesh.
+- Transform and scale.
+- Collision settings.
+- Mobility.
+- Existing gameplay references.
 
-Add input validation so malformed combat states with fewer than two fighters produce a controlled error instead of an out-of-bounds crash.
+If removing `BodyMesh1` through MCP is unsupported, use a safe Unreal Editor or editor-side C++ approach.
 
-## 3. Unify Walk and ordinary action execution [DONE]
+Do not directly manipulate the binary `.uasset` structure.
 
-Currently, `ExecuteWalk` bypasses the broken `ExecuteMove` implementation by creating a fresh state with `MakeState`.
+Verify that newly spawned `BP_Fighter` instances contain exactly one intended cylinder mesh component.
 
-This is not sufficient.
+Do not remove the component until its purpose and references have been checked.
 
-Walk, Quick Strike, Heavy Strike, Guard, and Dodge must all use the same reliable state-management and action-execution system.
+## 3. Use explicit mesh references
 
-Requirements:
+Replace ambiguous calls such as:
 
-- Start a new encounter only when appropriate.
-- Preserve authoritative state between actions.
-- Preserve fighter health and positions.
-- Preserve the current Instant and ongoing enemy action.
-- Preserve reaction opportunities.
-- Preserve the opponent's existing committed choice.
-- Do not reset the encounter when the player starts walking.
-- Do not permit two player actions simultaneously.
+`GetComponentByClass(StaticMeshComponent)`
 
-Ensure walking can be interrupted by a legitimate reaction and continued correctly.
+with an explicit reference to the intended `BodyMesh` component wherever fighter materials are assigned.
 
-## 4. Check Walk's recovery timing [DONE]
+Avoid selecting components based on enumeration order.
 
-The report lists Walk with a recovery duration of 30 Instants.
+If a direct Blueprint component reference is unavailable through MCP, use a reliable, explicitly verified component lookup rather than selecting the first StaticMeshComponent.
 
-Investigate whether this is intentional, incorrectly labeled, or a temporary placeholder.
+## 4. Assign colors in the Construction Script
 
-Our design calls for ordinary walking to be highly flexible and reactable.
+Make the correct team color visible in the level editor before PIE.
 
-Do not impose a long recovery period on stopping ordinary walking unless there is an explicit gameplay reason.
+Use the `BP_Fighter` Construction Script to assign:
 
-Check that reaching a destination does not leave the player unnecessarily locked out of actions.
+- Team 0 → `MI_Player` (blue).
+- Team 1 → `MI_Opponent` (red).
 
-## 5. Preserve the intended destination-based movement design [DONE]
+Ensure the `Team` variable is instance-editable so each placed fighter can have its team configured in the Details panel.
 
-Walk is a straight-line action toward a selected destination.
+For `Lvl_TacticalDuel`, verify:
 
-For now, the existing X-axis target is acceptable for testing the simulator.
+- PlayerFighter has Team 0.
+- OpponentFighter has Team 1.
 
-The final movement interface will allow the player to choose a direction and distance by adjusting a destination marker in the 3D arena.
+Use the existing material instances rather than creating duplicate materials.
 
-Do not implement curved routes or waypoints.
+Changing the team in the editor should update the cylinder's color without requiring PIE.
 
-Do not add Dash, Jump, or Qinggong yet.
+## 5. Preserve runtime behavior
 
-Keep action selection and action execution separate. Selecting a destination must not automatically commit the Walk action.
+Check whether `BeginPlay` still needs to assign team materials.
 
-## 6. Test actual gameplay [PARTIAL — C++ tests cover A–F; graphical PIE button-click testing requires manual desktop interaction]
+If Construction Script assignment is sufficient for the existing gameplay, avoid duplicating unnecessary initialization.
 
-After repairing the integration, verify these sequences:
+If teams can change dynamically during gameplay, provide a single reusable `ApplyTeamMaterial` function called from the appropriate lifecycle events.
 
-A. Start encounter → Quick Strike → no crash.
+Ensure that:
 
-B. Start encounter → Walk to destination → fighter moves → next action starts from the new position.
+- ResetEncounter does not restore gray materials.
+- Hit and block flashes still work.
+- Temporary visual effects restore the correct team color.
+- Ghost fighters remain visually distinguishable.
+- Material assignments do not change combat state.
 
-C. Walk → opponent begins an observable attack → simulation pauses → player selects a reaction → combat continues from the preserved state.
+Keep this change narrowly focused on mesh components and team presentation.
 
-D. Walk toward a destination beyond the opponent → fighter respects collision and separation constraints.
+## 6. Verify in the editor and PIE
 
-E. Reset → positions, health, state, and UI correctly reset.
+Perform these checks:
 
-F. Select Walk and adjust destination → no movement occurs until Execute is pressed.
+**Editor, before pressing Play**
+- Left fighter is red.
+- Right fighter is blue.
+- Changing an instance's Team value updates its color.
+- Both cylinders have the correct mesh and material slot.
+- No duplicate BodyMesh1 exists in the Blueprint class.
 
-Do not claim that the Walk button works merely because its OnClicked handler exists.
+**Graphical PIE**
+- Both fighters retain their colors.
+- The arena and camera render correctly.
+- No unwanted white player pawn appears.
+- ResetEncounter preserves team colors.
+- Combat flashes do not permanently overwrite materials.
+- Ghost prediction visuals remain functional.
 
-Use graphical PIE and manually test controls that cannot be automated.
+Use graphical Unreal for visual verification. Do not treat headless `-nullrhi` screenshots as evidence of rendered colors.
 
-## 7. Automated tests and verification [DONE]
+## 7. Regression checks
 
-Preserve and rerun the existing 56 C++ tests.
+Compile and save the affected Blueprints and level.
 
-Add targeted tests for:
+Run the existing combat automation tests.
 
-- Invalid or empty fighter arrays.
-- State persistence across Walk and subsequent actions.
-- Destination arrival without overshoot.
-- Walk cancellation at a reaction opportunity.
-- Continued opponent attack preparation.
-- Prediction/execution consistency.
-- No temporary EventTick movement.
+Ensure the changes do not affect:
 
-Compile and save modified Unreal assets.
+- Fighter positions.
+- Health.
+- Combat execution.
+- Prediction and ghost actors.
+- The hierarchical combat menu.
+- Walk state persistence.
 
-Capture graphical verification of initial positions, walking, and subsequent combat.
+Do not modify unrelated combat mechanics or UI layout.
 
-## 8. Report [DONE]
+## 8. Documentation
 
-Update `phase9b_report.md` with:
+Update `notes.md` with the verified lesson:
 
-- The cause and resolution of the Blueprint struct problem.
-- How persistent combat state is managed.
-- Confirmation the temporary trigger was removed.
-- Walk's recovery and reaction behavior
+When multiple StaticMeshComponents exist on an actor, `GetComponentByClass` may return a different component from the one visibly rendered. Prefer explicit component references for gameplay-critical operations.
+
+Also document the distinction between Construction Script material assignment and BeginPlay assignment.
+
+Keep the note brief and avoid duplicating existing documentation.
+
+## Constraints
+
+- Unreal Engine 5.8.4 on Linux.
+- Preserve existing blue/red material instances.
+- No new combat mechanics.
+- No unnecessary asset recreation.
+- No unrelated refactoring.
+- No Git commit without authorization.
+
+**Success criterion:** The two fighters are visibly red and blue in the Unreal Editor before PIE, remain correctly colored during gameplay, and newly created fighter instances no longer inherit the duplicate-mesh problem.
+
+Report any part that cannot be safely completed with the available MCP tools rather than claiming success without verification.

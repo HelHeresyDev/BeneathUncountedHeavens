@@ -4,6 +4,8 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CombatSim.generated.h"
 
+class UWidget;
+
 USTRUCT(BlueprintType)
 struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 {
@@ -89,6 +91,19 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhTimelineSnapshot
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") TArray<FBuhCombatEvent> Events;
 };
 
+USTRUCT(BlueprintType)
+struct BENEATHUNCOUNTEDHEAV_API FBuhReactionInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") bool bIsReaction = false;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 CurrentInstant = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 ObservedThreatAction = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 PlayerCurrentAction = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 ThreatRemainingPrep = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") TArray<int32> LegalActions;
+};
+
 UCLASS()
 class BENEATHUNCOUNTEDHEAV_API UBuhCombatSim : public UBlueprintFunctionLibrary
 {
@@ -96,7 +111,7 @@ class BENEATHUNCOUNTEDHEAV_API UBuhCombatSim : public UBlueprintFunctionLibrary
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatResult ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants);
+	static FBuhCombatResult ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause = false);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed);
@@ -150,6 +165,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetObservedThreatAction(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhReactionInfo GetReactionInfo(
+		bool bReactionOpportunity,
+		int32 ReactionFighter,
+		int32 ObservedThreatAction,
+		int32 ReactionInstant,
+		const FBuhCombatState& CurrentState);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
@@ -225,6 +248,11 @@ public:
 	static FString GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove, int32 CurrentInstant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetPreviewWalkTarget(float TargetX);
+
+	static float GPlayerWalkTarget;
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetTimelineLengthText(int32 CurrentInstant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
@@ -254,4 +282,16 @@ public:
 		int32 PlayerMove,
 		int32 OpponentMove,
 		float WalkTarget);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void PrintWidgetGeometry(UWidget* Widget);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetSlotLayoutOnAsset(FName WidgetName, float MinX, float MinY, float MaxX, float MaxY, float AlignX, float AlignY, float Left, float Top, float Right, float Bottom, bool bAutoSize);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void LogFighterMaterial(AActor* Fighter, int32 ExpectedTeam);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetBlueMaterialOnFighter(AActor* Fighter);
 };

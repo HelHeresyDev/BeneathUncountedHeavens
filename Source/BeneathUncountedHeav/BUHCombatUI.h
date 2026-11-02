@@ -21,4 +21,5 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	void SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant);
+
 };

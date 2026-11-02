@@ -5,6 +5,16 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "EngineUtils.h"
+#include "Components/Widget.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Misc/Parse.h"
+#include "WidgetBlueprint.h"
+#include "BaseWidgetBlueprint.h"
+#include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 namespace BuhCombat
 {
@@ -259,12 +269,12 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 	return false;
 }
 
-FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
+FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause)
 {
 	if (InState.Fighters.Num() < 2)
 	{
 		FBuhCombatResult Err;
-		Err.StoppedReason = 1;
+		Err.StoppedReason = 0;
 		return Err;
 	}
 	FBuhCombatResult Result;
@@ -308,7 +318,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 		PendingAttackStart[1] = -1;
 
 		FBuhCombatEvent ReactionEvent;
-		if (CheckReactionPause(S, inst, AttackStart, ReactionEvent))
+		if (!bSuppressReactionPause && CheckReactionPause(S, inst, AttackStart, ReactionEvent))
 		{
 			Result.Events.Add(ReactionEvent);
 			Result.bReactionOpportunity = true;
@@ -1416,7 +1426,7 @@ FString UBuhCombatSim::RunAllTests()
 	{
 		FBuhCombatState S;
 		const FBuhCombatResult R = ResolveCombat(S, 0, 1, 200);
-		const bool bErr = (R.StoppedReason == 1);
+		const bool bErr = (R.StoppedReason == 0);
 		Check(TEXT("V1 resolve-combat-empty-fighters-error"), bErr,
 			FString::Printf(TEXT("reason=%d"), R.StoppedReason));
 	}
@@ -1424,8 +1434,8 @@ FString UBuhCombatSim::RunAllTests()
 	// Test V2 — ExecuteMoveWithVars with fewer than two fighters returns a controlled error.
 	{
 		FBuhCombatState S;
-		const FBuhCombatResult R = ExecuteMoveWithVars(false, S, -500, 500, 100, 100, 0, 0, 1, 0.f);
-		const bool bErr = (R.StoppedReason == 1);
+		const FBuhCombatResult R = ExecuteMoveWithVars(true, S, -500, 500, 100, 100, 0, 0, 1, 0.f);
+		const bool bErr = (R.StoppedReason == 0);
 		Check(TEXT("V2 execute-move-empty-fighters-error"), bErr,
 			FString::Printf(TEXT("reason=%d"), R.StoppedReason));
 	}
@@ -1441,6 +1451,22 @@ FString UBuhCombatSim::RunAllTests()
 		Check(TEXT("V3 state-persistence-walk-then-strike"), bWalked && bPreserved,
 			FString::Printf(TEXT("walked_x=%f phase=%d preserved_player_x=%f opponent_x=%f"),
 				S1.Fighters[0].X, S1.Fighters[0].Phase, R2.FinalState.Fighters[0].X, R2.FinalState.Fighters[1].X));
+	}
+
+	// Test V4 — Opponent decision is preserved during a reaction and re-decided after a completed exchange.
+	{
+		FBuhCombatState S_out = MakeState(-500, 500, 100, 100, 0);
+		const int32 M_out = ComputeOpponentMoveWithVars(false, S_out, -500, 500, 100, 100, 0, -1, 2);
+		const bool bOutDefend = (M_out == 2) || (M_out == 3);
+		const int32 M_preserved = ComputeOpponentMoveWithVars(true, S_out, -500, 500, 100, 100, 0, M_out, 2);
+		const bool bPreserved = (M_preserved == M_out);
+		FBuhCombatState S_in = MakeState(100, 500, 100, 100, 0);
+		const int32 M_in = ComputeOpponentMoveWithVars(false, S_in, 100, 500, 100, 100, 0, M_out, 2);
+		const bool bInAttack = (M_in == 0) || (M_in == 1);
+		const bool bRedecided = (M_in != M_out);
+		Check(TEXT("V4 opponent-redesides-after-completed-exchange"),
+			bOutDefend && bPreserved && bInAttack && bRedecided,
+			FString::Printf(TEXT("out=%d preserved=%d in=%d"), M_out, M_preserved, M_in));
 	}
 
 	RunTimelineTests11to17(Report, Passed, Failed);
@@ -1513,6 +1539,34 @@ int32 UBuhCombatSim::GetReactionFighter(const FBuhCombatResult& Result)
 int32 UBuhCombatSim::GetObservedThreatAction(const FBuhCombatResult& Result)
 {
 	return Result.ObservedThreatAction;
+}
+
+FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
+	bool bReactionOpportunity,
+	int32 ReactionFighter,
+	int32 ObservedThreatAction,
+	int32 ReactionInstant,
+	const FBuhCombatState& CurrentState)
+{
+	FBuhReactionInfo Info;
+	if (!bReactionOpportunity || ReactionFighter != 0 || CurrentState.Fighters.Num() < 2)
+	{
+		Info.bIsReaction = false;
+		return Info;
+	}
+	Info.bIsReaction = true;
+	Info.CurrentInstant = ReactionInstant;
+	Info.ObservedThreatAction = ObservedThreatAction;
+	Info.PlayerCurrentAction = CurrentState.Fighters[0].Action;
+	const FBuhFighterState& Threat = CurrentState.Fighters[1];
+	if (Threat.Phase == 1 && Threat.Action >= 0 && Threat.Action < 7)
+	{
+		Info.ThreatRemainingPrep = FMath::Max(0, BuhCombat::MoveData[Threat.Action].Startup - Threat.PhaseInstants);
+	}
+	// The player was walking; reacting with another walk is redundant. The
+	// authoritative legal reactions are the non-walk actions.
+	Info.LegalActions = { 0, 1, 2, 3 };
+	return Info;
 }
 
 TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
@@ -1686,7 +1740,7 @@ static bool bGHasTimeline = false;
 void UBuhCombatSim::SetCurrentTimeline(const TArray<FBuhTimelineSnapshot>& InTimeline)
 {
 	GCurrentTimeline = InTimeline;
-	bGHasTimeline = true;
+	bGHasTimeline = InTimeline.Num() > 0;
 }
 
 FBuhTimelineSnapshot UBuhCombatSim::GetSnapshotAt(int32 Instant)
@@ -1899,6 +1953,13 @@ FString UBuhCombatSim::GetMoveDurationText(int32 Move)
 	return FString::Printf(TEXT("Prep %d / Active %d / Recovery %d"), M.Startup, M.Active, M.Recovery);
 }
 
+float UBuhCombatSim::GPlayerWalkTarget = -9999.f;
+
+void UBuhCombatSim::SetPreviewWalkTarget(float TargetX)
+{
+	GPlayerWalkTarget = TargetX;
+}
+
 FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove, int32 CurrentInstant)
 {
 	FBuhCombatState State;
@@ -1911,7 +1972,15 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 	{
 		State = MakeState(-500.0f, 500.0f, 100.0f, 100.0f, 0);
 	}
-	const FBuhCombatResult R = ResolveCombat(State, PlayerMove, OpponentMove, 200);
+	if (PlayerMove == 6 && GPlayerWalkTarget >= -9998.f)
+	{
+		State = WithPlayerWalkTarget(State, GPlayerWalkTarget);
+	}
+	// A Walk preview must show the walk's actual movement, not be interrupted by the
+	// reaction-pause mechanic (which fires at instant 0 for a reactable walk). Execution
+	// (ExecuteMove) still uses the default bSuppressReactionPause=false.
+	const bool bSuppress = (PlayerMove == 6);
+	const FBuhCombatResult R = ResolveCombat(State, PlayerMove, OpponentMove, 200, bSuppress);
 
 	auto PhaseName = [](int32 P) -> const TCHAR*
 	{
@@ -1926,7 +1995,14 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 	};
 
 	FString PhaseText = TEXT("no preview");
-	if (bHasTimeline() && CurrentInstant >= 0 && CurrentInstant < GCurrentTimeline.Num())
+	if (R.StoppedReason == 5)
+	{
+		const TCHAR* Who = (R.ReactionFighter == 0) ? TEXT("P") : TEXT("O");
+		const TCHAR* ThreatSide = (R.ReactionFighter == 0) ? TEXT("O") : TEXT("P");
+		PhaseText = FString::Printf(TEXT("%s can react at i%d to %s's %s"),
+			Who, R.ReactionInstant, ThreatSide, *GetMoveNameText(R.ObservedThreatAction));
+	}
+	else if (bHasTimeline() && CurrentInstant >= 0 && CurrentInstant < GCurrentTimeline.Num())
 	{
 		const FBuhTimelineSnapshot Cur = GetSnapshotAt(CurrentInstant);
 		PhaseText = FString::Printf(TEXT("P %s %d/%d, O %s %d/%d"),
@@ -1947,11 +2023,19 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 		if (EventCount >= 3) break;
 	}
 
+	// A reaction-pause return happens before MinDistanceSeen is updated, so fall back to the
+	// final-state separation rather than the 1e9 sentinel.
+	float MinD = R.MinDistanceSeen;
+	if (R.StoppedReason == 5 && R.FinalState.Fighters.Num() == 2)
+	{
+		MinD = FMath::Abs(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X);
+	}
+
 	FString Summary = FString::Printf(TEXT("%s vs %s: P %d→%d, O %d→%d, min D %.0f"),
 		*GetMoveNameText(PlayerMove), *GetMoveNameText(OpponentMove),
 		State.Fighters[0].Health, GetFinalPlayerHealth(R),
 		State.Fighters[1].Health, GetFinalOpponentHealth(R),
-		R.MinDistanceSeen);
+		MinD);
 	Summary += TEXT(" | ") + PhaseText;
 	if (!EventText.IsEmpty()) Summary += TEXT(" | ") + EventText;
 	return Summary;
@@ -1972,6 +2056,58 @@ FString UBuhCombatSim::GetPreviewDistanceText(int32 Instant)
 	const int32 Index = FMath::Clamp(Instant, 0, Len - 1);
 	const FBuhTimelineSnapshot S = GetSnapshotAt(Index);
 	return FString::Printf(TEXT("Preview D: %.0f"), FMath::Abs(S.OpponentX - S.PlayerX));
+}
+
+void UBuhCombatSim::PrintWidgetGeometry(UWidget* Widget)
+{
+	if (!Widget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GEOM null widget"));
+		return;
+	}
+	const FGeometry Geo = Widget->GetCachedGeometry();
+	UE_LOG(LogTemp, Warning,
+		TEXT("GEOM %s: AbsPos=(%.1f,%.1f) Size=(%.1f,%.1f) LocalPos=(%.1f,%.1f) Scale=%.2f Visibility=%d RenderOpacity=%.2f"),
+		*Widget->GetName(),
+		Geo.AbsolutePosition.X, Geo.AbsolutePosition.Y,
+		Geo.Size.X, Geo.Size.Y,
+		Geo.Position.X, Geo.Position.Y,
+		Geo.Scale,
+		(int32)Widget->GetVisibility(),
+		Widget->GetRenderOpacity());
+}
+
+void UBuhCombatSim::SetSlotLayoutOnAsset(FName WidgetName, float MinX, float MinY, float MaxX, float MaxY, float AlignX, float AlignY, float Left, float Top, float Right, float Bottom, bool bAutoSize)
+{
+	UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI"));
+	if (!WBP || !WBP->WidgetTree)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetSlotLayoutOnAsset: WBP_CombatUI asset or WidgetTree not found"));
+		return;
+	}
+	UWidget* Child = WBP->WidgetTree->FindWidget(WidgetName);
+	if (!Child)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetSlotLayoutOnAsset: widget %s not found in asset"), *WidgetName.ToString());
+		return;
+	}
+	UCanvasPanelSlot* Slot = Cast<UCanvasPanelSlot>(Child->Slot);
+	if (!Slot)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetSlotLayoutOnAsset: %s has no CanvasPanelSlot in asset"), *WidgetName.ToString());
+		return;
+	}
+	FAnchorData Layout;
+	Layout.Anchors.Minimum = FVector2D(MinX, MinY);
+	Layout.Anchors.Maximum = FVector2D(MaxX, MaxY);
+	Layout.Alignment = FVector2D(AlignX, AlignY);
+	Layout.Offsets = FMargin(Left, Top, Right, Bottom);
+	Slot->SetLayout(Layout);
+	Slot->SetAutoSize(bAutoSize);
+	WBP->Modify();
+	WBP->MarkPackageDirty();
+	UE_LOG(LogTemp, Display, TEXT("SetSlotLayoutOnAsset: %s anchors=(%.3f,%.3f)-(%.3f,%.3f) align=(%.2f,%.2f) offsets=(%.0f,%.0f,%.0f,%.0f) autoSize=%d [asset modified, save to persist]"),
+		*WidgetName.ToString(), MinX, MinY, MaxX, MaxY, AlignX, AlignY, Left, Top, Right, Bottom, bAutoSize ? 1 : 0);
 }
 
 static FAutoConsoleCommand GBUHSetupTimelineCmd(
@@ -2041,6 +2177,169 @@ static FAutoConsoleCommand GBUHDebugSnapshotCmd(
 			Index, S.Instant, S.PlayerAction, S.OpponentAction, S.PlayerPhase, S.OpponentPhase, S.PlayerX, S.OpponentX);
 	}));
 
+static FAutoConsoleCommand GBUHDiagnoseUICmd(
+	TEXT("BUH.DiagnoseUI"),
+	TEXT("BUH.DiagnoseUI - print cached geometry for the key WBP_CombatUI widgets"),
+	FConsoleCommandWithArgsDelegate::CreateStatic([](const TArray<FString>& Args)
+	{
+		UWorld* World = GEngine->GetWorldContexts()[0].World();
+		if (!World)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.DiagnoseUI: no world"));
+			return;
+		}
+		bool bFound = false;
+		for (TObjectIterator<UUserWidget> It; It; ++It)
+		{
+			UUserWidget* W = *It;
+			if (!W) continue;
+			if (!W->GetWorld() || W->GetWorld() != World) continue;
+			if (!W->GetClass()->GetName().Contains(TEXT("WBP_CombatUI"))) continue;
+			bFound = true;
+			UE_LOG(LogTemp, Warning, TEXT("BUH.DiagnoseUI: found %s"), *W->GetName());
+			UWidgetTree* Tree = W->WidgetTree;
+			if (!Tree) continue;
+			const TArray<FName> Names = {
+				TEXT("RootCanvas"), TEXT("TopBar"), TEXT("TopBarContent"),
+				TEXT("BottomTimeline"), TEXT("BottomTimelineContent"),
+				TEXT("LeftPanel"), TEXT("RightPanel"),
+				TEXT("LeftPanelBG"), TEXT("RightPanelBG"), TEXT("BottomTimelineBG")
+			};
+			for (FName N : Names)
+			{
+				UWidget* Child = Tree->FindWidget(N);
+				if (Child)
+				{
+					UBuhCombatSim::PrintWidgetGeometry(Child);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("BUH.DiagnoseUI: widget %s not found"), *N.ToString());
+				}
+			}
+		}
+		if (!bFound)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.DiagnoseUI: no WBP_CombatUI widget found in world"));
+		}
+	}));
+
+static FAutoConsoleCommand GBUHSetSlotCmd(
+	TEXT("BUH.SetSlot"),
+	TEXT("BUH.SetSlot <WidgetName> <MinX> <MinY> <MaxX> <MaxY> <AlignX> <AlignY> <Left> <Top> <Right> <Bottom> <bAutoSize> - set a CanvasPanelSlot layout"),
+	FConsoleCommandWithArgsDelegate::CreateStatic([](const TArray<FString>& Args)
+	{
+		if (Args.Num() < 12)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlot needs 12 args"));
+			return;
+		}
+		const FName WidgetName(*Args[0]);
+		float MinX=0, MinY=0, MaxX=1, MaxY=1, AlignX=0, AlignY=0, L=0, T=0, R=0, B=0;
+		MinX = (float)FCString::Atod(*Args[1]);
+		MinY = (float)FCString::Atod(*Args[2]);
+		MaxX = (float)FCString::Atod(*Args[3]);
+		MaxY = (float)FCString::Atod(*Args[4]);
+		AlignX = (float)FCString::Atod(*Args[5]);
+		AlignY = (float)FCString::Atod(*Args[6]);
+		L = (float)FCString::Atod(*Args[7]);
+		T = (float)FCString::Atod(*Args[8]);
+		R = (float)FCString::Atod(*Args[9]);
+		B = (float)FCString::Atod(*Args[10]);
+		const bool bAutoSize = (FCString::Atoi(*Args[11]) != 0);
+
+		UWorld* World = GEngine->GetWorldContexts()[0].World();
+		if (!World)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlot: no world"));
+			return;
+		}
+		for (TObjectIterator<UUserWidget> It; It; ++It)
+		{
+			UUserWidget* W = *It;
+			if (!W || !W->GetWorld() || W->GetWorld() != World) continue;
+			if (!W->GetClass()->GetName().Contains(TEXT("WBP_CombatUI"))) continue;
+			UWidgetTree* Tree = W->WidgetTree;
+			if (!Tree) continue;
+			UWidget* Child = Tree->FindWidget(WidgetName);
+			if (!Child)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlot: widget %s not found"), *WidgetName.ToString());
+				return;
+			}
+			UCanvasPanelSlot* Slot = Cast<UCanvasPanelSlot>(Child->Slot);
+			if (!Slot)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlot: %s has no CanvasPanelSlot"), *WidgetName.ToString());
+				return;
+			}
+			FAnchorData Layout;
+			Layout.Anchors.Minimum = FVector2D(MinX, MinY);
+			Layout.Anchors.Maximum = FVector2D(MaxX, MaxY);
+			Layout.Alignment = FVector2D(AlignX, AlignY);
+			Layout.Offsets = FMargin(L, T, R, B);
+			Slot->SetLayout(Layout);
+			Slot->SetAutoSize(bAutoSize);
+			UE_LOG(LogTemp, Display, TEXT("BUH.SetSlot: %s anchors=(%.3f,%.3f)-(%.3f,%.3f) align=(%.2f,%.2f) offsets=(%.0f,%.0f,%.0f,%.0f) autoSize=%d"),
+				*WidgetName.ToString(), MinX, MinY, MaxX, MaxY, AlignX, AlignY, L, T, R, B, bAutoSize ? 1 : 0);
+		}
+	}));
+
+static FAutoConsoleCommand GBUHSetSlotAssetCmd(
+	TEXT("BUH.SetSlotAsset"),
+	TEXT("BUH.SetSlotAsset <WidgetName> <MinX> <MinY> <MaxX> <MaxY> <AlignX> <AlignY> <Left> <Top> <Right> <Bottom> <bAutoSize> - set a CanvasPanelSlot layout on the WBP_CombatUI asset (persistent)"),
+	FConsoleCommandWithArgsDelegate::CreateStatic([](const TArray<FString>& Args)
+	{
+		if (Args.Num() < 12)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlotAsset needs 12 args"));
+			return;
+		}
+		const FName WidgetName(*Args[0]);
+		float MinX=0, MinY=0, MaxX=1, MaxY=1, AlignX=0, AlignY=0, L=0, T=0, R=0, B=0;
+		MinX = (float)FCString::Atod(*Args[1]);
+		MinY = (float)FCString::Atod(*Args[2]);
+		MaxX = (float)FCString::Atod(*Args[3]);
+		MaxY = (float)FCString::Atod(*Args[4]);
+		AlignX = (float)FCString::Atod(*Args[5]);
+		AlignY = (float)FCString::Atod(*Args[6]);
+		L = (float)FCString::Atod(*Args[7]);
+		T = (float)FCString::Atod(*Args[8]);
+		R = (float)FCString::Atod(*Args[9]);
+		B = (float)FCString::Atod(*Args[10]);
+		const bool bAutoSize = (FCString::Atoi(*Args[11]) != 0);
+
+		UWidgetBlueprint* WBP = LoadObject<UWidgetBlueprint>(nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI"));
+		if (!WBP || !WBP->WidgetTree)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlotAsset: WBP_CombatUI asset or WidgetTree not found"));
+			return;
+		}
+		UWidget* Child = WBP->WidgetTree->FindWidget(WidgetName);
+		if (!Child)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlotAsset: widget %s not found in asset"), *WidgetName.ToString());
+			return;
+		}
+		UCanvasPanelSlot* Slot = Cast<UCanvasPanelSlot>(Child->Slot);
+		if (!Slot)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetSlotAsset: %s has no CanvasPanelSlot in asset"), *WidgetName.ToString());
+			return;
+		}
+		FAnchorData Layout;
+		Layout.Anchors.Minimum = FVector2D(MinX, MinY);
+		Layout.Anchors.Maximum = FVector2D(MaxX, MaxY);
+		Layout.Alignment = FVector2D(AlignX, AlignY);
+		Layout.Offsets = FMargin(L, T, R, B);
+		Slot->SetLayout(Layout);
+		Slot->SetAutoSize(bAutoSize);
+		WBP->Modify();
+		WBP->MarkPackageDirty();
+		UE_LOG(LogTemp, Display, TEXT("BUH.SetSlotAsset: %s anchors=(%.3f,%.3f)-(%.3f,%.3f) align=(%.2f,%.2f) offsets=(%.0f,%.0f,%.0f,%.0f) autoSize=%d [asset modified, save to persist]"),
+			*WidgetName.ToString(), MinX, MinY, MaxX, MaxY, AlignX, AlignY, L, T, R, B, bAutoSize ? 1 : 0);
+	}));
+
 int32 UBuhCombatSim::ComputeOpponentMoveWithVars(
 	bool bHasCurrentState,
 	const FBuhCombatState& CurrentState,
@@ -2081,6 +2380,115 @@ FBuhCombatResult UBuhCombatSim::ExecuteMoveWithVars(
 	{
 		State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed);
 	}
-	State = WithPlayerWalkTarget(State, WalkTarget);
+	if (State.Fighters.Num() >= 2)
+	{
+		State = WithPlayerWalkTarget(State, WalkTarget);
+	}
 	return ResolveCombat(State, PlayerMove, OpponentMove, 200);
 }
+
+void UBuhCombatSim::LogFighterMaterial(AActor* Fighter, int32 ExpectedTeam)
+{
+	if (!Fighter)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DIAG LogFighterMaterial: null actor"));
+		return;
+	}
+	UStaticMeshComponent* BodyMesh = Cast<UStaticMeshComponent>(Fighter->GetComponentByClass(UStaticMeshComponent::StaticClass()));
+	if (!BodyMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DIAG LogFighterMaterial: %s has no StaticMeshComponent"), *Fighter->GetName());
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("DIAG %s Team=%d ExpectedTeam=%d"), *Fighter->GetName(), ExpectedTeam, ExpectedTeam);
+	UE_LOG(LogTemp, Warning, TEXT("DIAG BodyMesh=%s Mesh=%s"), *BodyMesh->GetName(), BodyMesh->GetStaticMesh() ? *BodyMesh->GetStaticMesh()->GetName() : TEXT("null"));
+	UE_LOG(LogTemp, Warning, TEXT("DIAG NumMaterials=%d"), BodyMesh->GetNumMaterials());
+	UMaterialInterface* Mat0 = BodyMesh->GetMaterial(0);
+	UE_LOG(LogTemp, Warning, TEXT("DIAG Material0=%s"), Mat0 ? *Mat0->GetPathName() : TEXT("null"));
+}
+
+void UBuhCombatSim::SetBlueMaterialOnFighter(AActor* Fighter)
+{
+	if (!Fighter)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetBlueMaterialOnFighter: null actor"));
+		return;
+	}
+	UStaticMeshComponent* BodyMesh = Cast<UStaticMeshComponent>(Fighter->GetComponentByClass(UStaticMeshComponent::StaticClass()));
+	if (!BodyMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetBlueMaterialOnFighter: %s has no StaticMeshComponent"), *Fighter->GetName());
+		return;
+	}
+	UMaterialInterface* BaseMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Materials/M_FighterBase.M_FighterBase")));
+	if (!BaseMat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetBlueMaterialOnFighter: failed to load M_FighterBase"));
+		return;
+	}
+	UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMat, Fighter);
+	if (MID)
+	{
+		MID->SetVectorParameterValue(FName("Color"), FLinearColor(0.f, 0.f, 1.f, 1.f));
+		BodyMesh->SetMaterial(0, MID);
+		UE_LOG(LogTemp, Warning, TEXT("SetBlueMaterialOnFighter: set blue on %s"), *Fighter->GetName());
+	}
+}
+
+static FAutoConsoleCommand GLogFighterMatsCmd(
+	TEXT("BUH.LogFighterMats"),
+	TEXT("Log material on all BP_Fighter actors"),
+	FConsoleCommandDelegate::CreateStatic([]()
+	{
+		UWorld* World = GEngine->GetWorldFromContextObject(GEngine, EGetWorldErrorMode::LogAndReturnNull);
+		if (!World)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.LogFighterMats: no world"));
+			return;
+		}
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (Actor->GetClass()->GetName().StartsWith(TEXT("BP_Fighter")))
+			{
+				UBuhCombatSim::LogFighterMaterial(Actor, -1);
+			}
+		}
+	}));
+
+static FAutoConsoleCommand GSetBlueMatCmd(
+	TEXT("BUH.SetBlueMat"),
+	TEXT("Set dynamic blue material on all BP_Fighter actors"),
+	FConsoleCommandDelegate::CreateStatic([]()
+	{
+		UWorld* World = GEngine->GetWorldFromContextObject(GEngine, EGetWorldErrorMode::LogAndReturnNull);
+		if (!World)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetBlueMat: no world"));
+			return;
+		}
+		UMaterialInterface* BaseMat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Materials/M_FighterBase.M_FighterBase")));
+		if (!BaseMat)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.SetBlueMat: failed to load M_FighterBase"));
+			return;
+		}
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			AActor* Actor = *It;
+			if (Actor->GetClass()->GetName().StartsWith(TEXT("BP_Fighter")))
+			{
+				UStaticMeshComponent* BodyMesh = Cast<UStaticMeshComponent>(Actor->GetComponentByClass(UStaticMeshComponent::StaticClass()));
+				if (BodyMesh)
+				{
+					UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(BaseMat, Actor);
+					if (MID)
+					{
+						MID->SetVectorParameterValue(FName("Color"), FLinearColor(0.f, 0.f, 1.f, 1.f));
+						BodyMesh->SetMaterial(0, MID);
+						UE_LOG(LogTemp, Warning, TEXT("BUH.SetBlueMat: set blue on %s"), *Actor->GetName());
+					}
+				}
+			}
+		}
+	}));

@@ -176,6 +176,14 @@ except Exception as e:
     print("decode failed:",e)
 PY
 
+# --- Phase 5b: stop PIE before closing the editor ---------------------------
+# Closing the graphical editor while PIE is still running triggers
+# UEditorEngine::EndPlayMap -> UAssetEditorSubsystem::CloseAllEditorsForAsset,
+# which has been observed to segfault in FindEditorsForAssetAndSubObjects.
+log "stopping PIE before closing the editor"
+mcp "EditorToolset.EditorAppToolset" "StopPIE" '{}' > "$RUN_DIR/stop_pie.json" || true
+sleep 2
+
 # --- Phase 6: save logs + summary ------------------------------------------
 SUMMARY="$RUN_DIR/summary.txt"
 {
@@ -213,7 +221,14 @@ if kill -0 "$UE_PID" 2>/dev/null; then
   REASON="unreal_not_exited"
 fi
 
-# Determine the outcome from the screenshot.
+# Detect an unexpected Unreal crash in the run log. A segfault must fail the
+# run even if a screenshot was already saved before the crash.
+if grep -aE "Signal=11|CommonUnixCrashHandler" "$UE_LOG" 2>/dev/null; then
+  log "ERROR: unexpected Unreal crash detected in unreal.log"
+  REASON="unexpected_crash"
+fi
+
+# Determine the outcome from the screenshot and crash state.
 SHOT_BYTES=$(stat -c%s "$SHOT" 2>/dev/null || echo 0)
 if [[ -s "$SHOT" ]] && (( SHOT_BYTES > 10000 )) && [[ -z "$REASON" ]]; then
   OUTCOME=PASS; EXIT_CODE=0
@@ -221,7 +236,7 @@ if [[ -s "$SHOT" ]] && (( SHOT_BYTES > 10000 )) && [[ -z "$REASON" ]]; then
 else
   OUTCOME=FAIL; EXIT_CODE=1
   [[ -z "$REASON" ]] && REASON="bad_screenshot"
-  log "screenshot missing/too small or unreal did not exit — outcome=FAIL"
+  log "screenshot missing/too small, unreal did not exit, or unexpected crash — outcome=FAIL"
 fi
 
 # Write the structured result file the OpenCode tool call will surface.
