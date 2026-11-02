@@ -100,6 +100,9 @@ Stop with `StopPIE` (empty args `{}`). Check state with `IsPIERunning`.
 - Can read/set primitive properties (`capsuleRadius`, `capsuleHalfHeight`, `Team`, `PlayerMove`, etc.).
 - `set_properties` cannot set Blueprint member variables like `PlayerMove` on a live PIE actor (returns "could not be set").
 - `set_properties` with `SetActorHiddenInGame` / `Hidden` returns `false` (silently fails). Use `SceneTools.remove_from_scene` to delete an actor instead.
+- `set_properties` params: `instance` = `{"refPath":"<soft path>"}` (an object, not a bare string) and `values` = a **JSON string** of the property map, e.g. `"{\"Team\":1}"`. Passing `values` as a JSON object (or naming it `properties`) returns `false` with no error. `get_properties` instead takes `instance` (bare refPath string is accepted) + `properties` (array of names).
+- **CDO refPath** for `ActorTools.get_components`/`get_properties` is the no-colon form `AssetName.Default__ClassName` (e.g. `BP_Fighter.Default__BP_Fighter_C`). The colon form `BP_Fighter.BP_Fighter:Default__BP_Fighter` is rejected as "not valid Actor".
+- `describe_toolset` / `list_toolsets` are **top-level** tools: call `call_tool` with an empty `toolset_name` and the target toolset in the tool's own `toolset_name` argument. Passing a toolset as the `call_tool` `toolset_name` yields "Unknown tool describe_toolset".
 
 ### 2.7 SceneTools
 
@@ -330,8 +333,8 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 **Problem:** Both fighter cylinders rendered grey despite logs confirming `SetMaterial` was called with the correct material (`M_TestMagenta`, the C++ blue MID, `MI_Player`/`MI_Opponent`). The material was being applied but never visible.
 **Cause:** Each `BP_Fighter` instance had **two** `StaticMeshComponent`s — `BodyMesh1` (first in the component list) and `BodyMesh` (the visible rendered one). `Actor|GetComponentByClass "/Script/Engine.StaticMeshComponent"` returns the **first** match, `BodyMesh1`, so every `SetMaterial`/`SetStaticMesh` targeted the hidden duplicate while the visible `BodyMesh` kept the default grey Cylinder material.
 **Fix:** Removed `BodyMesh1` from both level instances via `ActorTools.remove_component`, saved the level via `AssetTools.save_assets {"asset_paths":[]}`. `BP_Fighter.BeginPlay` then applied `MI_Player`/`MI_Opponent` to the now-visible `BodyMesh`. Verified in graphical PIE (`20261102_091120`): left fighter red, right fighter blue.
-**Caveat:** The `BP_Fighter` **Blueprint CDO** still contains `BodyMesh1` (MCP `ActorTools.get_components`/`remove_component` reject the CDO refPath with "not valid Actor/ActorComponent"), so newly placed instances still inherit the duplicate. Only the current level is fixed. To fix permanently, remove `BodyMesh1` from the Blueprint in the UE editor.
-**Lesson:** `GetComponentByClass` returns the first matching component. If a Blueprint has duplicate components of the same class (a hidden leftover, a renamed copy, etc.), component-targeting operations silently hit the wrong one. Always list components with `ActorTools.get_components` before relying on `GetComponentByClass`, and prefer targeting a component by its unique name.
+**Caveat (CORRECTED 2026-11-02):** The earlier note that the CDO "still contains `BodyMesh1`" was based on a **wrong CDO refPath** (`BP_Fighter.BP_Fighter:Default__BP_Fighter`), which `ActorTools` rejects. The working CDO refPath is the **no-colon** form `BP_Fighter.Default__BP_Fighter_C`. With it, `ActorTools.get_components` on the CDO returns exactly `DefaultSceneRoot_GEN_VARIABLE`, `BodyMesh_GEN_VARIABLE`, `Capsule_GEN_VARIABLE` — **no `BodyMesh1`**. Both level instances (`BP_Fighter_C_0`/`_C_1`) also have only `BodyMesh`. The duplicate is fully gone from class and level; newly placed instances inherit a single mesh.
+**Lesson:** `GetComponentByClass` returns the first matching component. If a Blueprint has duplicate components of the same class (a hidden leftover, a renamed copy, etc.), component-targeting operations silently hit the wrong one. Always list components with `ActorTools.get_components` before relying on `GetComponentByClass`, and prefer targeting a component by its unique name. A "component still exists" conclusion drawn from a *rejected* refPath is an inference, not evidence — retry with the correct no-colon CDO refPath before claiming a duplicate persists.
 
 ### 9.10 DestroyActor after SetViewTargetWithBlend breaks the camera (RESOLVED)
 
@@ -339,3 +342,14 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 **Cause:** The `DestroyActor` ran **after** `SetViewTargetWithBlend` (to `CameraActor`). Destroying the pawn mid-blend (the blend's start was the pawn) cancelled the view transition, leaving the camera with no valid target.
 **Fix:** Reordered `BeginPlay` so the pawn is destroyed **before** `SetViewTargetWithBlend`. The blend then starts from the default view and transitions to the `CameraActor`. Verified in graphical PIE (`20261102_091120`): white pawn hidden, floor + fighters visible.
 **Lesson:** When hiding the default pawn by destroying it, do so before setting the view target, not after.
+
+### 9.11 Editor-visible team colors via Construction Script (RESOLVED)
+
+**Problem:** Fighter cylinders were grey in the level editor before PIE because their team material was assigned in `BeginPlay`, which only runs at runtime. The todo required the colors to be visible in the editor without pressing Play.
+**Fix:** Moved the team-material assignment into the `BP_Fighter` **Construction Script** (`UserConstructionScript` graph), which runs both in the editor and at runtime spawn:
+- `ApplyMaterial` and `BeginPlay` now target the mesh with the explicit accessor `Variables|Default|GetBodyMesh` (not `GetComponentByClass`).
+- The Construction Script binds `GetBodyMesh` and sets `MI_Player` when `Team == 0` else `MI_Opponent`.
+- `BeginPlay` only sets the Cylinder `StaticMesh` on `GetBodyMesh`; it no longer assigns team materials (no duplicated init).
+- `BP_CombatManager.ResetEncounter` still calls `Class|BPFighter|ApplyMaterial` to restore team colors after flashes, so the fixed `ApplyMaterial` preserves hit/block flash + reset behavior.
+**Verified (graphical, `20261102_101311`):** pre-PIE editor view shows left opponent red / right player blue with no PIE running; flipping an instance's `Team` 0→1 recolors that cylinder red (Construction Script re-runs on the property change); PIE view keeps left red / right blue with the pawn hidden and the combat UI intact. All four combat automation tests pass.
+**Lesson:** For any material/mesh that must be visible in the editor (not just at runtime), assign it in the Construction Script, not `BeginPlay`. The Construction Script re-runs whenever a variable it reads changes, so instance-editable variables (like `Team`) drive live recoloring in the Details panel. Always use an explicit component accessor (`Variables|Default|GetBodyMesh`) for gameplay-critical material/mesh writes, never `GetComponentByClass`.

@@ -1,5 +1,21 @@
 # Beneath Uncounted Heavens — Fighter Mesh Cleanup and Editor-Visible Team Colors
 
+## RESOLVED (2026-11-02)
+
+All success criteria are met and verified graphically (`20261102_101311`):
+
+- **Editor, before PIE:** left opponent cylinder red, right player cylinder blue — colors come from the `BP_Fighter` **Construction Script**, not `BeginPlay`. No PIE running.
+- **Team-change:** flipping an instance's `Team` 0→1 recolors that cylinder red (Construction Script re-runs on the property change). Verified by capture.
+- **PIE:** left red / right blue persist during gameplay; the default pawn is hidden; the combat UI (menu, prediction, Execute) is intact.
+- **No duplicate `BodyMesh1`:** direct `ActorTools.get_components` on the CDO (`BP_Fighter.Default__BP_Fighter_C`) and both level instances returns only `BodyMesh` — the diagnostic report's `BodyMesh1` claim was disproven (it had been chased via a rejected colon-form refPath). Nothing to remove; the class is already clean.
+- **Explicit references:** `ApplyMaterial`, `BeginPlay`, and the Construction Script all target the mesh via `Variables|Default|GetBodyMesh`, never `GetComponentByClass`.
+- **Runtime preserved:** `BeginPlay` no longer assigns team materials (Construction Script handles it); `ResetEncounter` still restores team colors via the fixed `ApplyMaterial`; hit/block flashes intact.
+- **Regression:** `BP_Fighter` compiled + saved; all four combat automation tests (`BUH.CombatSimTests`, `BUH.CombatFlowTests`, `BUH.CombatManagerIntegrationTests`, `BUH.WalkPreviewTests`) pass.
+
+Lessons recorded in `notes.md` §2.6 (set_properties `values`-as-string, CDO refPath, top-level meta-tools) and §9.11 (Construction Script vs BeginPlay).
+
+---
+
 The fighter colors now render correctly in graphical PIE:
 
 - **Team 0 (Player): Blue**
