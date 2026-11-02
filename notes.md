@@ -353,3 +353,39 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 - `BP_CombatManager.ResetEncounter` still calls `Class|BPFighter|ApplyMaterial` to restore team colors after flashes, so the fixed `ApplyMaterial` preserves hit/block flash + reset behavior.
 **Verified (graphical, `20261102_101311`):** pre-PIE editor view shows left opponent red / right player blue with no PIE running; flipping an instance's `Team` 0→1 recolors that cylinder red (Construction Script re-runs on the property change); PIE view keeps left red / right blue with the pawn hidden and the combat UI intact. All four combat automation tests pass.
 **Lesson:** For any material/mesh that must be visible in the editor (not just at runtime), assign it in the Construction Script, not `BeginPlay`. The Construction Script re-runs whenever a variable it reads changes, so instance-editable variables (like `Team`) drive live recoloring in the Details panel. Always use an explicit component accessor (`Variables|Default|GetBodyMesh`) for gameplay-critical material/mesh writes, never `GetComponentByClass`.
+
+### 9.12 Predictive ghost restoration (RESOLVED)
+
+**Problem:** The Walk destination slider worked, but the predictive ghost did not move when the destination changed. The player could not tell how far they were planning to walk before pressing Execute.
+
+**Cause:**
+- No `GhostPlayer`/`GhostOpponent` actors existed in `Lvl_TacticalDuel` (they had been removed in a prior cleanup, §9.3).
+- `DestSlider.OnValueChanged` never repositioned any ghost — it only called `SelectWalkDestination` and `RefreshUI`.
+- `TimelineSlider.OnValueChanged` targeted tagged actors (`GhostPlayer`/`GhostOpponent`) that did not exist.
+- C++ `MoveGhostsToInstant` targeted actors **named** `BP_Fighter_C_2`/`BP_Fighter_C_3`, inconsistent with the widget's tag-based targeting.
+- `DestSlider` range is `0..1` (a fraction), **not** a world X coordinate. `SelectWalkDestination` used the raw slider value directly as `PlayerWalkTarget` — a bug.
+
+**Fix:**
+- Added `bIsGhost` bool variable to `BP_Fighter`; made it instance-editable via `set_variable_instance_editable`.
+- Rewrote `BP_Fighter` `UserConstructionScript`: if `bIsGhost` → `MI_GhostPlayer` (Team 0) or `MI_GhostOpponent` (Team 1); else `MI_Player`/`MI_Opponent`. The Construction Script's team-color assignment no longer overwrites a ghost's special material.
+- Placed `BP_Fighter_C_2` (GhostPlayer, Team 0, `bIsGhost=true`, Tags `GhostPlayer`) at `(-500,0,90)` yaw 0 and `BP_Fighter_C_3` (GhostOpponent, Team 1, `bIsGhost=true`, Tags `GhostOpponent`) at `(500,0,90)` yaw 180 in `Lvl_TacticalDuel`.
+- Created translucent ghost materials: `M_GhostBase` (`BLEND_Translucent`, `Color` → `MP_BaseColor`), `MI_GhostPlayer` (cyan-blue `(0.2, 0.8, 1.0, 1.0)`), `MI_GhostOpponent` (orange-red `(1.0, 0.45, 0.2, 1.0)`).
+- Rewrote `WBP_CombatUI` `DestSlider.OnValueChanged`: maps `Value` to `WorldX = Value*1000 - 500`, calls `SelectWalkDestination(manager, WorldX)`, moves GhostPlayer to `(WorldX,0,90)`, moves GhostOpponent to `(OpponentX,0,90)`, displays readout `Walk: X <PlayerX> -> <WorldX> | Distance: <dist> uu` in `TechniqueDetailsText`, calls `RefreshUI`.
+- Edited `CombatSim.cpp` `MoveGhostsToInstant` to use tag-based targeting (`Actor->Tags.Contains(TEXT("GhostPlayer"))` / `TEXT("GhostOpponent")`) instead of name checks. Rebuild pending.
+
+**DSL gotchas encountered:**
+- Boolean variable getter naming: the `b` prefix is stripped — `bIsGhost` → `GetIsGhost`, not `GetbIsGhost`. First write failed with `Variables|Default|GetbIsGhost does not exist`.
+- `write_graph_dsl` parenthesis counting: when rewriting a full function body, count parens per line with a script. A single extra `)` on a nested `select` line causes "Unexpected )"; a missing one causes "Unclosed parenthesis". The `StateText` line in `RefreshUI` has 6 closing parens (not 5).
+- Literal-bind limitation (§3.1) blocks rewriting `RefreshUI` to add a conditional ghost reset (section 8). The ghost reset is documented as a manual test step instead.
+
+**Verified:**
+- All 4 `BUH.*` automation tests passed.
+- Headless PIE: ghost positions and properties confirmed correct (GhostPlayer at -500, GhostOpponent at 500, both `bIsGhost=true`, correct tags and Team).
+- Assets saved: `WBP_CombatUI`, `BP_Fighter`, `Lvl_TacticalDuel`, ghost materials.
+
+**Known limitation:**
+- Section 8 (stale ghost reset when Walk cancelled): `RefreshUI` rewrite blocked by the DSL literal-bind restriction. Ghosts remain at the last preview position until the next Walk selection or timeline scrub. The `DestSlider` handler does move both ghosts to correct positions during Walk planning, so the core preview is accurate.
+- C++ rebuild pending for tag-based `MoveGhostsToInstant` (old name-based code still works because actors are named `BP_Fighter_C_2`/`C_3`).
+- Headless `-nullrhi` `CaptureEditorImage` returns 1×1 placeholder; graphical capture required for visual ghost/color evidence. MCP cannot click/drag UMG sliders; graphical interaction verification requires manual steps.
+
+**Lesson:** When a predictive ghost system stops working, check (1) whether the ghost actors still exist in the level, (2) whether the slider handler actually repositions them, (3) whether the slider's value range matches the expected world-space coordinate space, and (4) whether C++ and Blueprint targeting use the same actor identification (tags vs names). A slider with range `0..1` is a fraction, not a world coordinate — always map it explicitly.

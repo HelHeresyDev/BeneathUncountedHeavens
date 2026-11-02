@@ -1918,13 +1918,12 @@ void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
 	{
 		AActor* Actor = *It;
 		if (!Actor) continue;
-		FString Name = Actor->GetName();
-		if (Name == TEXT("BP_Fighter_C_2"))
+		if (Actor->Tags.Contains(TEXT("GhostPlayer")))
 		{
 			Actor->SetActorLocation(FVector(PlayerX, 0.0f, 90.0f));
 			Actor->SetActorRotation(FRotator(0.0f, PlayerYaw, 0.0f));
 		}
-		else if (Name == TEXT("BP_Fighter_C_3"))
+		else if (Actor->Tags.Contains(TEXT("GhostOpponent")))
 		{
 			Actor->SetActorLocation(FVector(OpponentX, 0.0f, 90.0f));
 			Actor->SetActorRotation(FRotator(0.0f, OpponentYaw, 0.0f));

@@ -1,175 +1,110 @@
-# Beneath Uncounted Heavens — Fighter Mesh Cleanup and Editor-Visible Team Colors
+# Beneath Uncounted Heavens — Finish and Verify Walk Ghost Preview
 
-## RESOLVED (2026-11-02)
+Review the latest `todo.md` and the graphical PIE screenshot showing the cyan ghost between the red opponent and blue player.
 
-All success criteria are met and verified graphically (`20261102_101311`):
+The ghost is now visible. Do not rebuild the system or introduce new movement mechanics.
 
-- **Editor, before PIE:** left opponent cylinder red, right player cylinder blue — colors come from the `BP_Fighter` **Construction Script**, not `BeginPlay`. No PIE running.
-- **Team-change:** flipping an instance's `Team` 0→1 recolors that cylinder red (Construction Script re-runs on the property change). Verified by capture.
-- **PIE:** left red / right blue persist during gameplay; the default pawn is hidden; the combat UI (menu, prediction, Execute) is intact.
-- **No duplicate `BodyMesh1`:** direct `ActorTools.get_components` on the CDO (`BP_Fighter.Default__BP_Fighter_C`) and both level instances returns only `BodyMesh` — the diagnostic report's `BodyMesh1` claim was disproven (it had been chased via a rejected colon-form refPath). Nothing to remove; the class is already clean.
-- **Explicit references:** `ApplyMaterial`, `BeginPlay`, and the Construction Script all target the mesh via `Variables|Default|GetBodyMesh`, never `GetComponentByClass`.
-- **Runtime preserved:** `BeginPlay` no longer assigns team materials (Construction Script handles it); `ResetEncounter` still restores team colors via the fixed `ApplyMaterial`; hit/block flashes intact.
-- **Regression:** `BP_Fighter` compiled + saved; all four combat automation tests (`BUH.CombatSimTests`, `BUH.CombatFlowTests`, `BUH.CombatManagerIntegrationTests`, `BUH.WalkPreviewTests`) pass.
+The goal is to make Walk planning clear, reliable, and consistent with the combat simulation.
 
-Lessons recorded in `notes.md` §2.6 (set_properties `values`-as-string, CDO refPath, top-level meta-tools) and §9.11 (Construction Script vs BeginPlay).
+## 1. Fix the Walk control layout
 
----
+The destination slider appears to overlap the TopBar health text.
 
-The fighter colors now render correctly in graphical PIE:
+Move the Walk destination slider into the Move → Walk submenu, directly beneath the Walk option or its details.
 
-- **Team 0 (Player): Blue**
-- **Team 1 (Opponent): Red**
-- Left cylinder is the opponent; right cylinder is the player.
+Display a persistent, readable label:
 
-However, the cylinders remain gray in the Unreal Editor before pressing Play because their materials are assigned during `BeginPlay`.
+`Walk: X -500 → 0 | Distance: 500 uu`
 
-Additionally, the latest diagnostic report confirms that `BP_Fighter` contains a duplicate `StaticMeshComponent` named `BodyMesh1`, which previously caused material assignments to target the wrong mesh.
+Use actual values.
 
-**Goal:** Make fighter colors visible both before and during PIE, permanently fix the duplicate-component problem, and preserve all existing combat functionality.
+Do not write the readout once and then have `RefreshUI` overwrite or hide it. Ensure it survives UI refreshes.
 
-## 1. Inspect the existing BP_Fighter
+Do not reorganize the rest of the HUD.
 
-Before modifying anything:
+## 2. Distinguish intended destination from predicted result
 
-- Inspect the Blueprint's component hierarchy.
-- Identify `BodyMesh` and `BodyMesh1`.
-- Determine which component is the intended visible cylinder.
-- Identify any Blueprint graphs or C++ code referencing either component.
-- Check the placed fighter instances in `Lvl_TacticalDuel`.
-- Confirm how the `Team` variable is currently assigned.
+The current `DestSlider.OnValueChanged` directly moves GhostPlayer to the requested WorldX.
 
-Do not assume that removing a duplicate component from a placed actor also removes it from the Blueprint class.
+That is a useful destination preview, but it is not necessarily the final position produced by combat resolution.
 
-Create a backup of the affected Blueprint asset before making structural changes.
+Keep the two concepts separate:
 
-## 2. Permanently remove the duplicate mesh
+- Destination marker/ghost: where the player intends to walk.
+- Predicted combat ghost: where the simulation says the player will be at the selected Instant.
 
-Remove the unnecessary `BodyMesh1` component from the `BP_Fighter` Blueprint asset itself, not merely the existing level instances.
+If the existing system uses the same ghost actor for both, establish an explicit display mode so the destination preview and timeline scrub cannot overwrite each other unpredictably.
 
-Preserve the legitimate `BodyMesh` component and its:
+Do not falsely present an interrupted Walk as guaranteed to reach the target.
 
-- Cylinder StaticMesh.
-- Transform and scale.
-- Collision settings.
-- Mobility.
-- Existing gameplay references.
+Use the existing CombatSim resolver for hypothetical outcomes.
 
-If removing `BodyMesh1` through MCP is unsupported, use a safe Unreal Editor or editor-side C++ approach.
+## 3. Verify the slider mapping
 
-Do not directly manipulate the binary `.uasset` structure.
+The slider range is 0 to 1, currently mapped to:
 
-Verify that newly spawned `BP_Fighter` instances contain exactly one intended cylinder mesh component.
+`WorldX = Value * 1000 - 500`
 
-Do not remove the component until its purpose and references have been checked.
+Verify that the mapping is applied consistently during selection, prediction, and execution.
 
-## 3. Use explicit mesh references
+Confirm that the displayed walking distance is calculated from the player's current authoritative position, not always from -500.
 
-Replace ambiguous calls such as:
+Keep the existing 1D movement prototype. Do not implement full 3D targeting yet.
 
-`GetComponentByClass(StaticMeshComponent)`
+## 4. Fix stale ghosts
 
-with an explicit reference to the intended `BodyMesh` component wherever fighter materials are assigned.
+When the player:
 
-Avoid selecting components based on enumeration order.
+- Presses Back.
+- Switches to Attack or Defend.
+- Executes an action.
+- Resets the encounter.
+- Starts a new encounter.
 
-If a direct Blueprint component reference is unavailable through MCP, use a reliable, explicitly verified component lookup rather than selecting the first StaticMeshComponent.
+The planning destination ghost should be hidden, reset, or repurposed according to the current UI mode.
 
-## 4. Assign colors in the Construction Script
+Do not leave a translucent fighter at an obsolete destination.
 
-Make the correct team color visible in the level editor before PIE.
+Preserve the separate timeline-preview functionality.
 
-Use the `BP_Fighter` Construction Script to assign:
+## 5. Finish the C++ change
 
-- Team 0 → `MI_Player` (blue).
-- Team 1 → `MI_Opponent` (red).
+The latest report says `MoveGhostsToInstant` was changed from hardcoded actor-name matching to tag-based lookup, but the C++ rebuild was pending.
 
-Ensure the `Team` variable is instance-editable so each placed fighter can have its team configured in the Details panel.
+Compile the module.
 
-For `Lvl_TacticalDuel`, verify:
+Verify that `GhostPlayer` and `GhostOpponent` are found by tags in actual PIE.
 
-- PlayerFighter has Team 0.
-- OpponentFighter has Team 1.
+Ensure the implementation does not depend on generated actor names such as `BP_Fighter_C_2`.
 
-Use the existing material instances rather than creating duplicate materials.
+Run the existing four automation test suites.
 
-Changing the team in the editor should update the cylinder's color without requiring PIE.
+## 6. Verify real interaction
 
-## 5. Preserve runtime behavior
+In graphical PIE:
 
-Check whether `BeginPlay` still needs to assign team materials.
+1. Select Move → Walk.
+2. Move the destination slider left, center, and right.
+3. Observe the player destination ghost changing position each time.
+4. Confirm the real fighter never moves before Execute.
+5. Verify the distance readout updates correctly.
+6. Select a hypothetical opponent response.
+7. Scrub the tactical timeline and check predicted ghost positions.
+8. Cancel Walk and verify stale preview cleanup.
+9. Select Walk again and Execute.
+10. Select Walk a second time and verify distances are calculated from the new player position.
 
-If Construction Script assignment is sufficient for the existing gameplay, avoid duplicating unnecessary initialization.
+Capture screenshots of at least two clearly different destination values.
 
-If teams can change dynamically during gameplay, provide a single reusable `ApplyTeamMaterial` function called from the appropriate lifecycle events.
-
-Ensure that:
-
-- ResetEncounter does not restore gray materials.
-- Hit and block flashes still work.
-- Temporary visual effects restore the correct team color.
-- Ghost fighters remain visually distinguishable.
-- Material assignments do not change combat state.
-
-Keep this change narrowly focused on mesh components and team presentation.
-
-## 6. Verify in the editor and PIE
-
-Perform these checks:
-
-**Editor, before pressing Play**
-- Left fighter is red.
-- Right fighter is blue.
-- Changing an instance's Team value updates its color.
-- Both cylinders have the correct mesh and material slot.
-- No duplicate BodyMesh1 exists in the Blueprint class.
-
-**Graphical PIE**
-- Both fighters retain their colors.
-- The arena and camera render correctly.
-- No unwanted white player pawn appears.
-- ResetEncounter preserves team colors.
-- Combat flashes do not permanently overwrite materials.
-- Ghost prediction visuals remain functional.
-
-Use graphical Unreal for visual verification. Do not treat headless `-nullrhi` screenshots as evidence of rendered colors.
-
-## 7. Regression checks
-
-Compile and save the affected Blueprints and level.
-
-Run the existing combat automation tests.
-
-Ensure the changes do not affect:
-
-- Fighter positions.
-- Health.
-- Combat execution.
-- Prediction and ghost actors.
-- The hierarchical combat menu.
-- Walk state persistence.
-
-Do not modify unrelated combat mechanics or UI layout.
-
-## 8. Documentation
-
-Update `notes.md` with the verified lesson:
-
-When multiple StaticMeshComponents exist on an actor, `GetComponentByClass` may return a different component from the one visibly rendered. Prefer explicit component references for gameplay-critical operations.
-
-Also document the distinction between Construction Script material assignment and BeginPlay assignment.
-
-Keep the note brief and avoid duplicating existing documentation.
+If MCP cannot perform actual slider interaction, label those checks as requiring manual verification. Do not claim success based solely on the presence of a ghost in a screenshot.
 
 ## Constraints
 
-- Unreal Engine 5.8.4 on Linux.
-- Preserve existing blue/red material instances.
+- Preserve blue and red real fighters.
+- Preserve translucent team-colored ghost materials.
+- No Dash or Jump.
 - No new combat mechanics.
-- No unnecessary asset recreation.
-- No unrelated refactoring.
+- No unrelated HUD redesign.
 - No Git commit without authorization.
 
-**Success criterion:** The two fighters are visibly red and blue in the Unreal Editor before PIE, remain correctly colored during gameplay, and newly created fighter instances no longer inherit the duplicate-mesh problem.
-
-Report any part that cannot be safely completed with the available MCP tools rather than claiming success without verification.
+**Success criterion:** While planning Walk, the player can immediately see and read their selected destination and distance, compare it with predicted combat movement, and cancel or execute without leaving stale ghosts or modifying live combat state prematurely.
