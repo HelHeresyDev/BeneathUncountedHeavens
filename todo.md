@@ -1,127 +1,150 @@
-# Beneath Uncounted Heavens — Finish and Verify Walk Ghost Preview
+# Beneath Uncounted Heavens — Fix Stale Ghost Cylinders and Combat Position Synchronization
 
-Review the latest `todo.md` and the graphical PIE screenshot showing the cyan ghost between the red opponent and blue player.
+The latest graphical PIE screenshot shows unwanted cylinders remaining at earlier fighter positions after movement and hypothetical prediction.
 
-The ghost is now visible. Do not rebuild the system or introduce new movement mechanics.
+The player describes each fighter as leaving remnants behind.
 
-The goal is to make Walk planning clear, reliable, and consistent with the combat simulation.
+We currently have five intended actors: two real fighters, two hypothetical prediction ghosts, and one yellow Walk destination ghost.
 
-## Status (2026-11-02)
-- [x] **1. Layout** — `DestSlider` moved from `RootCanvas` (was overlapping the TopBar) into `LeftPanelContent` (`VerticalBoxSlot_7`). Persistent readout uses `TechniqueDetailsText`, which `RefreshUI` does not touch, so it survives UI refreshes. Graphical initial-state capture (`20261102_124102`) confirms no slider over the TopBar.
-- [x] **2. Destination vs prediction** — `DestSlider.OnValueChanged` now moves only the `DestPlayer` destination ghost (`BP_DestGhost_C_0`, yellow `MI_GhostDest`). `TimelineSlider`/Opponent buttons still move the `GhostPlayer`/`GhostOpponent` prediction ghosts. The two no longer share an actor. `BP_DestGhost` is a child of `BP_Fighter` whose ConstructionScript hardcodes `MI_GhostDest` (the parent's `bIsGhost`/`bIsDestGhost` bool getters are read-only in `write_graph_dsl`).
-- [x] **3. Slider mapping** — `WorldX = Value*1000 - 500` applied in `DestSlider.OnValueChanged` and `BtnWalkMove` (the latter previously passed the raw 0..1 slider value — fixed). Distance is computed from the authoritative `PlayerX`. `BUH.WalkPreviewTests` passes.
-- [x] **4. Stale ghosts** — the `DestPlayer` destination ghost is hidden in `EventConstruct`, `BtnBack`, `BtnDodge`, `BtnExecute`, and `BtnReset` (shown in `BtnWalkMove`). Verified in PIE: `BP_DestGhost_C_0` `bHidden=true` at encounter start.
-- [x] **5. C++** — module compiles; `MoveGhostsToInstant` is tag-based (`GhostPlayer`/`GhostOpponent`). All four suites pass: `BUH.CombatFlowTests`, `BUH.CombatManagerIntegrationTests`, `BUH.CombatSimTests`, `BUH.WalkPreviewTests`.
-- [ ] **6. Real interaction** — initial-state graphical capture PASSES (layout + fighters render). The slider-drag steps (left/center/right, distance readout, timeline scrub, cancel cleanup, execute, second Walk from the new position) **require manual verification**: MCP cannot click/drag UMG sliders and cannot unhide/move the destination ghost in a live PIE world (`ObjectTools.set_properties` silently fails on `SetActorHiddenInGame`). See manual steps below.
+The goal is to make their visibility and positions consistent with the current encounter, without adding or duplicating actors.
 
-### Manual verification steps (graphical PIE on `Lvl_TacticalDuel`)
-1. Click `Move` → `Walk`. The destination slider appears in the left panel and the yellow destination ghost shows at the slider's WorldX.
-2. Drag the slider left, center, right. Confirm the yellow destination ghost moves each time and the `TechniqueDetailsText` readout (`Walk: X <PlayerX> → <WorldX> | Distance: <dist> uu`) updates.
-3. Confirm the real blue fighter never moves before Execute.
-4. Select a hypothetical opponent response and scrub the tactical timeline; confirm the cyan/orange prediction ghosts move independently of the yellow destination ghost.
-5. Click `Back` (or Attack/Defend/Execute/Reset) and confirm the yellow destination ghost is hidden (no stale ghost).
-6. Re-select Walk and Execute; then select Walk a second time and confirm the distance is computed from the fighter's new position.
-7. Capture screenshots of at least two clearly different destination values.
+## 1. Identify every visible cylinder
 
-## 1. Fix the Walk control layout
+Inspect the live PIE world and enumerate all BP_Fighter-derived actors.
 
-The destination slider appears to overlap the TopBar health text.
+For each, record:
 
-Move the Walk destination slider into the Move → Walk submenu, directly beneath the Walk option or its details.
+- Actor name and class.
+- Tags and Team.
+- Whether it is real, prediction, or destination.
+- World location.
+- HiddenInGame status.
+- Visible mesh components and their visibility.
+- Assigned material.
 
-Display a persistent, readable label:
+Compare this information against the screenshot.
 
-`Walk: X -500 → 0 | Distance: 500 uu`
+Determine whether the unwanted cylinders are legitimate ghosts left visible, duplicate spawned actors, or real fighters whose transforms no longer match the combat state.
 
-Use actual values.
+Do not assume the problem is only cosmetic.
 
-Do not write the readout once and then have `RefreshUI` overwrite or hide it. Ensure it survives UI refreshes.
+## 2. Define consistent ghost visibility rules
 
-Do not reorganize the rest of the HUD.
+In normal planning without an active preview:
 
-## 2. Distinguish intended destination from predicted result
+- Real player: visible.
+- Real opponent: visible.
+- Yellow destination ghost: hidden.
+- Cyan prediction ghost: hidden.
+- Orange prediction ghost: hidden.
 
-The current `DestSlider.OnValueChanged` directly moves GhostPlayer to the requested WorldX.
+While planning Walk:
 
-That is a useful destination preview, but it is not necessarily the final position produced by combat resolution.
+- Real fighters remain visible.
+- Yellow ghost shows the intended destination.
+- Cyan/orange ghosts appear only when an actual hypothetical prediction is being displayed.
 
-Keep the two concepts separate:
+While scrubbing a hypothetical timeline:
 
-- Destination marker/ghost: where the player intends to walk.
-- Predicted combat ghost: where the simulation says the player will be at the selected Instant.
+- Cyan and orange ghosts show the simulated positions at the selected Instant.
+- Yellow ghost remains at the requested Walk destination, if Walk planning is active.
+- Real fighters remain at their authoritative positions.
 
-If the existing system uses the same ghost actor for both, establish an explicit display mode so the destination preview and timeline scrub cannot overwrite each other unpredictably.
+After Execute, Cancel, Back, or Reset:
 
-Do not falsely present an interrupted Walk as guaranteed to reach the target.
+- Invalidate stale preview data.
+- Hide ghosts no longer relevant to the current planning state.
+- Restore only the previews appropriate for the new state.
 
-Use the existing CombatSim resolver for hypothetical outcomes.
+## 3. Fix ghost synchronization after combat advances
 
-## 3. Verify the slider mapping
+When an action executes:
 
-The slider range is 0 to 1, currently mapped to:
+1. Commit the combat result to the authoritative state.
+2. Synchronize both real fighter transforms to that state.
+3. Clear the previous hypothetical timeline and selection as appropriate.
+4. Hide obsolete prediction ghosts.
+5. Hide the yellow Walk destination ghost.
+6. Begin the next planning/reaction state using the saved combat state.
 
-`WorldX = Value * 1000 - 500`
+When a new hypothetical prediction is generated, initialize its ghosts using that prediction's first snapshot derived from the current authoritative state.
 
-Verify that the mapping is applied consistently during selection, prediction, and execution.
+Never initialize a new prediction from the original ±500 spawn positions after combat has already advanced.
 
-Confirm that the displayed walking distance is calculated from the player's current authoritative position, not always from -500.
+Do not hide or reset ghosts mid-preview in ways that break timeline scrubbing.
 
-Keep the existing 1D movement prototype. Do not implement full 3D targeting yet.
+## 4. Investigate state versus actor position
 
-## 4. Fix stale ghosts
+The screenshot shows `Current X: 392`, while several cylinders appear in earlier positions.
 
-When the player:
+Log and compare:
 
-- Presses Back.
-- Switches to Attack or Defend.
-- Executes an action.
-- Resets the encounter.
-- Starts a new encounter.
+- Authoritative PlayerX and OpponentX.
+- CurrentState fighter positions.
+- Actual real fighter actor transforms.
+- Ghost actor transforms.
+- Predicted snapshot positions.
+- Timeline scrub Instant.
 
-The planning destination ghost should be hidden, reset, or repurposed according to the current UI mode.
+Verify these values before and after Execute and after selecting a new hypothetical response.
 
-Do not leave a translucent fighter at an obsolete destination.
+If CurrentState exists, ensure predictions preserve its complete action phases, Instant, health, and opponent commitment. Do not silently replace ongoing combat state with a fresh MakeState containing only positions and health.
 
-Preserve the separate timeline-preview functionality.
+## 5. Centralize ghost visibility management
 
-## 5. Finish the C++ change
+Prefer one clearly defined function or small set of functions controlling preview visibility and positioning.
 
-The latest report says `MoveGhostsToInstant` was changed from hardcoded actor-name matching to tag-based lookup, but the C++ rebuild was pending.
+Avoid scattering contradictory SetActorHiddenInGame and SetActorLocation operations across many widget handlers.
 
-Compile the module.
+Where possible, keep prediction actor management separate from authoritative combat execution.
 
-Verify that `GhostPlayer` and `GhostOpponent` are found by tags in actual PIE.
+Use actor tags or explicit actor references, not generated names such as BP_Fighter_C_2.
 
-Ensure the implementation does not depend on generated actor names such as `BP_Fighter_C_2`.
+Do not add another ghost actor to solve this.
 
-Run the existing four automation test suites.
+## 6. Preserve correct preview behavior
 
-## 6. Verify real interaction
+After the fix:
+
+- Moving the Walk slider updates only the yellow destination target and regenerates prediction data when appropriate.
+- Selecting hypothetical Quick/Heavy/Guard/Dodge updates the cyan/orange predicted positions.
+- Scrubbing the timeline displays those predicted positions.
+- The real fighters never move during planning.
+- Executing an action advances real fighters using the authoritative resolver.
+- Starting another prediction uses the new positions.
+- Reset returns real fighters to their starting positions and clears obsolete ghosts.
+
+## 7. Test an uninterrupted encounter
 
 In graphical PIE:
 
-1. Select Move → Walk.
-2. Move the destination slider left, center, and right.
-3. Observe the player destination ghost changing position each time.
-4. Confirm the real fighter never moves before Execute.
-5. Verify the distance readout updates correctly.
-6. Select a hypothetical opponent response.
-7. Scrub the tactical timeline and check predicted ghost positions.
-8. Cancel Walk and verify stale preview cleanup.
-9. Select Walk again and Execute.
-10. Select Walk a second time and verify distances are calculated from the new player position.
+1. Start the encounter: only two real fighters visible.
+2. Select Walk: yellow destination ghost appears.
+3. Select hypothetical Heavy: cyan/orange prediction ghosts appear.
+4. Adjust destination: yellow ghost updates and prediction regenerates.
+5. Execute Walk: stale preview ghosts disappear.
+6. Observe the real fighters' new positions.
+7. Select Walk again: destination and prediction ghosts must be based on the new positions.
+8. Select another hypothetical response and scrub the timeline.
+9. Cancel: all irrelevant ghosts disappear.
+10. Reset: exactly two real fighters remain visible.
 
-Capture screenshots of at least two clearly different destination values.
+Capture screenshots before and after execution.
 
-If MCP cannot perform actual slider interaction, label those checks as requiring manual verification. Do not claim success based solely on the presence of a ghost in a screenshot.
+If MCP cannot click the controls, report the automated checks separately from manual visual verification.
 
-## Constraints
+## 8. Regression and documentation
 
-- Preserve blue and red real fighters.
-- Preserve translucent team-colored ghost materials.
-- No Dash or Jump.
-- No new combat mechanics.
-- No unrelated HUD redesign.
-- No Git commit without authorization.
+Preserve all existing material colors, menu functionality, Walk distance calculation, timeline, and reaction rules.
 
-**Success criterion:** While planning Walk, the player can immediately see and read their selected destination and distance, compare it with predicted combat movement, and cancel or execute without leaving stale ghosts or modifying live combat state prematurely.
+Run the four existing automation suites.
+
+Compile and save modified assets.
+
+Update notes.md only with a confirmed, reusable lesson.
+
+No Dash, Jump, new movement mechanics, or unrelated HUD redesign.
+
+No Git commit without authorization.
+
+**Success criterion:** No cylinders remain at obsolete starting positions after combat advances. Every visible ghost represents the currently active Walk destination or an explicitly selected hypothetical prediction, and all previews are based on the current authoritative combat state.
