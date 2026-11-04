@@ -1,150 +1,114 @@
-# Beneath Uncounted Heavens — Fix Stale Ghost Cylinders and Combat Position Synchronization
+# Beneath Uncounted Heavens — Dead Opponent Buttons (RESOLVED 2026-11-04)
 
-The latest graphical PIE screenshot shows unwanted cylinders remaining at earlier fighter positions after movement and hypothetical prediction.
+**Root cause confirmed:** `RightPanel`'s `CanvasPanelSlot` had coincident horizontal anchors (`Min.X=Max.X=1`) with `Right=0`, giving it **zero arranged width**. Children painted but the hit-test area was empty — visible button text with no hover/press/click.
 
-The player describes each fighter as leaving remnants behind.
+**Fix applied:** slot offsets `Left=-380, Top=60, Right=300, Bottom=-80`; anchors `(1,0)->(1,1)` kept; `bAutoSize=false`, `Alignment=(0,0)`. Compiled + saved `WBP_CombatUI`.
 
-We currently have five intended actors: two real fighters, two hypothetical prediction ghosts, and one yellow Walk destination ghost.
+**Verified (graphical PIE, `2026-11-04 14-32-42`):** hovering the Dodge button shows `DODGE HOVER` and the button highlights with a real background; all four opponent buttons now receive mouse events.
 
-The goal is to make their visibility and positions consistent with the current encounter, without adding or duplicating actors.
+**Cleanup done:** removed the `TempDiagnosticText` widget and the 5 diagnostic event chains (OpponentDodgeButton OnHovered/OnPressed + the 3 dangling TempRightProbeButton events). Real opponent `OnClicked` handlers preserved. Compiled clean, saved. All 4 `BUH.*` regression tests pass.
 
-## 1. Identify every visible cylinder
+See `notes.md` §9.15 (root cause + fix) and §4.3 (cross-reference). Original report below.
 
-Inspect the live PIE world and enumerate all BP_Fighter-derived actors.
+---
 
-For each, record:
+Read `chatgpt_report.md`.
 
-- Actor name and class.
-- Tags and Team.
-- Whether it is real, prediction, or destination.
-- World location.
-- HiddenInGame status.
-- Visible mesh components and their visibility.
-- Assigned material.
+The report reveals a specific likely CanvasPanel geometry bug.
 
-Compare this information against the screenshot.
+`RightPanel` has:
+- Horizontal anchors Min.X=1, Max.X=1
+- Offsets Left=-380, Right=0
+- A child SizeBox with desired width 300
 
-Determine whether the unwanted cylinders are legitimate ghosts left visible, duplicate spawned actors, or real fighters whose transforms no longer match the combat state.
+Because the horizontal anchors coincide, the Right offset represents the slot's width, not its right margin.
 
-Do not assume the problem is only cosmetic.
+Therefore RightPanel may have ZERO arranged width, while its children still paint outside that area.
 
-## 2. Define consistent ghost visibility rules
+This would explain visible button text with no hover, press, or click.
 
-In normal planning without an active preview:
+## Step 1 — Verify geometry
 
-- Real player: visible.
-- Real opponent: visible.
-- Yellow destination ghost: hidden.
-- Cyan prediction ghost: hidden.
-- Orange prediction ghost: hidden.
+In graphical PIE, inspect the real RightPanel and LeftPanel geometry.
 
-While planning Walk:
+Record their arranged local sizes, especially widths, using a reliable post-layout geometry read or `UCanvasPanel::GetGeometryForSlot`.
 
-- Real fighters remain visible.
-- Yellow ghost shows the intended destination.
-- Cyan/orange ghosts appear only when an actual hypothetical prediction is being displayed.
+Expected:
+- LeftPanel approximately 300 units wide.
+- RightPanel potentially 0 units wide.
 
-While scrubbing a hypothetical timeline:
+Do not use headless -nullrhi geometry as visual proof.
 
-- Cyan and orange ghosts show the simulated positions at the selected Instant.
-- Yellow ghost remains at the requested Walk destination, if Walk planning is active.
-- Real fighters remain at their authoritative positions.
+## Step 2 — Apply one minimal fix
 
-After Execute, Cancel, Back, or Reset:
+Change RightPanel's CanvasPanel slot offsets from:
 
-- Invalidate stale preview data.
-- Hide ghosts no longer relevant to the current planning state.
-- Restore only the previews appropriate for the new state.
+Left=-380, Top=60, Right=0, Bottom=-80
 
-## 3. Fix ghost synchronization after combat advances
+to:
 
-When an action executes:
+Left=-380, Top=60, Right=300, Bottom=-80
 
-1. Commit the combat result to the authoritative state.
-2. Synchronize both real fighter transforms to that state.
-3. Clear the previous hypothetical timeline and selection as appropriate.
-4. Hide obsolete prediction ghosts.
-5. Hide the yellow Walk destination ghost.
-6. Begin the next planning/reaction state using the saved combat state.
+Keep horizontal anchors (1,0) to (1,1).
 
-When a new hypothetical prediction is generated, initialize its ghosts using that prediction's first snapshot derived from the current authoritative state.
+Set Auto Size=false and Alignment=(0,0).
 
-Never initialize a new prediction from the original ±500 spawn positions after combat has already advanced.
+Do not modify the right-side buttons or prediction code.
 
-Do not hide or reset ghosts mid-preview in ways that break timeline scrubbing.
+If MCP property editing fails, use an editor-side modification targeting the actual UCanvasPanelSlot:
 
-## 4. Investigate state versus actor position
+- GetOffsets()
+- Change the Right member to 300
+- SetOffsets()
+- SetAutoSize(false)
 
-The screenshot shows `Current X: 392`, while several cylinders appear in earlier positions.
+Compile and save the actual Widget Blueprint asset, then restart PIE.
 
-Log and compare:
+Read back the saved slot properties.
 
-- Authoritative PlayerX and OpponentX.
-- CurrentState fighter positions.
-- Actual real fighter actor transforms.
-- Ghost actor transforms.
-- Predicted snapshot positions.
-- Timeline scrub Instant.
+## Step 3 — Test the button
 
-Verify these values before and after Execute and after selecting a new hypothetical response.
+Hover over the hypothetical Dodge button.
 
-If CurrentState exists, ensure predictions preserve its complete action phases, Instant, health, and opponent commitment. Do not silently replace ongoing combat state with a fresh MakeState containing only positions and health.
+The existing diagnostic should display:
 
-## 5. Centralize ghost visibility management
+DODGE HOVER
 
-Prefer one clearly defined function or small set of functions controlling preview visibility and positioning.
+Then click it.
 
-Avoid scattering contradictory SetActorHiddenInGame and SetActorLocation operations across many widget handlers.
+Verify:
 
-Where possible, keep prediction actor management separate from authoritative combat execution.
+- DODGE PRESSED fires.
+- OnClicked fires.
+- HypotheticalOpponentMove becomes 3.
+- The selected response label changes.
 
-Use actor tags or explicit actor references, not generated names such as BP_Fighter_C_2.
+If the width fix works, apply the same verification to Quick, Heavy, and Guard.
 
-Do not add another ghost actor to solve this.
+## Step 4 — If the panel still doesn't respond
 
-## 6. Preserve correct preview behavior
+Do not immediately rewrite prediction code.
 
-After the fix:
+Check the actual arranged geometry and hit-test path again.
 
-- Moving the Walk slider updates only the yellow destination target and regenerates prediction data when appropriate.
-- Selecting hypothetical Quick/Heavy/Guard/Dodge updates the cyan/orange predicted positions.
-- Scrubbing the timeline displays those predicted positions.
-- The real fighters never move during planning.
-- Executing an action advances real fighters using the authoritative resolver.
-- Starting another prediction uses the new positions.
-- Reset returns real fighters to their starting positions and clears obsolete ghosts.
+Only if RightPanel now has nonzero width and clicks still fail, investigate its z-order relative to the full-canvas LeftPanelBG Image.
 
-## 7. Test an uninterrupted encounter
+Temporarily raise RightPanel's CanvasPanel ZOrder above LeftPanelBG and test again.
 
-In graphical PIE:
+Change one variable at a time.
 
-1. Start the encounter: only two real fighters visible.
-2. Select Walk: yellow destination ghost appears.
-3. Select hypothetical Heavy: cyan/orange prediction ghosts appear.
-4. Adjust destination: yellow ghost updates and prediction regenerates.
-5. Execute Walk: stale preview ghosts disappear.
-6. Observe the real fighters' new positions.
-7. Select Walk again: destination and prediction ghosts must be based on the new positions.
-8. Select another hypothetical response and scrub the timeline.
-9. Cancel: all irrelevant ghosts disappear.
-10. Reset: exactly two real fighters remain visible.
+## Step 5 — Final verification
 
-Capture screenshots before and after execution.
+Keep the working persistent cursor.
 
-If MCP cannot click the controls, report the automated checks separately from manual visual verification.
+Confirm all opponent response buttons receive mouse events.
 
-## 8. Regression and documentation
+Only after that, determine whether the existing hypothetical selection and prediction functions behave correctly.
 
-Preserve all existing material colors, menu functionality, Walk distance calculation, timeline, and reaction rules.
+Remove temporary diagnostics after successful verification.
 
-Run the four existing automation suites.
+Run regressions and save affected assets.
 
-Compile and save modified assets.
+No broad graph rewrites, unrelated changes, new mechanics, or Git commits.
 
-Update notes.md only with a confirmed, reusable lesson.
-
-No Dash, Jump, new movement mechanics, or unrelated HUD redesign.
-
-No Git commit without authorization.
-
-**Success criterion:** No cylinders remain at obsolete starting positions after combat advances. Every visible ghost represents the currently active Walk destination or an explicitly selected hypothetical prediction, and all previews are based on the current authoritative combat state.
+**Success criterion:** RightPanel has valid hit-testable geometry, and clicking the opponent buttons triggers their existing handlers.

@@ -131,7 +131,12 @@ Command-line `UnrealEditor-Cmd -ExecCmds="Automation RunScript ..."` fails; test
 - A node call in expression position returns only the first data output — no DSL syntax for other named outputs.
 - `if`/`elif`/`else`: `elif` must be the last form in the body; every nested `if` needs its own closing paren.
 - `write_graph_dsl` on a not-yet-created function graph fails ("is not valid EdGraph"); there is no function-creation tool in the available toolsets.
-- **Literal-bind limitation:** `(bind _x 0)` is valid in `read_graph_dsl` output but **fails** `write_graph_dsl` ("expression produced no output pin. Use a node call expression, not a literal."). This blocks adding `SetIsEnabled` gates or other literal-value logic to existing graphs.
+- **Literal-bind limitation:** `(bind _x 0)` is valid in `read_graph_dsl` output but **fails** `write_graph_dsl` ("expression produced no output pin. Use a node call expression, not a literal."). **Workaround (confirmed 2026-11-02):** inline the literal into the consuming node call instead of binding it — e.g. `(== _state 0)`, `(* Value 1000.0)`, `(- _x 500.0)`. This unblocks the literal-value logic the limitation previously blocked (it is how the `RefreshUI` ghost-visibility rewrite, §9.14, was applied).
+- **`StateMachine|GetState` pin incompatibility:** `(StateMachine|GetState <actor>)` fails `write_graph_dsl` ("Could not connect pin Manager to UpdateContext. The pins may be incompatible types."). Use `Class|BPCombatManager|GetState <actor>` instead.
+- **`Behavior|SetValue` is target-first:** `(Behavior|SetValue <target> <value>)`. Value-first fails ("Could not connect pin ReturnValue to self. The pins may be incompatible types.").
+- **Bare widget-getter refs fail:** `(|GetTxtOpponentQuick)` → "does not exist". Use the full form `(Variables|WBP_CombatUI|GetTxtOpponentQuick)`.
+- **`read_graph_dsl` is not a round-trip:** it renames binds to `_returnvalue_N`, re-factors inlined literals back into binds, and canonicalizes node forms (`Class|BPCombatManager|GetState` reads back as `StateMachine|GetState`; full `Variables|WBP_CombatUI|GetTxtX` reads back as `(|GetTxtX)`). A successful `write_graph_dsl` (no error) is the compile proof — do not "re-fix" a graph based on read-back string mismatches.
+- **`write_graph_dsl` applies incrementally:** a timed-out write leaves a partial graph. Raise the client timeout (`MCP_DO_TIMEOUT`, default 600s in `mcp_do.py`) for large graphs, then re-apply the full corrected DSL.
 
 ### 3.2 Node naming quirks
 
@@ -174,6 +179,8 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 `Image`/`Border` backgrounds in `WBP_CombatUI` render unreliably under certain slot configurations. Only `TextBlock` glyphs and `Slider` tracks render reliably. The dark "panels" (Left/Right) and the bottom band are the **3D arena floor** seen through the viewport, not UMG widgets. A visible background band behind the timeline remains unresolved (cosmetic; the slider/instant display already work).
 
 `Image.brush.resourceObject` cannot be set to `/Engine/EngineResources/WhiteSquareTexture` via MCP ("not a valid object path"). Use a FullColor tint (`imageType="FullColor"`) instead.
+
+**Note (2026-11-04):** The opponent-button "no background / unclickable" symptom was **not** a brush limitation — it was the zero-width `RightPanel` slot (§9.15). Once the slot got real width, the opponent buttons render with backgrounds and hit-test correctly. The only remaining unresolved cosmetic is the background band behind the bottom timeline.
 
 ### 4.4 SlateInspector limitations
 
@@ -399,3 +406,36 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 **Fix:** Recreated `MI_GhostDest` via `MaterialInstanceTools.create` (parent `M_GhostBase`), set `Color` to yellow `(1.0, 0.85, 0.2, 1.0)`, **saved it with `AssetTools.save_assets`**, recompiled `BP_DestGhost`, and saved it. Verified by placing a temporary untagged `BP_DestGhost` at center, saving the level, and doing a graphical capture — the center cylinder rendered yellow while the orange opponent and cyan player stayed correct. Removed the temp actor and re-saved the level.
 
 **Lesson:** A material instance (or any asset) created via MCP exists only in the editor's memory until `AssetTools.save_assets` persists it. An editor relaunch discards unsaved assets, and a `SetMaterial`/soft-reference to a missing asset fails **silently** (no log error), leaving the mesh on its default material. After creating any asset that another asset references, save it before relaunching the editor. To verify a material's on-screen color when the target actor is hidden by UI logic, place a temporary untagged instance of that actor in the level, save the level, and do a graphical capture.
+
+### 9.14 Ghost visibility centralized in RefreshUI (RESOLVED)
+
+**Problem:** Stale ghost cylinders persisted after combat advanced. `DestPlayer` was always hidden, and `GhostPlayer`/`GhostOpponent` were repositioned by the slider/timeline handlers but never hidden or shown, so leftover ghosts remained at old positions after Execute/Reset/Back.
+
+**Cause:** Ghost hide/show was scattered across widget handlers (`DestSlider.OnValueChanged`, `TimelineSlider.OnValueChanged`) with no centralized control. `RefreshUI` only handled `DestPlayer`, and the Opponent/Execute/Reset/Back button handlers never reset the hypothetical-opponent state or re-ran `RefreshUI`.
+
+**Fix:** Centralized all three ghost visibilities in `RefreshUI`:
+- `DestPlayer` hidden unless `PlayerMove == 6` (Walk).
+- `GhostPlayer`/`GhostOpponent` hidden unless `PlayerMove >= 0` AND `HypotheticalOpponentMove >= 0`.
+- Opponent button handlers (`OpponentQuickButton`/`Heavy`/`Guard`/`Dodge`) now call `RefreshUI` after `SetHypotheticalOpponentMove`.
+- `BtnExecute`/`BtnReset`/`BtnBack` reset `HypotheticalOpponentMove` to -1 **before** `RefreshUI`.
+
+**Verified:**
+- Both graphs compiled clean via `write_graph_dsl` (no error); asset saved (`returnValue:true`).
+- All 4 `BUH.*` automation tests pass.
+- Headless PIE: real fighters visible (`bHidden:false`), both prediction ghosts hidden (`bHidden:true`) at encounter start — exactly the centralized logic's output when no move/opponent move is selected.
+
+**Lesson:** Centralize all preview-ghost hide/show in one function (`RefreshUI`) and have every state-changing handler (select, execute, reset, back) funnel through it after updating the authoritative state — scattering `SetActorHiddenInGame` across slider/timeline handlers is what produced the stale ghosts. `bHidden` is readable via `ObjectTools.get_properties` on a live PIE actor, so initial-state visibility can be verified headless even though `set_properties` cannot set it. The full show/hide-on-interaction flow still needs manual graphical PIE (MCP cannot click UMG buttons, §8). The `write_graph_dsl` node-form fixes that made this rewrite possible are documented in §3.1.
+
+### 9.15 Right-anchored CanvasPanel slot with zero width made opponent buttons unclickable (RESOLVED)
+
+**Problem:** The four opponent "hypothetical" buttons (`OpponentQuickButton`/`Heavy`/`Guard`/`Dodge`) rendered their text but never received hover/press/click. The left player buttons worked fine. A diagnostic `TextBlock` (`TempDiagnosticText`) bound to `OpponentDodgeButton`'s `OnHovered`/`OnPressed` never updated. The buttons' properties were byte-identical to the working player buttons (same `clickMethod`/`visibility`/`renderOpacity`/style/slot), so the bug was not in the buttons or their ancestor chain.
+
+**Cause:** `RightPanel`'s `CanvasPanelSlot` had **coincident horizontal anchors** (`Min.X=1`, `Max.X=1`, right-anchored) with `Right=0`. When both anchors on an axis coincide, the offset on that axis defines the slot's **arranged size**, not a margin. `Right=0` → **zero arranged width**. The child `SizeBox` (desired width 300) still painted its buttons outside that zero-width rect, so the text was visible but the hit-test area was empty. The working `LeftPanel` is left-anchored (`Min.X=Max.X=0`) with `Right=300` (width 300) — that asymmetry is why the left worked and the right did not.
+
+**Red herrings ruled out:** (1) The full-canvas `LeftPanelBG` `Image` at zOrder 0 was suspected of swallowing right-side hits, but within the same zOrder `RightPanel` (index 18) paints above the image (index 0), so it never blocked the right side — setting it `SelfHitTestInvisible` changed nothing. (2) The §4.3 "background brushes don't paint" note was a misread of this same zero-width symptom.
+
+**Fix:** Set the slot's `Right` offset to `300` (offsets `Left=-380, Top=60, Right=300, Bottom=-80`), kept anchors `(1,0)->(1,1)`, set `bAutoSize=false` and `Alignment=(0,0)`. Applied via `ObjectTools.set_properties` on `WidgetTree.RootCanvas.CanvasPanelSlot_18` with the correct args shape (`instance={"refPath":...}`, `values="<JSON string>"` — see §2.6). Compiled + saved `WBP_CombatUI`.
+
+**Verified (graphical PIE, `2026-11-04 14-32-42`):** Hovering the Dodge button shows `DODGE HOVER` in the top-center diagnostic and the button highlights (hover state) with a real background; all four opponent buttons now render with backgrounds and receive mouse events.
+
+**Lesson:** A `CanvasPanel` slot with coincident anchors on an axis uses the offset on that axis as the widget's **size**, not a margin. A right-anchored slot (`Min.X=Max.X=1`) with `Right=0` has zero width — children paint but are unclickable. The signature symptom is **visible button text with no hover/press/click** while an identical button in a correctly-sized slot works. When a UMG widget renders but doesn't hit-test, check the slot's arranged width first (`UCanvasPanel::GetGeometryForSlot` or a post-layout geometry read), before suspecting z-order, visibility, or input mode.
