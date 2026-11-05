@@ -269,7 +269,7 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 	return false;
 }
 
-FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause)
+FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause, bool bSuppressPlayerReadyBreak)
 {
 	if (InState.Fighters.Num() < 2)
 	{
@@ -397,7 +397,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			Result.FinalState = S;
 			return Result;
 		}
-		if (bPlayerReady)
+		if (bPlayerReady && !bSuppressPlayerReadyBreak)
 		{
 			Result.bPlayerReady = true;
 			Result.StoppedReason = 1;
@@ -1569,7 +1569,7 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	return Info;
 }
 
-TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants)
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak)
 {
 	TArray<FBuhTimelineSnapshot> Snapshots;
 	FBuhCombatState S = InState;
@@ -1720,7 +1720,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		Snapshots.Add(Snap);
 
 		if (bPlayerReady && bOpponentReady) break;
-		if (bPlayerReady) break;
+		if (bPlayerReady && !bSuppressPlayerReadyBreak) break;
 		if (bOpponentReady)
 		{
 			S.Fighters[1].Action = BuhCombat::AI_MOVE;
@@ -1931,6 +1931,21 @@ void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
 	}
 }
 
+int32 UBuhCombatSim::MoveGhostsToFinalInstant()
+{
+	if (!bHasTimeline()) return 0;
+	int32 Len = GetTimelineLength();
+	int32 FinalIdx = FMath::Max(0, Len - 1);
+	MoveGhostsToInstant(FinalIdx);
+	return FinalIdx;
+}
+
+int32 UBuhCombatSim::GetFinalInstantIndex()
+{
+	if (!bHasTimeline()) return 0;
+	return FMath::Max(0, GetTimelineLength() - 1);
+}
+
 void UBuhCombatSim::SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant)
 {
 	FBuhCombatState State = MakeState(-500.0f, 500.0f, 100.0f, 100.0f, 0);
@@ -1979,7 +1994,8 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 	// reaction-pause mechanic (which fires at instant 0 for a reactable walk). Execution
 	// (ExecuteMove) still uses the default bSuppressReactionPause=false.
 	const bool bSuppress = (PlayerMove == 6);
-	const FBuhCombatResult R = ResolveCombat(State, PlayerMove, OpponentMove, 200, bSuppress);
+	const bool bSuppressPlayerReadyBreak = (PlayerMove < 0);
+	const FBuhCombatResult R = ResolveCombat(State, PlayerMove, OpponentMove, 200, bSuppress, bSuppressPlayerReadyBreak);
 
 	auto PhaseName = [](int32 P) -> const TCHAR*
 	{

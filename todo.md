@@ -1,114 +1,174 @@
-# Beneath Uncounted Heavens — Dead Opponent Buttons (RESOLVED 2026-11-04)
+# Beneath Uncounted Heavens — Preserve Opponent Predictions While Selecting Walk
 
-**Root cause confirmed:** `RightPanel`'s `CanvasPanelSlot` had coincident horizontal anchors (`Min.X=Max.X=1`) with `Right=0`, giving it **zero arranged width**. Children painted but the hit-test area was empty — visible button text with no hover/press/click.
+The previous fix works: selecting hypothetical opponent Dodge with no player action produces a visible opponent Dodge ghost.
 
-**Fix applied:** slot offsets `Left=-380, Top=60, Right=300, Bottom=-80`; anchors `(1,0)->(1,1)` kept; `bAutoSize=false`, `Alignment=(0,0)`. Compiled + saved `WBP_CombatUI`.
+However, the user reports a new regression:
 
-**Verified (graphical PIE, `2026-11-04 14-32-42`):** hovering the Dodge button shows `DODGE HOVER` and the button highlights with a real background; all four opponent buttons now receive mouse events.
+**When the opponent Dodge ghost is visible and the player selects Walk, the opponent's prediction ghost disappears.**
 
-**Cleanup done:** removed the `TempDiagnosticText` widget and the 5 diagnostic event chains (OpponentDodgeButton OnHovered/OnPressed + the 3 dangling TempRightProbeButton events). Real opponent `OnClicked` handlers preserved. Compiled clean, saved. All 4 `BUH.*` regression tests pass.
+This is incorrect during planning.
 
-See `notes.md` §9.15 (root cause + fix) and §4.3 (cross-reference). Original report below.
+The player must be able to select a hypothetical opponent action independently, then choose or change their own action while preserving that hypothetical response.
 
----
+## 1. Reproduce and diagnose the transition
 
-Read `chatgpt_report.md`.
+Start with:
 
-The report reveals a specific likely CanvasPanel geometry bug.
+- PlayerMove = -1 (no selected action)
+- HypotheticalOpponentMove = 3 (Dodge)
+- Orange opponent prediction ghost visible
 
-`RightPanel` has:
-- Horizontal anchors Min.X=1, Max.X=1
-- Offsets Left=-380, Right=0
-- A child SizeBox with desired width 300
+Then select Move → Walk without pressing Execute.
 
-Because the horizontal anchors coincide, the Right offset represents the slot's width, not its right margin.
+Before and after selecting Walk, log:
 
-Therefore RightPanel may have ZERO arranged width, while its children still paint outside that area.
+- PlayerMove
+- HypotheticalOpponentMove
+- CurrentTimeline length and selected Instant
+- GhostOpponent bHidden
+- GhostOpponent world position
+- Real opponent world position
+- Whether RefreshUI runs
+- Whether the prediction timeline is regenerated
 
-This would explain visible button text with no hover, press, or click.
+Determine whether:
 
-## Step 1 — Verify geometry
+A. Walk selection clears HypotheticalOpponentMove.
 
-In graphical PIE, inspect the real RightPanel and LeftPanel geometry.
+B. RefreshUI hides the prediction ghosts.
 
-Record their arranged local sizes, especially widths, using a reliable post-layout geometry read or `UCanvasPanel::GetGeometryForSlot`.
+C. The timeline regenerates but positions the ghost at Instant 0, overlapping the real opponent.
+
+D. Another handler moves or hides the ghost after RefreshUI.
+
+Do not assume disappearing means HiddenInGame=true. Verify its transform and visibility.
+
+## 2. Preserve hypothetical selection
+
+Selecting Walk must not clear the existing hypothetical opponent response.
 
 Expected:
-- LeftPanel approximately 300 units wide.
-- RightPanel potentially 0 units wide.
 
-Do not use headless -nullrhi geometry as visual proof.
+Before Walk:
+PlayerMove = -1
+HypotheticalOpponentMove = 3
 
-## Step 2 — Apply one minimal fix
+After selecting Walk:
+PlayerMove = 6
+HypotheticalOpponentMove = 3
 
-Change RightPanel's CanvasPanel slot offsets from:
+The opponent Dodge selection remains highlighted.
 
-Left=-380, Top=60, Right=0, Bottom=-80
+The active prediction should now represent Walk vs. Dodge.
 
-to:
+Only clear the hypothetical selection when the player explicitly clears it, resets the encounter, or commits an action and the relevant hypothetical preview is no longer valid.
 
-Left=-380, Top=60, Right=300, Bottom=-80
+## 3. Centralize ghost visibility
 
-Keep horizontal anchors (1,0) to (1,1).
+The previous fix explicitly unhides the ghosts after RefreshUI inside each opponent-button handler.
 
-Set Auto Size=false and Alignment=(0,0).
+This is fragile because other UI events also call RefreshUI.
 
-Do not modify the right-side buttons or prediction code.
+Make RefreshUI or one dedicated preview-state function the authoritative controller of ghost visibility.
 
-If MCP property editing fails, use an editor-side modification targeting the actual UCanvasPanelSlot:
+Desired rules:
 
-- GetOffsets()
-- Change the Right member to 300
-- SetOffsets()
-- SetAutoSize(false)
+- No hypothetical selected: cyan/orange prediction ghosts hidden.
+- Hypothetical selected with no player action: show opponent-only prediction.
+- Hypothetical selected with a player action: show the combined prediction.
+- Walk planning: yellow destination ghost also visible.
+- Execute/Reset: clear obsolete hypothetical previews appropriately.
 
-Compile and save the actual Widget Blueprint asset, then restart PIE.
+Do not require PlayerMove >= 0 for opponent-only predictions.
 
-Read back the saved slot properties.
+Avoid adding another temporary unhide operation solely to the Walk button.
 
-## Step 3 — Test the button
+## 4. Regenerate predictions when the player action changes
 
-Hover over the hypothetical Dodge button.
+When the player selects Walk while Dodge is already the hypothetical opponent response:
 
-The existing diagnostic should display:
+1. Keep HypotheticalOpponentMove=3.
+2. Read the current authoritative combat state.
+3. Apply the selected Walk target to a copied state.
+4. Generate the Walk vs. Dodge hypothetical timeline.
+5. Store the new timeline.
+6. Select a meaningful preview Instant.
+7. Move the cyan and orange ghosts to their predicted positions.
+8. Update the timeline slider, prediction text, and selected response indicator.
+9. Refresh the UI without hiding the active preview.
 
-DODGE HOVER
+The ghost should not be left using an obsolete opponent-only timeline.
 
-Then click it.
+## 5. Preserve meaningful preview timing
+
+The previous Dodge fix initialized the ghost at a meaningful final Instant so the displacement was immediately visible.
+
+Do not accidentally reset the display to Instant 0 when selecting Walk.
+
+If the selected preview Instant changes, keep the timeline slider synchronized.
+
+The predicted opponent may have moved only a small distance, so distinguish a hidden ghost from one overlapping the real fighter.
+
+Do not exaggerate or hardcode Dodge displacement.
+
+Use the existing CombatSim timeline.
+
+## 6. Preserve Walk slider behavior
+
+While Walk vs. Dodge is active:
+
+- Yellow ghost shows the intended Walk destination.
+- Cyan ghost shows the player's predicted position.
+- Orange ghost shows the opponent's predicted Dodge position.
+
+Adjusting the Walk slider should:
+
+- Update PlayerWalkTarget.
+- Move the yellow destination ghost.
+- Recompute Walk vs. Dodge.
+- Update cyan/orange ghosts and the timeline.
+- Preserve the hypothetical Dodge selection.
+
+Neither real fighter may move during planning.
+
+## 7. Test all relevant transitions
 
 Verify:
 
-- DODGE PRESSED fires.
-- OnClicked fires.
-- HypotheticalOpponentMove becomes 3.
-- The selected response label changes.
+A. None → hypothetical Dodge: orange Dodge ghost appears.
 
-If the width fix works, apply the same verification to Quick, Heavy, and Guard.
+B. Dodge hypothetical → select Walk: orange ghost remains visible or updates to the new predicted outcome.
 
-## Step 4 — If the panel still doesn't respond
+C. Walk selected → change Walk slider: yellow destination and hypothetical positions update correctly.
 
-Do not immediately rewrite prediction code.
+D. Walk vs. Dodge → switch hypothetical to Heavy: prediction regenerates for Walk vs. Heavy.
 
-Check the actual arranged geometry and hit-test path again.
+E. Walk vs. Heavy → switch player action to Quick: prediction regenerates for Quick vs. Heavy.
 
-Only if RightPanel now has nonzero width and clicks still fail, investigate its z-order relative to the full-canvas LeftPanelBG Image.
+F. Press Back while retaining a valid hypothetical selection: either preserve the opponent-only preview or explicitly clear the selection according to a consistent, documented rule. Do not silently hide a selected hypothesis.
 
-Temporarily raise RightPanel's CanvasPanel ZOrder above LeftPanelBG and test again.
+G. Execute: obsolete hypothetical ghosts clear and real combat uses the authoritative resolver.
 
-Change one variable at a time.
+H. Reset: real positions and preview visibility return to their initial states.
 
-## Step 5 — Final verification
+## 8. Verification
 
-Keep the working persistent cursor.
+Compile and save modified Blueprints.
 
-Confirm all opponent response buttons receive mouse events.
+Run existing combat and prediction automation tests.
 
-Only after that, determine whether the existing hypothetical selection and prediction functions behave correctly.
+In graphical PIE, capture:
 
-Remove temporary diagnostics after successful verification.
+- Opponent-only Dodge preview.
+- Walk vs. Dodge preview.
+- Two different Walk destinations with Dodge still selected.
 
-Run regressions and save affected assets.
+Inspect actual ghost transforms, not just visibility.
 
-No broad graph rewrites, unrelated changes, new mechanics, or Git commits.
+If MCP cannot simulate clicks, provide a short manual verification checklist and do not claim that interactive testing passed automatically.
 
-**Success criterion:** RightPanel has valid hit-testable geometry, and clicking the opponent buttons triggers their existing handlers.
+Preserve the working persistent cursor, team colors, and menu hierarchy.
+
+No new combat mechanics, Dash, Jump, 3D targeting, unrelated HUD redesign, or Git commits without authorization.
+
+**Success criterion:** Selecting or adjusting Walk never silently cancels an active hypothetical opponent Dodge. The preview updates to the correct Walk vs. Dodge simulation, with appropriate visible ghosts and synchronized timeline state.

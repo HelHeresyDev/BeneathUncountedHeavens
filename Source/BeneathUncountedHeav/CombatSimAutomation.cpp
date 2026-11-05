@@ -90,6 +90,24 @@ bool FBuhCombatFlowTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("H: player action sentinel"), S.Fighters[0].Action, -1);
 	}
 
+	// Step I — idle player + opponent Dodge. With bSuppressPlayerReadyBreak the timeline
+	// generates the full Dodge (3 startup + 2 active + 3 recovery = 9 instants) instead of
+	// stopping at instant 0. The opponent moves 60 units away (30 per active instant), from
+	// X=500 to X=560. Without the flag the idle player is always ready, so the timeline
+	// degenerates to a single instant-0 snapshot (the old bug).
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+		const TArray<FBuhTimelineSnapshot> Full = UBuhCombatSim::GenerateTimeline(
+			S, /*PlayerMove=*/-1, /*OpponentMove=*/3, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true);
+		TestEqual(TEXT("I: full Dodge timeline has 8 instants"), Full.Num(), 8);
+		TestEqual(TEXT("I: opponent dodged 60 units away"), Full.Last().OpponentX, 560.f);
+		TestEqual(TEXT("I: player stayed idle at -500"), Full.Last().PlayerX, -500.f);
+
+		const TArray<FBuhTimelineSnapshot> Degenerate = UBuhCombatSim::GenerateTimeline(
+			S, /*PlayerMove=*/-1, /*OpponentMove=*/3, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/false);
+		TestEqual(TEXT("I: without suppress the timeline stops at instant 0"), Degenerate.Num(), 1);
+	}
+
 	return true;
 }
 

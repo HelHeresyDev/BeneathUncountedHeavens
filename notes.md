@@ -4,6 +4,8 @@ Consult this file when a specific problem arises. It holds detailed toolset gotc
 
 Treat newer verified evidence as more authoritative than old progress notes. Do not retry a documented failed approach without new evidence.
 
+> **Verification rule:** Record what was changed, how it was tested, and what remains unverified. Source inspection proves implementation structure; Blueprint compilation proves compilation; graphical screenshots prove rendering; only actual interaction testing proves mouse-driven UI behavior. A fix is "done" only at the layer the task actually requires — do not declare a UI feature complete because its buttons are clickable when the downstream behavior is unverified.
+
 ---
 
 ## 1. Purpose and usage
@@ -94,12 +96,12 @@ Saving a Blueprint fails while PIE is running — call `StopPIE` first.
 
 Stop with `StopPIE` (empty args `{}`). Check state with `IsPIERunning`.
 
-### 2.6 ObjectTools limitations
+### 2.6 ObjectTools limitations (last verified 2026-11-04)
 
 - Cannot read or set **object-reference** properties (`Mesh`, `SetMaterial`, `StaticMesh`, `Material`, `MaterialRenderCustom`, `bUseDefaultMaterial`).
 - Can read/set primitive properties (`capsuleRadius`, `capsuleHalfHeight`, `Team`, `PlayerMove`, etc.).
 - `set_properties` cannot set Blueprint member variables like `PlayerMove` on a live PIE actor (returns "could not be set").
-- `set_properties` with `SetActorHiddenInGame` / `Hidden` returns `false` (silently fails). Use `SceneTools.remove_from_scene` to delete an actor instead.
+- `set_properties` with `SetActorHiddenInGame` / `Hidden` returns `false` (silently fails). `SceneTools.remove_from_scene` **deletes** an actor permanently from the level — fine for removing a stray/duplicate actor, but **not** a substitute for hiding a runtime prediction ghost, which must be shown/hidden at runtime via `RefreshUI` (§9.14), not deleted.
 - `set_properties` params: `instance` = `{"refPath":"<soft path>"}` (an object, not a bare string) and `values` = a **JSON string** of the property map, e.g. `"{\"Team\":1}"`. Passing `values` as a JSON object (or naming it `properties`) returns `false` with no error. `get_properties` instead takes `instance` (bare refPath string is accepted) + `properties` (array of names).
 - **CDO refPath** for `ActorTools.get_components`/`get_properties` is the no-colon form `AssetName.Default__ClassName` (e.g. `BP_Fighter.Default__BP_Fighter_C`). The colon form `BP_Fighter.BP_Fighter:Default__BP_Fighter` is rejected as "not valid Actor".
 - `describe_toolset` / `list_toolsets` are **top-level** tools: call `call_tool` with an empty `toolset_name` and the target toolset in the tool's own `toolset_name` argument. Passing a toolset as the `call_tool` `toolset_name` yields "Unknown tool describe_toolset".
@@ -135,7 +137,7 @@ Command-line `UnrealEditor-Cmd -ExecCmds="Automation RunScript ..."` fails; test
 - **`StateMachine|GetState` pin incompatibility:** `(StateMachine|GetState <actor>)` fails `write_graph_dsl` ("Could not connect pin Manager to UpdateContext. The pins may be incompatible types."). Use `Class|BPCombatManager|GetState <actor>` instead.
 - **`Behavior|SetValue` is target-first:** `(Behavior|SetValue <target> <value>)`. Value-first fails ("Could not connect pin ReturnValue to self. The pins may be incompatible types.").
 - **Bare widget-getter refs fail:** `(|GetTxtOpponentQuick)` → "does not exist". Use the full form `(Variables|WBP_CombatUI|GetTxtOpponentQuick)`.
-- **`read_graph_dsl` is not a round-trip:** it renames binds to `_returnvalue_N`, re-factors inlined literals back into binds, and canonicalizes node forms (`Class|BPCombatManager|GetState` reads back as `StateMachine|GetState`; full `Variables|WBP_CombatUI|GetTxtX` reads back as `(|GetTxtX)`). A successful `write_graph_dsl` (no error) is the compile proof — do not "re-fix" a graph based on read-back string mismatches.
+- **`read_graph_dsl` is not a round-trip:** it renames binds to `_returnvalue_N`, re-factors inlined literals back into binds, and canonicalizes node forms (`Class|BPCombatManager|GetState` reads back as `StateMachine|GetState`; full `Variables|WBP_CombatUI|GetTxtX` reads back as `(|GetTxtX)`). A successful `write_graph_dsl` call indicates the graph edit was **accepted**, not that it compiled — always compile the Blueprint, inspect for errors, save the asset, and verify the behavior separately. Read-back DSL is not guaranteed to match the submitted syntax, so do not "re-fix" a graph based on read-back string mismatches.
 - **`write_graph_dsl` applies incrementally:** a timed-out write leaves a partial graph. Raise the client timeout (`MCP_DO_TIMEOUT`, default 600s in `mcp_do.py`) for large graphs, then re-apply the full corrected DSL.
 
 ### 3.2 Node naming quirks
@@ -163,7 +165,7 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 
 ### 4.1 `UUserWidget` tick suppression
 
-`UUserWidget` has `meta=(DisableNativeTick)`, so a WidgetBlueprint parented to plain `UUserWidget` **never calls `NativeTick`/`NativeConstruct`**. Only a WBP parented to a non-UserWidget C++ subclass ticks. `WBP_CombatUI`'s parent is `UUserWidget` (NOT `UBUHCombatUI`), so C++ `NativeTick` diagnostics never fire; its timeline logic runs in Blueprint.
+`UUserWidget` has `meta=(DisableNativeTick)`, so a WidgetBlueprint parented to plain `UUserWidget` does **not tick** by default — but it **does** support `NativeConstruct`, and its Blueprint `Construct` event fires when the underlying Slate widget is constructed. (The earlier note that it "never calls `NativeConstruct`" was wrong.) `WBP_CombatUI`'s parent is `UUserWidget` (NOT `UBUHCombatUI`), so any C++ diagnostics written in the unrelated `UBUHCombatUI` subclass never run on it — that is why they never fired, not because `Construct` is suppressed. Its timeline logic runs in Blueprint. Native ticking is a separate issue from construction.
 
 `SetCanTick` is NOT a member of `UUserWidget` (it exists only on `ListViewBase`). Calling it on a `UserWidget`-derived class is a compile error.
 
@@ -172,7 +174,7 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 **Problem:** Bottom timeline, slider, and instant text were invisible.
 **Cause:** `RootCanvas` (CanvasPanel) is a child of `RootBox` (VerticalBox). Its `VerticalBoxSlot` had `SizeRule=Fill` with **coefficient 0**, so `RootCanvas` was allocated zero height and every child was clipped.
 **Fix:** Set the slot's `size.value` to `1` (keep `sizeRule=Fill`).
-**Caveat:** With a **single** Fill child, `Value=0` still renders full-size in some UE versions (confirmed by graphical PIE PASS). The coefficient-0 state is functionally harmless in the current WBP but should be set to 1 for correctness. `ObjectTools.set_properties` cannot set the sub-object slot (returns `false`), so the fix must be applied via the UMG editor or a full WBP rebuild.
+**Caveat (clarified):** The zero-height clipping was real when `RootCanvas` shared the VerticalBox with other Fill children — coefficient 0 gave it no share of the space. With the current **single** Fill child, UE allocates the full height regardless of coefficient, so the coefficient-0 state is functionally harmless (confirmed by graphical PIE PASS). Setting `size.value` to `1` remains the correct fix for robustness if a second Fill child is ever added. `ObjectTools.set_properties` cannot set the sub-object slot (returns `false`), so the fix must be applied via the UMG editor or a full WBP rebuild.
 
 ### 4.3 Background brushes do not paint
 
@@ -182,7 +184,7 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 
 **Note (2026-11-04):** The opponent-button "no background / unclickable" symptom was **not** a brush limitation — it was the zero-width `RightPanel` slot (§9.15). Once the slot got real width, the opponent buttons render with backgrounds and hit-test correctly. The only remaining unresolved cosmetic is the background band behind the bottom timeline.
 
-### 4.4 SlateInspector limitations
+### 4.4 SlateInspector limitations (last verified 2026-11-04)
 
 - Only tracks **top-level** editor Slate windows. PIE game UMG widgets are composited into the viewport and are not reachable as Slate refs.
 - **Popup context menus cannot be clicked** — `Click`/`PressKey` return success but don't execute on the popup window.
@@ -212,10 +214,10 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 
 Passing one type of test does NOT prove another type succeeded.
 
-### 6.2 Headless `-nullrhi` limitations
+### 6.2 Headless `-nullrhi` limitations (last verified 2026-11-04)
 
 - `CaptureEditorImage` returns a 1×1 black placeholder (no real rendering).
-- `ProcessEvent` on Blueprint functions does **not** modify instance/CDO Blueprint variable memory in a readable way. Object refs land but side effects (e.g. `SetActorLocation`) are not observable.
+- `ProcessEvent` on Blueprint functions in the **editor world** shows no observable gameplay side effects (e.g. `SetActorLocation`) — but this is an **editor-world context** issue (§9.6), not a `-nullrhi` limitation. In a real PIE game world the same functions take effect.
 - Automated button-click → lunge action-execution **cannot be proven** in the headless editor.
 - Verify PIE state via actor/property inspection, not screenshots.
 - **`StopPIE` can crash the editor** (SIGSEGV observed 2026-10-30). If PIE verification is complete and no further Blueprint save is needed, leave PIE running or kill/relaunch the editor instead of relying on `StopPIE`.
@@ -271,14 +273,14 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 
 ---
 
-## 8. Known unresolved limitations
+## 8. Known unresolved limitations (last verified 2026-11-04)
 
-- **Execute-disable blocked:** `RefreshUI` cannot add `SetIsEnabled` on `BtnExecute` due to the `write_graph_dsl` literal-bind limitation. Current behavior is safe: the `ExecuteMove` `PlayerMove==-1` guard makes a stray Execute a no-op.
-- **TopBar cosmetic overlap:** `TopBarContent` (HorizontalBox) holds 5 labels with no explicit spacing; they run together ("1000 100Select a move Ready"). The Fill-spacer fix was lost in the Auto4 restoration and could not be re-applied (same `write_graph_dsl`/`set_properties` limitations).
+- **Execute-disable (re-applicable):** Adding `SetIsEnabled` on `BtnExecute` in `RefreshUI` was previously blocked by the `write_graph_dsl` literal-bind limitation, but §3.1 now documents a workaround (inline the literal into the consuming node call). Current behavior is still safe: the `ExecuteMove` `PlayerMove==-1` guard makes a stray Execute a no-op. The disable can now be re-applied if desired.
+- **TopBar cosmetic overlap (re-applicable):** `TopBarContent` (HorizontalBox) holds 5 labels with no explicit spacing; they run together ("1000 100Select a move Ready"). The Fill-spacer fix was lost in the Auto4 restoration. It can now be re-applied via the §3.1 literal-bind workaround or `set_properties` slot editing.
 - **Background band behind timeline:** `Border`/`Image` backgrounds render unreliably. The slider/instant display work; a visible 80–110px background band remains unresolved (cosmetic).
 - **MCP cannot click UMG buttons or simulate input:** the full interaction flow (select → execute → walk → reaction → reset) requires manual graphical PIE or a C++ automation test that calls the Blueprint functions.
 - **`find_actors` unreliable:** may return empty for actors that exist. Use `ActorTools.get_actor_transform` with a known name to verify.
-- **Port-8000 bind race:** can occur on editor relaunch. Use `lsof -ti:8000 | xargs kill -9` to free the port.
+- **Port-8000 bind race:** can occur on editor relaunch. First identify the owning process (`lsof -ti:8000`), confirm it is a stale `UnrealEditor`/MCP process, then terminate only that PID (`kill -9 <pid>`). Do not blindly `kill -9` every PID on the port — a live editor or another service may own it.
 
 ---
 
@@ -304,6 +306,8 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 **Problem:** Four `BP_Fighter` actors in the level (Teams 0–3) instead of two.
 **Fix:** Removed `BP_Fighter_C_2` and `BP_Fighter_C_3` via `SceneTools.remove_from_scene`. Saved the level.
 **Caveat:** `ObjectTools.set_properties` with `SetActorHiddenInGame`/`Hidden` returns `false` (silently fails). `remove_from_scene` is the reliable deletion path.
+
+**Status (2026-11-04):** This was historical cleanup of duplicate fighters. The current level intentionally contains **two real fighters** (`BP_Fighter_C_0`/`_C_1`), **two prediction ghosts** (`BP_Fighter_C_2`/`_C_3`, `bIsGhost=true`, §9.12), and **one destination ghost** (`BP_DestGhost`, §9.13). Do not delete the prediction/destination ghost actors — they are required for the Walk preview. (The `_C_2`/`_C_3` names were later reused for the ghost actors.)
 
 ### 9.4 WBP compile error from stale SelectWalk nodes (RESOLVED)
 
@@ -350,6 +354,8 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 **Fix:** Reordered `BeginPlay` so the pawn is destroyed **before** `SetViewTargetWithBlend`. The blend then starts from the default view and transitions to the `CameraActor`. Verified in graphical PIE (`20261102_091120`): white pawn hidden, floor + fighters visible.
 **Lesson:** When hiding the default pawn by destroying it, do so before setting the view target, not after.
 
+**Status (2026-11-04, historical):** This immediate-destroy reorder is now historical. The current cursor work (§9.16) replaced it with a **delayed** lookup-and-destruction so the view blend to `CameraActor` can complete first. See §9.16 for the current implementation.
+
 ### 9.11 Editor-visible team colors via Construction Script (RESOLVED)
 
 **Problem:** Fighter cylinders were grey in the level editor before PIE because their team material was assigned in `BeginPlay`, which only runs at runtime. The todo required the colors to be visible in the editor without pressing Play.
@@ -391,8 +397,8 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 - Assets saved: `WBP_CombatUI`, `BP_Fighter`, `Lvl_TacticalDuel`, ghost materials.
 
 **Known limitation:**
-- Section 8 (stale ghost reset when Walk cancelled): `RefreshUI` rewrite blocked by the DSL literal-bind restriction. Ghosts remain at the last preview position until the next Walk selection or timeline scrub. The `DestSlider` handler does move both ghosts to correct positions during Walk planning, so the core preview is accurate.
-- C++ rebuild pending for tag-based `MoveGhostsToInstant` (old name-based code still works because actors are named `BP_Fighter_C_2`/`C_3`).
+- **[ARCHIVED]** Section 8 (stale ghost reset when Walk cancelled) is resolved by the `RefreshUI` centralization in §9.14 — ghost show/hide now funnels through `RefreshUI` on every state change, so the literal-bind block no longer matters.
+- **[ARCHIVED]** The tag-based `MoveGhostsToInstant` C++ edit was applied and the module rebuilt (all four `BUH.*` tests pass, §5); the name-based fallback is no longer relied on. The earlier "rebuild pending" note is superseded.
 - Headless `-nullrhi` `CaptureEditorImage` returns 1×1 placeholder; graphical capture required for visual ghost/color evidence. MCP cannot click/drag UMG sliders; graphical interaction verification requires manual steps.
 
 **Lesson:** When a predictive ghost system stops working, check (1) whether the ghost actors still exist in the level, (2) whether the slider handler actually repositions them, (3) whether the slider's value range matches the expected world-space coordinate space, and (4) whether C++ and Blueprint targeting use the same actor identification (tags vs names). A slider with range `0..1` is a fraction, not a world coordinate — always map it explicitly.
@@ -438,4 +444,22 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 
 **Verified (graphical PIE, `2026-11-04 14-32-42`):** Hovering the Dodge button shows `DODGE HOVER` in the top-center diagnostic and the button highlights (hover state) with a real background; all four opponent buttons now render with backgrounds and receive mouse events.
 
+**Status (partially resolved, 2026-11-04):** RightPanel hit-testing is fixed and the Dodge hover is verified in graphical PIE. However, all four opponent button **click** handlers (`OpponentQuick`/`Heavy`/`Guard`/`Dodge` → `SetHypotheticalOpponentMove` → prediction) still require complete manual verification, and end-to-end hypothetical selection + timeline generation is not yet confirmed. Do not reopen the hit-testing investigation without new evidence, and do not declare the prediction feature complete merely because the buttons are now clickable.
+
 **Lesson:** A `CanvasPanel` slot with coincident anchors on an axis uses the offset on that axis as the widget's **size**, not a margin. A right-anchored slot (`Min.X=Max.X=1`) with `Right=0` has zero width — children paint but are unclickable. The signature symptom is **visible button text with no hover/press/click** while an identical button in a correctly-sized slot works. When a UMG widget renders but doesn't hit-test, check the slot's arranged width first (`UCanvasPanel::GetGeometryForSlot` or a post-layout geometry read), before suspecting z-order, visibility, or input mode.
+
+### 9.16 Persistent mouse cursor for tactical combat (RESOLVED)
+
+**Problem:** The mouse cursor was captured by the first-person mouse-look, so the combat UI buttons could not be hovered or clicked.
+
+**Cause:** The default first-person player controller's mouse-look input mapping context (`IMC_Default`/`IMC_MouseLook`) was active during the encounter, capturing the mouse for camera rotation and hiding the cursor.
+
+**Fix:**
+- `BP_CombatManager.BeginPlay` sets the player input mode to **UI Only** so the cursor is visible and all mouse input routes to the UMG.
+- `WBP_CombatUI` is focusable so it can receive and dispatch mouse events.
+- Removed the `IMC_Default`/`IMC_MouseLook` mapping contexts from `BP_FirstPersonPlayerController` so mouse-look no longer captures the cursor during combat.
+- The default pawn is hidden via a **delayed** lookup-and-destruction (after the view blend to `CameraActor` completes), replacing the earlier immediate-destroy sequence (§9.10, now historical).
+
+**Distinction:** This is the **tactical combat** input mode. Future exploration/movement gameplay will need a different input mode (game + UI) where the cursor is hidden and the mouse drives camera look. Do not conflate the two.
+
+**Verified (graphical PIE, 2026-11-04):** cursor visible over the UI; opponent and player buttons hover and click (§9.15). All four `BUH.*` tests pass.

@@ -111,7 +111,7 @@ class BENEATHUNCOUNTEDHEAV_API UBuhCombatSim : public UBlueprintFunctionLibrary
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatResult ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause = false);
+	static FBuhCombatResult ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause = false, bool bSuppressPlayerReadyBreak = false);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed);
@@ -178,7 +178,7 @@ public:
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static TArray<FBuhTimelineSnapshot> GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants);
+	static TArray<FBuhTimelineSnapshot> GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak = false);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetCurrentTimeline(const TArray<FBuhTimelineSnapshot>& InTimeline);
@@ -234,6 +234,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void MoveGhostsToInstant(int32 Instant);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 MoveGhostsToFinalInstant();
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 GetFinalInstantIndex();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant);
