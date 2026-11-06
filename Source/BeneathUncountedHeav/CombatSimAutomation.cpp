@@ -108,6 +108,128 @@ bool FBuhCombatFlowTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("I: without suppress the timeline stops at instant 0"), Degenerate.Num(), 1);
 	}
 
+	// Step J — Walk (6) vs hypothetical Dodge (3), the exact Walk-transition regression.
+	// With bSuppressPlayerReadyBreak=false the player is ready the instant Walk commits, so the
+	// timeline breaks at instant 0 (the reported "0/0" + ghost-not-separated symptom). With the
+	// flag true the timeline runs to the end and the Dodge ghost is displaced.
+	{
+		FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+		S = UBuhCombatSim::WithPlayerWalkTarget(S, -400.f);
+		const TArray<FBuhTimelineSnapshot> WalkDodgeSuppress = UBuhCombatSim::GenerateTimeline(
+			S, /*PlayerMove=*/6, /*OpponentMove=*/3, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true);
+		TestTrue(TEXT("J: Walk-vs-Dodge with suppress generates a multi-instant timeline"), WalkDodgeSuppress.Num() > 1);
+		TestTrue(TEXT("J: Walk-vs-Dodge with suppress displaces the Dodge ghost"), WalkDodgeSuppress.Last().OpponentX > 500.f);
+
+		const TArray<FBuhTimelineSnapshot> WalkDodgeNoSuppress = UBuhCombatSim::GenerateTimeline(
+			S, /*PlayerMove=*/6, /*OpponentMove=*/3, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/false);
+		TestTrue(TEXT("J: Walk-vs-Dodge without suppress still generates a multi-instant timeline"), WalkDodgeNoSuppress.Num() > 1);
+
+		// Step K — documents WHY the widget must call WithPlayerWalkTarget: a plain MakeState
+		// with NO walk target degenerates (Walk commits instantly, timeline breaks at instant 0,
+		// ghosts never move). RegeneratePredictionPreview now applies WithPlayerWalkTarget for
+		// move 6, so this degenerate path is no longer what the widget exercises.
+		{
+			const FBuhCombatState Plain = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+			const TArray<FBuhTimelineSnapshot> PlainTimeline = UBuhCombatSim::GenerateTimeline(
+				Plain, /*PlayerMove=*/6, /*OpponentMove=*/3, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/false);
+			UE_LOG(LogTemp, Display, TEXT("K: plain MakeState Walk-vs-Dodge timeline Num=%d lastOppX=%.1f lastPlayerX=%.1f"),
+				PlainTimeline.Num(), PlainTimeline.Last().OpponentX, PlainTimeline.Last().PlayerX);
+			TestEqual(TEXT("K: plain-state Walk-vs-Dodge degenerates to 2 instants (no walk target)"), PlainTimeline.Num(), 2);
+			TestEqual(TEXT("K: plain-state opponent ghost stays put"), FMath::IsNearlyEqual(PlainTimeline.Last().OpponentX, 500.f), true);
+			TestEqual(TEXT("K: plain-state player ghost stays put"), FMath::IsNearlyEqual(PlainTimeline.Last().PlayerX, -500.f), true);
+		}
+	}
+
+	// Step L — Walk (6) vs hypothetical Quick (0), Heavy (1), and Guard (2), the exact
+	// Walk-reaction audit. Same initial state, same walk target toward the opponent.
+	// Verify four prediction scenarios with the same starting positions and Walk target.
+	// Quick and Heavy begin at instant 0, so the reaction pause triggers immediately.
+	// Guard is not an attack, so the player walks until the decision boundary.
+	// Dodge is not an attack, so no reaction pause; the preview ends at the decision boundary.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 500.f);
+
+		const TArray<FBuhTimelineSnapshot> TQuick = UBuhCombatSim::GenerateTimeline(
+			Base, /*PlayerMove=*/6, /*OpponentMove=*/0, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true, /*bStopAtDecisionBoundary=*/true);
+		UE_LOG(LogTemp, Display, TEXT("L: Walk-vs-Quick Num=%d stop=%d playerX=%.1f oppX=%.1f reaction=%d threat=%d"),
+			TQuick.Num(), TQuick.Last().StoppedReason, TQuick.Last().PlayerX, TQuick.Last().OpponentX, (int32)TQuick.Last().bReactionOpportunity, TQuick.Last().ObservedThreatAction);
+		TestEqual(TEXT("L: Walk-vs-Quick reaction pause at instant 0"), TQuick.Num(), 1);
+		TestEqual(TEXT("L: Walk-vs-Quick stop reason is reaction"), TQuick.Last().StoppedReason, 5);
+		TestEqual(TEXT("L: Walk-vs-Quick player ghost stays at start"), TQuick.Last().PlayerX, -500.f);
+		TestTrue(TEXT("L: Walk-vs-Quick reaction opportunity"), TQuick.Last().bReactionOpportunity);
+		TestEqual(TEXT("L: Walk-vs-Quick observed threat is Quick"), TQuick.Last().ObservedThreatAction, 0);
+
+		const TArray<FBuhTimelineSnapshot> THeavy = UBuhCombatSim::GenerateTimeline(
+			Base, /*PlayerMove=*/6, /*OpponentMove=*/1, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true, /*bStopAtDecisionBoundary=*/true);
+		UE_LOG(LogTemp, Display, TEXT("L: Walk-vs-Heavy Num=%d stop=%d playerX=%.1f oppX=%.1f reaction=%d threat=%d"),
+			THeavy.Num(), THeavy.Last().StoppedReason, THeavy.Last().PlayerX, THeavy.Last().OpponentX, (int32)THeavy.Last().bReactionOpportunity, THeavy.Last().ObservedThreatAction);
+		TestEqual(TEXT("L: Walk-vs-Heavy reaction pause at instant 0"), THeavy.Num(), 1);
+		TestEqual(TEXT("L: Walk-vs-Heavy stop reason is reaction"), THeavy.Last().StoppedReason, 5);
+		TestEqual(TEXT("L: Walk-vs-Heavy player ghost stays at start"), THeavy.Last().PlayerX, -500.f);
+		TestTrue(TEXT("L: Walk-vs-Heavy reaction opportunity"), THeavy.Last().bReactionOpportunity);
+		TestEqual(TEXT("L: Walk-vs-Heavy observed threat is Heavy"), THeavy.Last().ObservedThreatAction, 1);
+
+		const TArray<FBuhTimelineSnapshot> TGuard = UBuhCombatSim::GenerateTimeline(
+			Base, /*PlayerMove=*/6, /*OpponentMove=*/2, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true, /*bStopAtDecisionBoundary=*/true);
+		UE_LOG(LogTemp, Display, TEXT("L: Walk-vs-Guard Num=%d stop=%d playerX=%.1f oppX=%.1f reaction=%d"),
+			TGuard.Num(), TGuard.Last().StoppedReason, TGuard.Last().PlayerX, TGuard.Last().OpponentX, (int32)TGuard.Last().bReactionOpportunity);
+		TestTrue(TEXT("L: Walk-vs-Guard player ghost moves"), TGuard.Last().PlayerX > -500.f);
+		TestEqual(TEXT("L: Walk-vs-Guard ends at decision boundary (12 instants)"), TGuard.Num(), 12);
+		TestEqual(TEXT("L: Walk-vs-Guard stop reason is decision boundary"), TGuard.Last().StoppedReason, 2);
+		TestFalse(TEXT("L: Walk-vs-Guard no reaction"), TGuard.Last().bReactionOpportunity);
+
+		const TArray<FBuhTimelineSnapshot> TDodge = UBuhCombatSim::GenerateTimeline(
+			Base, /*PlayerMove=*/6, /*OpponentMove=*/3, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true, /*bStopAtDecisionBoundary=*/true);
+		UE_LOG(LogTemp, Display, TEXT("L: Walk-vs-Dodge Num=%d stop=%d playerX=%.1f oppX=%.1f reaction=%d"),
+			TDodge.Num(), TDodge.Last().StoppedReason, TDodge.Last().PlayerX, TDodge.Last().OpponentX, (int32)TDodge.Last().bReactionOpportunity);
+		TestTrue(TEXT("L: Walk-vs-Dodge player ghost moves"), TDodge.Last().PlayerX > -500.f);
+		TestFalse(TEXT("L: Walk-vs-Dodge no reaction (Dodge is not an attack)"), TDodge.Last().bReactionOpportunity);
+		TestEqual(TEXT("L: Walk-vs-Dodge stop reason is decision boundary"), TDodge.Last().StoppedReason, 2);
+	}
+
+	// Verify Continue Walk (decision 7) preserves the existing Walk state during a reaction pause.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 500.f);
+
+		// First, simulate Walk vs Quick to get the reaction pause state.
+		FBuhCombatResult R1 = UBuhCombatSim::ResolveCombat(Base, /*PlayerDecision=*/6, /*OpponentDecision=*/0, /*MaxInstants=*/200);
+		TestTrue(TEXT("M: Walk-vs-Quick reaction opportunity"), R1.bReactionOpportunity);
+		TestEqual(TEXT("M: Walk-vs-Quick reaction instant is 0"), R1.ReactionInstant, 0);
+
+		// Now, from the reaction pause state, choose Continue Walk (decision 7).
+		// The player's Walk action should be preserved (Action=6), and the simulation
+		// continues with the existing Walk state (no restart, no new action).
+		FBuhCombatResult R2 = UBuhCombatSim::ResolveCombat(R1.FinalState, /*PlayerDecision=*/7, /*OpponentDecision=*/-1, /*MaxInstants=*/200);
+		UE_LOG(LogTemp, Display, TEXT("M: Continue-Walk playerAction=%d playerPhase=%d playerX=%.1f stop=%d"),
+			R2.FinalState.Fighters[0].Action, R2.FinalState.Fighters[0].Phase, R2.FinalState.Fighters[0].X, R2.StoppedReason);
+		TestEqual(TEXT("M: Continue Walk preserves player Walk action"), R2.FinalState.Fighters[0].Action, 6);
+		TestTrue(TEXT("M: Continue Walk player walks (X > -500)"), R2.FinalState.Fighters[0].X > -500.f);
+	}
+
+	// Verify one uninterrupted encounter: Walk, opponent Quick, reaction pause, Continue Walk, walk resumes.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 500.f);
+
+		// Step 1: Walk vs Quick, reaction pause at instant 0.
+		FBuhCombatResult R1 = UBuhCombatSim::ResolveCombat(Base, /*PlayerDecision=*/6, /*OpponentDecision=*/0, /*MaxInstants=*/200);
+		TestTrue(TEXT("N: Step 1 reaction opportunity"), R1.bReactionOpportunity);
+
+		// Step 2: Continue Walk from the reaction pause state.
+		FBuhCombatResult R2 = UBuhCombatSim::ResolveCombat(R1.FinalState, /*PlayerDecision=*/7, /*OpponentDecision=*/-1, /*MaxInstants=*/200);
+		UE_LOG(LogTemp, Display, TEXT("N: Step 2 playerX=%.1f playerPhase=%d stop=%d"),
+			R2.FinalState.Fighters[0].X, R2.FinalState.Fighters[0].Phase, R2.StoppedReason);
+		TestTrue(TEXT("N: Step 2 player walks (X > -500)"), R2.FinalState.Fighters[0].X > -500.f);
+		TestEqual(TEXT("N: Step 2 player still walking (Action=6)"), R2.FinalState.Fighters[0].Action, 6);
+
+		// Step 3: Reset the encounter.
+		FBuhCombatState Reset = UBuhCombatSim::MakeState(-500, 500, 100, 100, Seed);
+		TestEqual(TEXT("N: Step 3 reset player X"), Reset.Fighters[0].X, -500.f);
+		TestEqual(TEXT("N: Step 3 reset opponent X"), Reset.Fighters[1].X, 500.f);
+	}
+
 	return true;
 }
 

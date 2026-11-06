@@ -56,6 +56,7 @@ namespace BuhCombat
 		case 4: return TEXT("Walk Toward");
 		case 5: return TEXT("Walk Away");
 		case 6: return TEXT("Walk");
+		case 7: return TEXT("Continue Walk");
 		default: return TEXT("Idle");
 		}
 	}
@@ -288,8 +289,13 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 7) continue;
+		if (Decision < 0 || Decision >= 8) continue;
 		FBuhFighterState& F = S.Fighters[i];
+		if (Decision == 7)
+		{
+			if (IsReactableWalk(F)) { /* Continue Walk: preserve existing state */ }
+			continue;
+		}
 		if (F.Phase == 0)
 		{
 			F.Action = Decision;
@@ -1563,13 +1569,19 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	{
 		Info.ThreatRemainingPrep = FMath::Max(0, BuhCombat::MoveData[Threat.Action].Startup - Threat.PhaseInstants);
 	}
-	// The player was walking; reacting with another walk is redundant. The
-	// authoritative legal reactions are the non-walk actions.
-	Info.LegalActions = { 0, 1, 2, 3 };
+	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue Walk (if the player was walking).
+	if (Info.PlayerCurrentAction == 6)
+	{
+		Info.LegalActions = { 0, 1, 2, 3, 7 };
+	}
+	else
+	{
+		Info.LegalActions = { 0, 1, 2, 3 };
+	}
 	return Info;
 }
 
-TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak)
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak, bool bStopAtDecisionBoundary)
 {
 	TArray<FBuhTimelineSnapshot> Snapshots;
 	FBuhCombatState S = InState;
@@ -1579,8 +1591,13 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 7) continue;
+		if (Decision < 0 || Decision >= 8) continue;
 		FBuhFighterState& F = S.Fighters[i];
+		if (Decision == 7)
+		{
+			if (IsReactableWalk(F)) { /* Continue Walk: preserve existing state */ }
+			continue;
+		}
 		if (F.Phase == 0)
 		{
 			F.Action = Decision;
@@ -1632,6 +1649,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.ObservedThreatAction = S.Fighters[1 - ReactionEvent.Fighter].Action;
 			Snap.Events.Add(ReactionEvent);
 			Snapshots.Add(Snap);
+			Snapshots.Last().StoppedReason = 5;
 			break;
 		}
 
@@ -1694,6 +1712,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.bOpponentReady = (S.Fighters[1].Phase == 0);
 			Snap.Events = InstEvents;
 			Snapshots.Add(Snap);
+			Snapshots.Last().StoppedReason = 3;
 			break;
 		}
 
@@ -1719,10 +1738,11 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		Snap.Events = InstEvents;
 		Snapshots.Add(Snap);
 
-		if (bPlayerReady && bOpponentReady) break;
-		if (bPlayerReady && !bSuppressPlayerReadyBreak) break;
+		if (bPlayerReady && bOpponentReady) { Snapshots.Last().StoppedReason = 2; break; }
+		if (bPlayerReady && !bSuppressPlayerReadyBreak) { Snapshots.Last().StoppedReason = 1; break; }
 		if (bOpponentReady)
 		{
+			if (bStopAtDecisionBoundary) { Snapshots.Last().StoppedReason = 2; break; }
 			S.Fighters[1].Action = BuhCombat::AI_MOVE;
 			S.Fighters[1].Phase = 1;
 			S.Fighters[1].PhaseInstants = 0;
@@ -1731,6 +1751,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		}
 	}
 
+	if (Snapshots.Num() > 0 && Snapshots.Last().StoppedReason == 0) Snapshots.Last().StoppedReason = 4;
 	return Snapshots;
 }
 
@@ -2061,7 +2082,25 @@ FString UBuhCombatSim::GetTimelineLengthText(int32 CurrentInstant)
 	if (!bHasTimeline()) return TEXT("No preview");
 	const int32 Len = GetTimelineLength();
 	const int32 Index = FMath::Clamp(CurrentInstant, 0, Len - 1);
-	return FString::Printf(TEXT("Instant %d / %d"), GetSnapshotInstant(Index), Len);
+	const FBuhTimelineSnapshot S = GetSnapshotAt(Index);
+	const FBuhTimelineSnapshot S0 = GetSnapshotAt(0);
+	const FBuhTimelineSnapshot Last = GetSnapshotAt(Len - 1);
+	const int32 Phase = S.PlayerPhase;
+	const TCHAR* PhaseName = (Phase == 0) ? TEXT("idle") : (Phase == 1) ? TEXT("startup") : (Phase == 2) ? TEXT("active") : TEXT("recovery");
+	const float Traveled = FMath::Abs(S.PlayerX - S0.PlayerX);
+	float Remaining = 0.f;
+	if (GPlayerWalkTarget >= -9998.f) Remaining = FMath::Abs(GPlayerWalkTarget - S.PlayerX);
+	FString StopReason;
+	switch (Last.StoppedReason)
+	{
+	case 1: StopReason = TEXT(" | Player ready"); break;
+	case 2: StopReason = TEXT(" | Decision boundary"); break;
+	case 3: StopReason = TEXT(" | KO"); break;
+	case 4: StopReason = TEXT(" | Max instants"); break;
+	case 5: StopReason = FString::Printf(TEXT(" | Reaction: %s observed"), *GetMoveNameText(Last.ObservedThreatAction)); break;
+	default: StopReason = TEXT(" | Unknown"); break;
+	}
+	return FString::Printf(TEXT("Instant %d/%d: X=%.0f, %s %s | Traveled: %.0f uu | Remaining: %.0f uu%s"), GetSnapshotInstant(Index), Len, S.PlayerX, *GetMoveNameText(S.PlayerAction), PhaseName, Traveled, Remaining, *StopReason);
 }
 
 FString UBuhCombatSim::GetPreviewDistanceText(int32 Instant)

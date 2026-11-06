@@ -88,6 +88,7 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhTimelineSnapshot
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") bool bReactionOpportunity = false;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 ReactionFighter = -1;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 ObservedThreatAction = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 StoppedReason = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") TArray<FBuhCombatEvent> Events;
 };
 
@@ -178,7 +179,7 @@ public:
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static TArray<FBuhTimelineSnapshot> GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak = false);
+	static TArray<FBuhTimelineSnapshot> GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak = false, bool bStopAtDecisionBoundary = false);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetCurrentTimeline(const TArray<FBuhTimelineSnapshot>& InTimeline);
