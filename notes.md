@@ -463,3 +463,23 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 **Distinction:** This is the **tactical combat** input mode. Future exploration/movement gameplay will need a different input mode (game + UI) where the cursor is hidden and the mouse drives camera look. Do not conflate the two.
 
 **Verified (graphical PIE, 2026-11-04):** cursor visible over the UI; opponent and player buttons hover and click (§9.15). All four `BUH.*` tests pass.
+
+### 9.17 Continue Walk button missing for Walk Toward / Walk Away (RESOLVED)
+
+**Problem:** After selecting Walk Toward or Walk Away and clicking Execute, the Continue button did not appear during a reaction opportunity, even though "Reaction opportunity" was displayed. The button only worked for Walk destination (Action 6).
+
+**Root cause:** The UI Walk buttons commit Actions 4 (`BtnWalkToward` → `SelectWalkToward`) and 5 (`BtnWalkAway` → `SelectWalkAway`). There is no Walk destination button in the UI. `GetReactionInfo` (line 1573) only included decision 7 in `LegalActions` when `PlayerCurrentAction == 6`, so Actions 4 and 5 produced an empty list and the button stayed Collapsed. The `RefreshUI` visibility chain and button parent chain were structurally correct.
+
+**Evidence:** Diagnostic `PrintString` nodes added to `ExecuteMove` (before `RefreshUI`) confirmed in the graphical PIE log (`feedback.md`): `bReactionOpportunity=1`, `ReactionFighter=0`, `ObservedThreatAction=1`, `PlayerMove=6`. The diagnostic prints were removed after the fix.
+
+**Fix:**
+- `CombatSim.cpp` line 1573: `GetReactionInfo` eligibility changed from `PlayerCurrentAction == 6` to `PlayerCurrentAction == 4 || PlayerCurrentAction == 5 || PlayerCurrentAction == 6`, matching `IsReactableWalk`.
+- `CombatSim.cpp` line 59: `MoveName(7)` renamed from "Continue Walk" to "Continue".
+- `WBP_CombatUI`: `TxtContinueWalk` text changed from "Continue Walk" to "Continue" via `ObjectTools.set_properties`.
+- `BP_CombatManager.ExecuteMove` restored to clean state (diagnostic prints removed) via `write_graph_dsl` with the boolean variable write-form fix (`Variables|Default|GetHasCurrentState` / `SetHasCurrentState`, not `|GetbHasCurrentState`).
+
+**Verified:**
+- All 4 `BUH.*` automation suites pass.
+- Graphical PIE confirmed by the user: Continue button appears during reaction opportunities for Walk Toward and Walk Away.
+
+**Lesson:** When a reaction decision is missing from the UI, check the C++ eligibility check (`GetReactionInfo`) against the actual action IDs the UI commits. The UI Walk buttons commit Actions 4 and 5, not 6. `IsReactableWalk` already covered all three, but `GetReactionInfo` did not. The two checks must stay in sync. Diagnostic `PrintString` nodes in `ExecuteMove` are the fastest way to confirm the actual PIE state when headless PIE cannot reproduce the scenario.

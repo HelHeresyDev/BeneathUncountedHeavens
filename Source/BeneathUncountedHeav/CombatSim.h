@@ -301,4 +301,23 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetBlueMaterialOnFighter(AActor* Fighter);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FVector ScreenToGround(APlayerController* PC, FVector2D ScreenPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FVector2D WorldToScreen(APlayerController* PC, FVector WorldPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FVector2D ScreenToGroundXY(APlayerController* PC, FVector2D ScreenPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float ScreenToGroundX(APlayerController* PC, FVector2D ScreenPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float ScreenToGroundY(APlayerController* PC, FVector2D ScreenPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void DrawGroundLine(APlayerController* PC, FVector Start, FVector End, float Thickness, float Duration);
+
 };

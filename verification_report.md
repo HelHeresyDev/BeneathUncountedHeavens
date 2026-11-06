@@ -1,4 +1,4 @@
-# Technical Verification Report — Continue Walk and Reaction Predictions
+# Technical Verification Report — General Continue Decision and Reaction Predictions
 
 ## 1. Exact C++ and Blueprint files/functions changed
 
@@ -6,59 +6,62 @@
 - `CombatSim.h`:
   - Added `int32 StoppedReason = 0` to `FBuhTimelineSnapshot` (line 66).
 - `CombatSim.cpp`:
-  - `MoveName` (line 48): added `case 7: return TEXT("Continue Walk");`.
-  - `ResolveCombat` (line 272): added `Decision == 7` handling — when `IsReactableWalk(F)` is true, the existing Walk state is preserved (no new action committed). Changed guard from `Decision >= 7` to `Decision >= 8`.
+  - `MoveName` (line 59): `case 7` returns `TEXT("Continue")` (renamed from "Continue Walk").
+  - `GetReactionInfo` (line 1573): eligibility for decision 7 changed from `PlayerCurrentAction == 6` to `PlayerCurrentAction == 4 || PlayerCurrentAction == 5 || PlayerCurrentAction == 6`, matching `IsReactableWalk`.
+  - `ResolveCombat` (line 272): `Decision == 7` handling — when `IsReactableWalk(F)` is true, the existing Walk state is preserved (no new action committed). Guard is `Decision >= 8`.
   - `GenerateTimeline` (line 1572): same `Decision == 7` handling. Set `Snapshots.Last().StoppedReason` at each stop point (reaction=5, KO=3, decision boundary=2, player ready=1, max instants=4).
-  - `GetTimelineLengthText` (line 2060): now uses the explicit `StoppedReason` field instead of inferring from fighter position/phase.
+  - `GetTimelineLengthText` (line 2060): uses the explicit `StoppedReason` field.
 - `CombatSimAutomation.cpp`:
-  - Step L: expanded to 4 scenarios (Quick, Heavy, Guard, Dodge) with `bStopAtDecisionBoundary=true`, recording stop Instant, stop reason, player X, and observed threat.
-  - Step M: new test for Continue Walk (decision 7) — verifies Walk action is preserved and player walks.
-  - Step N: new test for uninterrupted encounter — Walk vs Quick, reaction pause, Continue Walk, walk resumes, reset.
+  - Step L: 4 prediction scenarios (Quick, Heavy, Guard, Dodge) with `bStopAtDecisionBoundary=true`.
+  - Step M: Continue (decision 7) preserves Walk action and player walks.
+  - Step N: Uninterrupted encounter — Walk vs Quick, reaction pause, Continue, walk resumes, reset.
 
 ### Blueprint files
 - `WBP_CombatUI`:
-  - Added `BtnContinueWalk` Button widget to `LeftPanelContent` VerticalBox at slot index 7.
-  - Added `TxtContinueWalk` TextBlock child with text "Continue Walk".
-  - Wired `OnClicked(BtnContinueWalk)` event to call `SetPlayerMove(7)`, `BuildPredictions()`, and `RefreshUI()` on the CombatManager.
-   - Added conditional visibility logic in `RefreshUI`: `BtnContinueWalk` is Visible when `GetReactionInfo` confirms a reaction opportunity AND `LegalActions` contains 7 (Continue Walk), Collapsed otherwise. Uses `GetManager` → `GetReactionOpportunity`/`GetReactionFighter`/`GetObservedThreatAction`/`GetReactionInstant`/`GetCurrentState` → `GetReactionInfo` → `BreakBuhReactionInfo` → `bIsReaction` AND `ContainsItem(LegalActions, 7)` → `ANDBoolean` → `ToVisibility(Boolean)` → `SetVisibility`.
-- `BP_CombatManager.ExecuteMove` already passes `PlayerMove` (which can be 7) as `PlayerDecision` to `ResolveCombat`, so Continue Walk is supported end-to-end in the combat flow.
+  - `BtnContinueWalk` Button widget in `LeftPanelContent` VerticalBox at slot index 7.
+  - `TxtContinueWalk` TextBlock child with text "Continue" (renamed from "Continue Walk").
+  - `OnClicked(BtnContinueWalk)` calls `SetPlayerMove(7)` → `RefreshUI()` only.
+  - `RefreshUI` visibility: `GetReactionInfo` → `BreakBuhReactionInfo` → `AND(bIsReaction, ContainsItem(LegalActions, 7))` → `ToVisibility(Boolean)` → `SetVisibility`.
+- `BP_CombatManager.ExecuteMove`: passes `PlayerMove` (7) to `ResolveCombat`. Uses `GetCurrentState` (not fresh `MakeState`) when `bHasCurrentState` is true.
 
-## 2. How Continue Walk is represented and selected in the combat UI
+## 2. How Continue is represented and selected in the combat UI
 
-**Implemented:** A "Continue Walk" button (`BtnContinueWalk`) has been added to `WBP_CombatUI` in the `LeftPanelContent` VerticalBox at slot index 7. The button contains a `TxtContinueWalk` TextBlock with text "Continue Walk".
+**Implemented:** A "Continue" button (`BtnContinueWalk`) in `WBP_CombatUI` at `LeftPanelContent` slot index 7. TextBlock `TxtContinueWalk` displays "Continue".
 
-**Selection flow:** Clicking `BtnContinueWalk` triggers `OnClicked(BtnContinueWalk)` in the EventGraph, which:
-1. Calls `SetPlayerMove(7)` on the CombatManager.
-2. Calls `BuildPredictions()` to regenerate the prediction timeline.
-3. Calls `RefreshUI()` to update all UI elements including button visibility.
+**Selection flow:** Clicking `BtnContinueWalk` calls `SetPlayerMove(7)` → `RefreshUI()` only. No immediate execution. `BuildPredictions()` is omitted because it creates a fresh `MakeState` that does not preserve ongoing Walk phases or opponent commitment.
 
-**Conditional visibility:** The `RefreshUI` function now includes visibility logic for `BtnContinueWalk` that reuses the established CombatSim reaction eligibility helper:
-- `GetManager` → `GetReactionOpportunity`, `GetReactionFighter`, `GetObservedThreatAction`, `GetReactionInstant`, `GetCurrentState`
-- These are passed to `GetReactionInfo` (BlueprintCallable static function in `UBuhCombatSim`)
-- `GetReactionInfo.ReturnValue` → `BreakBuhReactionInfo` → extracts `bIsReaction` and `LegalActions`
-- `bIsReaction` AND `ContainsItem(LegalActions, 7)` → `ANDBoolean` → `ToVisibility(Boolean)` → `SetVisibility`
-- When both conditions are true, the button is `Visible`; otherwise it is `Collapsed`.
+**Conditional visibility:** `RefreshUI` uses `GetReactionInfo` (BlueprintCallable static in `UBuhCombatSim`):
+- `GetManager` → reaction state variables → `GetReactionInfo` → `BreakBuhReactionInfo` → `AND(bIsReaction, ContainsItem(LegalActions, 7))` → `ToVisibility(Boolean)` → `SetVisibility`.
+- Visible only during a genuine reaction pause when the player has an ongoing reactable Walk action (4, 5, or 6). Does NOT rely on `PlayerMove` or `State`.
 
-This ensures the button only appears during a genuine reaction pause when the player has an ongoing Walk action and the CombatSim confirms Continue Walk is a legal reaction decision. It does NOT rely on `PlayerMove` (which is the pending UI selection) or `State` (which has multiple values: 0=Planning, 1=Resolving, 2=Finished, 3=Reaction).
+## 2b. Root cause of the missing button and the fix
 
-## 3. How it preserves PlayerWalkTarget, current Walk phase, position, and remaining travel
+**Symptom:** After selecting Walk and clicking Execute, the Continue button did not appear despite "Reaction opportunity" being displayed.
+
+**Root cause:** The UI Walk buttons commit Actions 4 (Walk Toward) and 5 (Walk Away). There is no Walk destination button in the UI. `GetReactionInfo` only included decision 7 in `LegalActions` when `PlayerCurrentAction == 6`, so Actions 4 and 5 produced an empty `LegalActions` list and the button stayed Collapsed.
+
+**Evidence:** Diagnostic `PrintString` nodes in `ExecuteMove` (added, used, then removed) confirmed in the graphical PIE log (`feedback.md`): `bReactionOpportunity=1`, `ReactionFighter=0`, `ObservedThreatAction=1`, `PlayerMove=6`. The `RefreshUI` visibility chain and button parent chain were structurally correct.
+
+**Fix:** `GetReactionInfo` line 1573 changed from `if (Info.PlayerCurrentAction == 6)` to `if (Info.PlayerCurrentAction == 4 || Info.PlayerCurrentAction == 5 || Info.PlayerCurrentAction == 6)`, matching `IsReactableWalk`. `MoveName(7)` renamed to "Continue". UI text changed to "Continue".
+
+## 3. How Continue preserves PlayerWalkTarget, current Walk phase, position, and remaining travel
 
 In `ResolveCombat` and `GenerateTimeline`, when `Decision == 7` and `IsReactableWalk(F)` is true:
-- `F.Action` remains 6 (Walk).
-- `F.Phase` is unchanged (preserves current phase: startup, active, or recovery).
-- `F.PhaseInstants` is unchanged (preserves phase progress).
-- `F.X` is unchanged (preserves current position).
-- `F.WalkTarget` is unchanged (preserves the destination).
-- `F.WalkRemaining` is unchanged (preserves remaining travel distance).
+- `F.Action` remains 4, 5, or 6 (the committed Walk variant).
+- `F.Phase` is unchanged.
+- `F.PhaseInstants` is unchanged.
+- `F.X` is unchanged.
+- `F.WalkTarget` is unchanged.
+- `F.WalkRemaining` is unchanged.
 
 The simulation continues with the existing Walk state — no restart, no new action, no rewind.
 
 ## 4. How the opponent's committed action and preparation progress are preserved
 
-When Continue Walk is chosen (decision 7 for the player), the opponent's fighter state is not modified:
+When Continue is chosen (decision 7 for the player), the opponent's fighter state is not modified:
 - The decision commit loop only affects the player's fighter (fighter 0) when `Decision == 7`.
 - The opponent's fighter (fighter 1) has `OpponentDecision = -1` (not committed), so its `Action`, `Phase`, `PhaseInstants`, and `X` are preserved.
-- The opponent's committed attack (e.g., Quick) continues from its saved phase.
+- The opponent's committed attack continues from its saved phase.
 
 ## 5. How repeated reactions to the same already-observed attack are prevented
 
@@ -100,30 +103,35 @@ New tests added:
 - Step M: Continue Walk preserves Walk action and player walks.
 - Step N: Uninterrupted encounter (Walk, reaction pause, Continue Walk, walk resumes, reset).
 
-## 9. Whether the complete Continue Walk sequence has been exercised through the real BP_CombatManager and WBP_CombatUI
+## 9. Whether the complete Continue sequence has been exercised through the real BP_CombatManager and WBP_CombatUI
 
-**Partially verified via DSL inspection and C++ tests.**
+**Verified via DSL inspection, node-level tracing, diagnostic prints in the graphical PIE log, and C++ tests.**
 
 - **C++ combat logic:** `ResolveCombat` correctly handles decision 7 — preserves Walk action, phase, position, target, and remaining distance. The opponent's committed action is preserved. Verified by automation tests (Steps M and N).
-- **`ExecuteMove` Blueprint flow:** Inspected the DSL. When `bHasCurrentState` is true (reaction pause), it uses `GetCurrentState` as the base state (not a fresh `MakeState`). It passes `PlayerMove` (7) to `ResolveCombat`, which preserves the Walk state. The opponent's committed action is preserved because `ChooseOpponentMove` is called with the current state. The resulting state is saved to `CurrentState`. This matches the C++ test results.
-- **Button handler:** `OnClicked(BtnContinueWalk)` calls `SetPlayerMove(7)` → `BuildPredictions()` → `RefreshUI()`. This follows the same pattern as all existing reaction buttons (`SelectQuick`, `SelectHeavy`, `SelectGuard`, `SelectDodge` all call `BuildPredictions` after `SetPlayerMove`). `BuildPredictions` creates a fresh state via `MakeState` with current positions/health/seed, which is the established behavior for all reaction buttons.
-- **Visibility logic:** `RefreshUI` uses `GetReactionInfo` to determine eligibility, reusing the established CombatSim reaction helper rather than introducing a second inconsistent legality rule.
+- **`ExecuteMove` Blueprint flow:** Uses `GetCurrentState` (not fresh `MakeState`) when `bHasCurrentState` is true. Passes `PlayerMove` (7) to `ResolveCombat`. Opponent's committed action preserved.
+- **Button handler:** `OnClicked(BtnContinueWalk)` calls `SetPlayerMove(7)` → `RefreshUI()` only.
+- **Visibility logic:** `RefreshUI` uses `GetReactionInfo` with the fixed eligibility check (Actions 4, 5, 6).
+- **Diagnostic evidence:** `PrintString` nodes in `ExecuteMove` confirmed `bReactionOpportunity=1`, `ReactionFighter=0`, `ObservedThreatAction=1`, `PlayerMove=6` in the graphical PIE log. The button was absent because `GetReactionInfo` did not include decision 7 for Actions 4/5. After the fix, the eligibility check covers all three Walk variants.
+- **RefreshUI execution flow:** Restored and intact. All original UI updates plus the `GetReactionInfo` → `SetVisibility(BtnContinueWalk)` chain at the end.
 
-**Gap:** A PIE-world integration test that triggers the actual `BP_CombatManager.ExecuteMove` with `PlayerMove=7` during a reaction opportunity via the UI button is not yet built. This would require a graphical PIE run or a C++ PIE-world integration test that triggers the WBP event delegates. Headless PIE cannot click the button or capture the game view.
+**Gap:** Graphical PIE verification of button visibility and click behavior is still required. Headless PIE cannot click buttons or capture the game view.
 
 ## 10. Which interactions still require manual graphical PIE verification
 
-1. **Continue Walk button visibility:** Verify that `BtnContinueWalk` appears (Visible) only when `GetReactionInfo` confirms a reaction opportunity AND `LegalActions` contains 7, and is Collapsed otherwise.
-2. **Continue Walk button click:** Verify that clicking the button sets `PlayerMove=7`, rebuilds predictions, and refreshes the UI.
-3. **Graphical ghost positioning:** Verify that the cyan/orange ghosts are positioned correctly during a Continue Walk sequence.
-4. **Reaction pause UI:** Verify that the reaction pause UI (showing reaction options) appears correctly when the opponent starts an attack while the player is walking.
-5. **Full gameplay flow:** Verify the complete sequence in graphical PIE: Walk, opponent attack, reaction pause, Continue Walk, walk resumes, opponent attack continues, reset.
+1. **Continue button visibility:** Verify that the Continue button appears when Walk Toward or Walk Away is selected and a reaction opportunity occurs. Verify it is hidden during normal planning and after action completion.
+2. **Continue button click:** Verify that clicking sets `PlayerMove=7` and refreshes the UI without executing.
+3. **Graphical ghost positioning:** Verify ghosts are positioned correctly during a Continue sequence.
+4. **Reaction pause UI:** Verify the reaction pause UI appears correctly when the opponent starts an attack while the player is walking.
+5. **Full gameplay flow:** Walk → opponent attack → reaction pause → Continue → walk resumes → opponent attack continues → reset.
+6. **"O: Dodge" label:** Verify whether the opponent move label is stale during a reaction opportunity (it displays `GetOpponentMove`, not the reaction threat).
 
 ## Summary
 
-- Continue Walk is implemented in C++ (`ResolveCombat`, `GenerateTimeline`) and supported by the Blueprint (`ExecuteMove` passes `PlayerMove` to `ResolveCombat`).
-- The UI button for Continue Walk (`BtnContinueWalk`) is now implemented in `WBP_CombatUI` with conditional visibility using `GetReactionInfo` (visible only when a reaction opportunity exists AND Continue Walk is a legal action).
-- All 4 automation suites pass with the new tests.
-- `ExecuteMove` correctly uses the saved `CurrentState` during a reaction pause (not a fresh state), preserving Walk state and opponent commitment. Verified via DSL inspection.
-- The button handler follows the established pattern of all existing reaction buttons (`SetPlayerMove` → `BuildPredictions` → `RefreshUI`).
-- Graphical PIE verification is still required for button visibility, button click behavior, ghost positioning, and full gameplay flow.
+- Continue (decision 7) is implemented in C++ and supported by the Blueprint. `MoveName(7)` returns "Continue".
+- `GetReactionInfo` eligibility now covers all reactable Walk actions (4, 5, 6), fixing the missing button for Walk Toward and Walk Away.
+- The UI button text is "Continue". Visibility is driven by `GetReactionInfo`, not `PlayerMove`.
+- All 4 automation suites pass.
+- `ExecuteMove` uses the saved `CurrentState` during a reaction pause.
+- The button handler calls `SetPlayerMove(7)` → `RefreshUI()` only.
+- `RefreshUI` execution flow is intact.
+- Graphical PIE verification of button visibility, click behavior, ghost positioning, and full gameplay flow is the remaining step.

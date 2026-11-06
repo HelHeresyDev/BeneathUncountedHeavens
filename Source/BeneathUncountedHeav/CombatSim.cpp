@@ -1,4 +1,7 @@
 #include "CombatSim.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/App.h"
@@ -56,7 +59,7 @@ namespace BuhCombat
 		case 4: return TEXT("Walk Toward");
 		case 5: return TEXT("Walk Away");
 		case 6: return TEXT("Walk");
-		case 7: return TEXT("Continue Walk");
+		case 7: return TEXT("Continue");
 		default: return TEXT("Idle");
 		}
 	}
@@ -1569,8 +1572,8 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	{
 		Info.ThreatRemainingPrep = FMath::Max(0, BuhCombat::MoveData[Threat.Action].Startup - Threat.PhaseInstants);
 	}
-	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue Walk (if the player was walking).
-	if (Info.PlayerCurrentAction == 6)
+	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue (if the player was walking).
+	if (Info.PlayerCurrentAction == 4 || Info.PlayerCurrentAction == 5 || Info.PlayerCurrentAction == 6)
 	{
 		Info.LegalActions = { 0, 1, 2, 3, 7 };
 	}
@@ -2546,3 +2549,48 @@ static FAutoConsoleCommand GSetBlueMatCmd(
 			}
 		}
 	}));
+
+FVector UBuhCombatSim::ScreenToGround(APlayerController* PC, FVector2D ScreenPos)
+{
+	if (!PC) return FVector::ZeroVector;
+	FVector Origin, Direction;
+	UGameplayStatics::DeprojectScreenToWorld(PC, ScreenPos, Origin, Direction);
+	if (FMath::IsNearlyZero(Direction.Z)) return FVector::ZeroVector;
+	const float T = -Origin.Z / Direction.Z;
+	if (T < 0.f) return FVector::ZeroVector;
+	return Origin + Direction * T;
+}
+
+FVector2D UBuhCombatSim::WorldToScreen(APlayerController* PC, FVector WorldPos)
+{
+	if (!PC) return FVector2D::ZeroVector;
+	FVector2D ScreenPos;
+	UGameplayStatics::ProjectWorldToScreen(PC, WorldPos, ScreenPos);
+	return ScreenPos;
+}
+
+FVector2D UBuhCombatSim::ScreenToGroundXY(APlayerController* PC, FVector2D ScreenPos)
+{
+	FVector Hit = ScreenToGround(PC, ScreenPos);
+	return FVector2D(Hit.X, Hit.Y);
+}
+
+float UBuhCombatSim::ScreenToGroundX(APlayerController* PC, FVector2D ScreenPos)
+{
+	return ScreenToGround(PC, ScreenPos).X;
+}
+
+float UBuhCombatSim::ScreenToGroundY(APlayerController* PC, FVector2D ScreenPos)
+{
+	return ScreenToGround(PC, ScreenPos).Y;
+}
+
+void UBuhCombatSim::DrawGroundLine(APlayerController* PC, FVector Start, FVector End, float Thickness, float Duration)
+{
+	UWorld* World = PC ? PC->GetWorld() : nullptr;
+	if (!World) return;
+	FColor Green(0, 255, 0, 255);
+	::DrawDebugLine(World, Start, End, Green, false, Duration, 0, Thickness);
+}
+
+
