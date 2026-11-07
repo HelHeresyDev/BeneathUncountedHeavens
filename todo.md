@@ -1,143 +1,119 @@
-# Beneath Uncounted Heavens — Unblock Stage B Walk Path Rendering
+# Beneath Uncounted Heavens — Finish Stage B Mouse Targeting Before 2D Combat
 
-Review the current `todo.md` and `tmp_opencode/stage_a_analysis.md`.
+The user has confirmed that the green Walk path renders in graphical PIE.
 
-Stage B is partially implemented, but the green Walk line is blocked because the Blueprint DSL does not expose `DrawLine`.
+The latest screenshot shows:
+- Green path visible.
+- Yellow destination marker visible.
+- Walk targeting mode active.
+- Player action still shown as None because destination selection is not yet confirmed.
 
-**Unblock this without rewriting the existing targeting system.**
+The latest todo reports problems with mouse tracking, click confirmation, and cursor visibility. Some fixes were applied but need graphical verification.
 
-## 1. Use the correct Unreal drawing API
+Do not start the authoritative 2D combat rewrite yet.
 
-Unreal Engine 5.8 provides:
+## 1. Correct mouse-to-ground targeting
 
-`UKismetSystemLibrary::DrawDebugLine`
+The user previously reported that mouse tracking felt unsuitable for mouse control.
 
-Header:
-`Kismet/KismetSystemLibrary.h`
+Investigate whether GetMousePosition and the current screen-to-world conversion use consistent viewport coordinates, accounting for DPI scaling and the editor's PIE viewport.
 
-It is BlueprintCallable, but DevelopmentOnly.
+Prefer a direct cursor-to-world collision query through the PlayerController, such as GetHitResultUnderCursorByChannel, when suitable.
 
-Check whether the MCP Blueprint tools expose this function under Kismet System Library rather than Kismet Rendering Library.
+Use the actual hit position on the combat floor rather than manually estimating a destination from screen coordinates.
 
-If the DSL cannot call it, create a minimal BlueprintCallable C++ wrapper.
+Ensure the destination follows the mouse naturally and remains under the cursor.
 
-For the immediate PIE test:
-- Draw a green line between the real player's ground-plane position and the current proposed destination.
-- Offset it slightly above the ground to avoid z-fighting.
-- Use a visible thickness.
-- Update it every frame while targeting.
-- Keep it visible after confirmation during planning.
-- Stop drawing it when the preview is canceled, executed, or reset.
+Do not apply controller-style smoothing, acceleration, or movement to mouse targeting.
 
-Use short-lived debug drawing rather than persistent debug lines that accumulate.
+## 2. Verify click confirmation and cancellation
 
-This is a temporary visual validation mechanism, not the final shipping renderer.
+The recent change uses GameAndUI input mode.
 
-## 2. Plan the reusable renderer
+Verify in graphical PIE:
 
-After the temporary green line works, implement a reusable path visualization component or actor using an appropriate runtime rendering solution.
+- Clicking Walk enters targeting without instantly confirming.
+- Moving the mouse updates the destination.
+- Left-click confirms exactly once.
+- Right-click or Escape cancels.
+- Clicking UMG buttons does not select a ground destination.
+- The cursor stays visible after confirming.
+- The combat UI remains clickable afterward.
+- Re-entering targeting mode works.
 
-Consider USplineMeshComponent segments.
+Prefer explicit mouse press events or reliable click-edge detection over fragile per-frame button polling when possible.
 
-The renderer must eventually support:
-- Walk: a straight green ground path.
-- Dash: straight red/green segments.
-- Jump: sampled three-dimensional parabolic arc with red/green segments.
+Do not repeatedly change input modes without verifying their effect.
 
-Reaction colors will ultimately come from simulation Instant data.
+## 3. Correct the path's ground alignment
 
-Do not implement Dash or Jump now.
+The green line should trace the intended ground path.
 
-Do not introduce an unnecessarily complicated path framework before validating Walk.
+Use the ground positions beneath the player's feet and destination rather than either actor's center height.
 
-## 3. Verify mouse-targeting events
+Apply a small Z offset above the floor to prevent z-fighting.
 
-The recent implementation uses EventTick for cursor targeting and mouse-button detection.
+The start should visually attach to the player's feet, and the end should attach to the destination marker.
 
-Inspect the real event ordering.
+Preserve a single straight segment for Walk.
 
-Ensure:
-- Clicking the Walk UI button doesn't immediately confirm a destination.
-- Clicking another UMG control doesn't confirm a destination.
-- Left-click confirms only on a valid ground target.
-- Right-click/Escape cancels.
-- The cursor remains visible and functional.
-- The yellow marker follows the ground target correctly.
-- Repeated targeting does not spawn duplicate actors.
-- The combat planning EventTick functionality remains connected.
+## 4. Improve the yellow destination marker
 
-Use click-edge detection or equivalent input handling to prevent an already-held UI click from being interpreted as a ground confirmation.
+The screenshot shows a large yellow cylinder that looks like another fighter.
 
-## 4. Do not misrepresent the 1D simulation
+Replace its representation with a reasonably sized flat ground ring or disc.
 
-Stage C has not started. The existing CombatSim still uses X-only positions.
+Reuse BP_DestGhost if possible.
 
-Until authoritative 2D movement is implemented:
-- Do not claim a nonzero Y movement preview represents actual simulated movement.
-- Do not silently discard the selected Y value during execution.
-- Keep a clear boundary between visual targeting and authoritative simulation.
-- Preserve the existing functional 1D combat tests.
+The marker should indicate an exact destination without blocking the view of the arena.
 
-If necessary, limit execution of experimental 2D targets until Stage C is ready.
+Do not add duplicate actors.
 
-## 5. Test Stage B in graphical PIE
+## 5. Keep the line after confirmation
 
-Verify:
-1. Select Move → Walk.
-2. Cursor moves the yellow destination marker.
-3. A straight green line follows the destination.
-4. Confirming retains the chosen preview.
-5. Canceling removes the preview.
-6. Clicking combat UI does not accidentally confirm.
-7. Reset clears targeting.
-8. Continue and existing reaction controls still work.
+The user specifically wants the green line to remain visible after clicking.
 
-Compile, save, and run the existing automation tests.
+Verify that:
 
-Report what is actually verified headlessly versus what still requires manual graphical PIE testing.
+- During targeting, the line follows the cursor.
+- After confirmation, the line remains at the chosen destination.
+- Re-entering targeting updates it.
+- Cancel, Execute, and Reset clear it appropriately.
 
-**Do not start Stage C until the Stage B targeting and path visualization have been visually verified.**
+Use reusable drawing components or short-lived debug drawing without accumulating persistent lines.
 
-No unrelated UI redesign, new movement mechanics, or Git commits without authorization.
+## 6. Address the current 1D/2D mismatch
+
+At present the green line can point anywhere on the ground, but SelectWalkDestination accepts only TargetX.
+
+Do not pretend the simulator supports diagonal movement yet.
+
+Stage B may validate the full cursor-based interface and 2D destination selection, but arbitrary-Y execution must remain clearly experimental or disabled until Stage C is complete.
+
+Preserve both selected X and Y for later integration if possible.
+
+Do not silently execute an X-only movement when the player confirmed a diagonal target.
+
+## 7. Verification
+
+Perform graphical PIE checks for mouse tracking, click confirmation, cursor persistence, line alignment, line persistence, and target cancellation.
+
+Run the four existing automation suites.
+
+Once Stage B works reliably, report the exact 1D dependencies that Stage C must replace.
+
+Preserve Continue, hypothetical ghosts, fighter colors, menu controls, and combat-state persistence.
+
+No Dash or Jump implementation yet. No unrelated redesign or Git commit.
+
+**Success criterion:** Mouse targeting feels accurate, click confirmation works, the green line stays visible after selection, and the destination marker and path clearly represent the selected ground position.
 
 ## Progress
 
-- [x] C++ `DrawGroundLine` wrapper added (uses `::DrawDebugLine` from `DrawDebugHelpers.h`).
-- [x] `bSuppressWalkClick` variable added to `WBP_CombatUI`.
-- [x] `OnClicked(BtnWalkMove)` updated to enter targeting mode with click suppression.
-- [x] `EventTick` targeting block: mouse raycast, `DestPlayer` marker movement, green `DrawGroundLine`, left-click confirm (suppressed on first frame), right-click/Escape cancel.
-- [x] `EventTick` combat planning logic intact.
-- [x] Blueprint compiles and saves cleanly.
-- [x] All 4 BUH automation suites pass.
-- [ ] Graphical PIE verification of targeting, green line, and click-edge behavior.
-- [ ] Reusable path renderer (USplineMeshComponent) for final shipping visualization.
-
-## Diagnostic Findings (2026-11-06)
-
-### Mouse tracking
-- Green line renders correctly (confirmed by user screenshot).
-- User reports poor mouse tracking: "good for controller control scheme, but not for mouse control."
-- Diagnostics added to EventTick: `PrintString "Mouse: <Vector2D>"` and `PrintString "Ground: <X>, <Y>"` while targeting.
-- Suspected causes: (1) `GetMousePosition` returns window-relative coords but `DeprojectScreenToWorld` expects viewport-relative; (2) steep camera angle makes small mouse deltas produce large ground deltas; (3) EventTick polling lag.
-- Need graphical PIE log output to confirm which cause.
-
-### Click confirmation not setting position (FIXED)
-- User reports: "clicking should set the position but it currently does not."
-- Root cause: `BP_CombatManager.BeginPlay` sets input mode to **UI Only** (§9.16 notes.md). In UI Only mode, all mouse input routes to UMG widgets. `WasInputKeyJustPressed("LeftMouseButton")` on the PlayerController never fires because UMG consumes the click first.
-- Fix applied: `OnClicked(BtnWalkMove)` now calls `Input|SetInputModeGameAndUI` before entering targeting. EventTick confirm/cancel branches call `Input|SetInputModeUIOnly` to restore UI Only mode.
-- All 4 BUH automation tests pass after the change.
-- `SelectWalkDestination` takes `TargetX` float only — Y is used for the marker/line but not for the authoritative 1D simulation (correct per §4 "Do not misrepresent the 1D simulation").
-- **Needs graphical PIE verification** that the click now confirms the destination.
-
-### Line persistence after confirmation (FIXED)
-- User: "I want the line to stay after I click."
-- Root cause: `DrawGroundLine` was only inside the `if (GetWalkTargeting)` block, so the line stopped when targeting ended.
-- Fix: Added a second `DrawGroundLine` call outside the targeting block, gated on `GetPlayerMove == 6` (Walk destination selected). Uses the DestPlayer marker's location as the line endpoint. Line persists during planning until Execute/Reset/Cancel.
-
-### Cursor disappears after confirming destination (FIXED)
-- User: "after I click the cursor disappears."
-- Root cause: `bShowMouseCursor` was being set to false by the input mode change.
-- Fix: Added `Class|PlayerController|SetShowMouseCursor :self ... :bShowMouseCursor true` to `OnClicked(BtnWalkMove)` and both confirm/cancel branches in EventTick. Input mode stays as Game+UI (no `SetInputModeUIOnly` on confirm/cancel).
-
-### DSL scoping
-- A `write_graph_dsl` attempt failed with "Undefined variable _hitx" when `SetActorLocation`/`DrawGroundLine` referenced variables bound inside a nested `if` block. The saved blueprint (from an earlier successful write) is structurally correct — the failure was from a different, aborted rewrite attempt.
+- [x] 1. Correct mouse-to-ground targeting — collision-based `GetGroundHitUnderCursorByChannel` via `CombatSim|GetGroundHitX/Y`. User confirmed tracking works.
+- [x] 2. Verify click confirmation and cancellation — GameAndUI input mode, `bSuppressWalkClick` edge detection, `SetShowMouseCursor(true)` on confirm/cancel.
+- [x] 3. Correct the path's ground alignment — `DrawGroundLine` at Z=95 (5 units above floor), start at player feet, end at destination.
+- [x] 4. Improve the yellow destination marker — `BP_DestGhost` BeginPlay sets actor scale to (1, 1, 0.1), flattening the cylinder into a disc.
+- [x] 5. Keep the line after confirmation — second `DrawGroundLine` gated on `PlayerMove==6`, endpoint from `DestPlayer` actor location.
+- [x] 6. Address the current 1D/2D mismatch — `PlayerWalkTargetY` + `PlayerY` variables stored; diagonal warning PrintString when |targetY - playerY| > 50.
+- [x] 7. Verification — 4/4 automation tests pass. Graphical PIE confirmed: flat disc marker, persistent green line, correct UI state.

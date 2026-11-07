@@ -65,26 +65,30 @@ namespace BuhCombat
 	}
 }
 
-FBuhCombatState UBuhCombatSim::MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed)
+FBuhCombatState UBuhCombatSim::MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, float PlayerY, float OpponentY)
 {
 	FBuhCombatState S;
 	S.Fighters.AddDefaulted(2);
 	S.Fighters[0].X = static_cast<float>(PlayerX);
+	S.Fighters[0].Y = PlayerY;
 	S.Fighters[0].Health = PlayerHealth;
 	S.Fighters[0].Team = 0;
 	S.Fighters[0].WalkTarget = static_cast<float>(PlayerX);
+	S.Fighters[0].WalkTargetY = PlayerY;
 	S.Fighters[1].X = static_cast<float>(OpponentX);
+	S.Fighters[1].Y = OpponentY;
 	S.Fighters[1].Health = OpponentHealth;
 	S.Fighters[1].Team = 1;
 	S.Fighters[1].WalkTarget = static_cast<float>(OpponentX);
+	S.Fighters[1].WalkTargetY = OpponentY;
 	S.Instant = 0;
 	S.Seed = Seed;
 	return S;
 }
 
-FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants)
+FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants, float PlayerY, float OpponentY)
 {
-	FBuhCombatState S = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed);
+	FBuhCombatState S = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed, PlayerY, OpponentY);
 	S.Fighters[0].Phase = PlayerPhase;
 	S.Fighters[0].PhaseInstants = PlayerPhaseInstants;
 	S.Fighters[1].Phase = OpponentPhase;
@@ -92,10 +96,11 @@ FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 Opponent
 	return S;
 }
 
-FBuhCombatState UBuhCombatSim::WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX)
+FBuhCombatState UBuhCombatSim::WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX, float TargetY)
 {
 	FBuhCombatState S = InState;
 	S.Fighters[0].WalkTarget = TargetX;
+	S.Fighters[0].WalkTargetY = TargetY;
 	return S;
 }
 
@@ -103,37 +108,34 @@ struct FBuhOutcome { int32 Fighter; int32 Type; int32 Damage; };
 
 static void EnforceMinSeparation(FBuhCombatState& S, const bool bMoved[2])
 {
-	const float D = S.Fighters[1].X - S.Fighters[0].X;
-	if (D >= 0.f)
+	const float Dx = S.Fighters[1].X - S.Fighters[0].X;
+	const float Dy = S.Fighters[1].Y - S.Fighters[0].Y;
+	const float D = FMath::Sqrt(Dx * Dx + Dy * Dy);
+	if (D >= static_cast<float>(BuhCombat::MinSeparation))
 	{
-		if (D < static_cast<float>(BuhCombat::MinSeparation))
-		{
-			const float Deficit = static_cast<float>(BuhCombat::MinSeparation) - D;
-			if (bMoved[0] && bMoved[1])
-			{
-				const float Half = Deficit * 0.5f;
-				S.Fighters[0].X -= Half;
-				S.Fighters[1].X += Half;
-			}
-			else if (bMoved[0]) S.Fighters[0].X -= Deficit;
-			else if (bMoved[1]) S.Fighters[1].X += Deficit;
-		}
+		return;
 	}
-	else
+	const float Deficit = static_cast<float>(BuhCombat::MinSeparation) - D;
+	const float InvD = (D > 0.f) ? 1.f / D : 0.f;
+	const float PushX = Dx * InvD;
+	const float PushY = Dy * InvD;
+	if (bMoved[0] && bMoved[1])
 	{
-		const float Dist = -D;
-		if (Dist < static_cast<float>(BuhCombat::MinSeparation))
-		{
-			const float Deficit = static_cast<float>(BuhCombat::MinSeparation) - Dist;
-			if (bMoved[0] && bMoved[1])
-			{
-				const float Half = Deficit * 0.5f;
-				S.Fighters[0].X += Half;
-				S.Fighters[1].X -= Half;
-			}
-			else if (bMoved[0]) S.Fighters[0].X += Deficit;
-			else if (bMoved[1]) S.Fighters[1].X -= Deficit;
-		}
+		const float Half = Deficit * 0.5f;
+		S.Fighters[0].X -= PushX * Half;
+		S.Fighters[0].Y -= PushY * Half;
+		S.Fighters[1].X += PushX * Half;
+		S.Fighters[1].Y += PushY * Half;
+	}
+	else if (bMoved[0])
+	{
+		S.Fighters[0].X -= PushX * Deficit;
+		S.Fighters[0].Y -= PushY * Deficit;
+	}
+	else if (bMoved[1])
+	{
+		S.Fighters[1].X += PushX * Deficit;
+		S.Fighters[1].Y += PushY * Deficit;
 	}
 }
 
@@ -141,44 +143,58 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 {
 	AttackStart[0] = -1;
 	AttackStart[1] = -1;
-	const float RawDist = S.Fighters[1].X - S.Fighters[0].X;
+	const float RawDx = S.Fighters[1].X - S.Fighters[0].X;
+	const float RawDy = S.Fighters[1].Y - S.Fighters[0].Y;
+	const float RawDist = FMath::Sqrt(RawDx * RawDx + RawDy * RawDy);
 	bool bMoved[2] = { false, false };
 	for (int32 i = 0; i < 2; ++i)
 	{
 		FBuhFighterState& F = S.Fighters[i];
 		if (F.Phase == 2 && BuhCombat::MoveData[F.Action].Movement > 0)
 		{
-			if (PreDodgeDist[i] > 1e8f) PreDodgeDist[i] = FMath::Abs(S.Fighters[1 - i].X - F.X);
+			if (PreDodgeDist[i] > 1e8f) PreDodgeDist[i] = FMath::Sqrt(FMath::Square(S.Fighters[1 - i].X - F.X) + FMath::Square(S.Fighters[1 - i].Y - F.Y));
 			if (F.Action == 6)
 			{
-				const float Remaining = F.WalkTarget - F.X;
-				if (FMath::Abs(Remaining) <= static_cast<float>(BuhCombat::MoveData[F.Action].Movement))
+				const float RemX = F.WalkTarget - F.X;
+				const float RemY = F.WalkTargetY - F.Y;
+				const float RemDist = FMath::Sqrt(RemX * RemX + RemY * RemY);
+				if (RemDist <= static_cast<float>(BuhCombat::MoveData[F.Action].Movement))
 				{
 					F.X = F.WalkTarget;
+					F.Y = F.WalkTargetY;
 					F.Phase = 3;
 					F.PhaseInstants = 0;
 					bMoved[i] = true;
 				}
 				else
 				{
-					const float Dir = (Remaining > 0.f) ? 1.f : -1.f;
-					F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
+					const float Scale = static_cast<float>(BuhCombat::MoveData[F.Action].Movement) / RemDist;
+					F.X += RemX * Scale;
+					F.Y += RemY * Scale;
 					bMoved[i] = true;
 				}
 			}
 			else
 			{
-				const float OpponentX = S.Fighters[1 - i].X;
+				const float OppX = S.Fighters[1 - i].X;
+				const float OppY = S.Fighters[1 - i].Y;
+				const float ToDx = OppX - F.X;
+				const float ToDy = OppY - F.Y;
+				const float ToDist = FMath::Sqrt(ToDx * ToDx + ToDy * ToDy);
+				const float InvToDist = (ToDist > 0.f) ? 1.f / ToDist : 0.f;
+				const float UnitX = ToDx * InvToDist;
+				const float UnitY = ToDy * InvToDist;
 				const bool bMoveToward = (F.Action == 4);
-				const float Dir = (F.X < OpponentX) ? (bMoveToward ? 1.f : -1.f) : (bMoveToward ? -1.f : 1.f);
-				F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Dir;
+				const float Sign = bMoveToward ? 1.f : -1.f;
+				F.X += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Sign * UnitX;
+				F.Y += static_cast<float>(BuhCombat::MoveData[F.Action].Movement) * Sign * UnitY;
 				bMoved[i] = true;
 			}
 		}
 	}
 	EnforceMinSeparation(S, bMoved);
-	S.Fighters[0].Facing = (RawDist >= 0.f) ? 1 : -1;
-	S.Fighters[1].Facing = (RawDist >= 0.f) ? -1 : 1;
+	S.Fighters[0].Facing = (RawDx >= 0.f) ? 1 : -1;
+	S.Fighters[1].Facing = (RawDx >= 0.f) ? -1 : 1;
 
 	for (int32 i = 0; i < 2; ++i)
 	{
@@ -222,7 +238,7 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 		}
 	}
 
-	const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
+	const float D = FMath::Sqrt(FMath::Square(S.Fighters[1].X - S.Fighters[0].X) + FMath::Square(S.Fighters[1].Y - S.Fighters[0].Y));
 	TArray<FBuhOutcome> Outcomes;
 	for (int32 i = 0; i < 2; ++i)
 	{
@@ -340,7 +356,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 		}
 
 		const TArray<FBuhOutcome> Outcomes = StepCombatInstant(S, PreDodgeDist, bJustActive, AttackStart);
-		const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
+		const float D = FMath::Sqrt(FMath::Square(S.Fighters[1].X - S.Fighters[0].X) + FMath::Square(S.Fighters[1].Y - S.Fighters[0].Y));
 		Result.MinDistanceSeen = FMath::Min(Result.MinDistanceSeen, D);
 
 		// 4. Apply outcomes.
@@ -452,7 +468,9 @@ namespace BuhCombatTest
 				a.WalkDir != b.WalkDir || a.WalkRemaining != b.WalkRemaining ||
 				a.ReactedThreatFighter != b.ReactedThreatFighter) return false;
 			if (FMath::Abs(a.X - b.X) > 0.01f) return false;
+			if (FMath::Abs(a.Y - b.Y) > 0.01f) return false;
 			if (FMath::Abs(a.WalkTarget - b.WalkTarget) > 0.01f) return false;
+			if (FMath::Abs(a.WalkTargetY - b.WalkTargetY) > 0.01f) return false;
 		}
 		return true;
 	}
@@ -486,7 +504,7 @@ int32 UBuhCombatSim::ChooseOpponentMove(const FBuhCombatState& State, int32 Last
 	// Observable inputs only: distance, both healths, the opponent's own phase,
 	// and the player's LAST revealed move. The player's current secret action
 	// (State.Fighters[0].Action) is deliberately never read.
-	const float Dist = FMath::Abs(State.Fighters[1].X - State.Fighters[0].X);
+	const float Dist = FMath::Sqrt(FMath::Square(State.Fighters[1].X - State.Fighters[0].X) + FMath::Square(State.Fighters[1].Y - State.Fighters[0].Y));
 	const int32 OppHealth = State.Fighters[1].Health;
 
 	// Seeded LCG for deterministic variety.
@@ -531,8 +549,8 @@ static FString TimelineSignature(const TArray<FBuhTimelineSnapshot>& T)
 	FString Out;
 	for (const FBuhTimelineSnapshot& Snap : T)
 	{
-		Out += FString::Printf(TEXT("%d:%.2f/%.2f:%d/%d:%d/%d:%d/%d:%d|"),
-			Snap.Instant, Snap.PlayerX, Snap.OpponentX,
+		Out += FString::Printf(TEXT("%d:%.2f/%.2f:%.2f/%.2f:%d/%d:%d/%d:%d/%d:%d|"),
+			Snap.Instant, Snap.PlayerX, Snap.OpponentX, Snap.PlayerY, Snap.OpponentY,
 			Snap.PlayerAction, Snap.OpponentAction,
 			Snap.PlayerPhase, Snap.OpponentPhase,
 			Snap.PlayerHealth, Snap.OpponentHealth, Snap.Events.Num());
@@ -845,7 +863,7 @@ FString UBuhCombatSim::RunAllTests()
 	{
 		const FBuhCombatState S = MakeState(-100, 100, 100, 100, 0);
 		const FBuhCombatResult R = ResolveCombat(S, 4, 4, 200);
-		const float FinalDist = FMath::Abs(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X);
+		const float FinalDist = FMath::Sqrt(FMath::Square(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X) + FMath::Square(R.FinalState.Fighters[1].Y - R.FinalState.Fighters[0].Y));
 		const bool bMinSep = FMath::Abs(FinalDist - 100.f) < 1.f;
 		const bool bNoCross = (R.FinalState.Fighters[0].X < R.FinalState.Fighters[1].X);
 		Check(TEXT("I opposing-approaches-min-separation"), bMinSep && bNoCross,
@@ -886,7 +904,7 @@ FString UBuhCombatSim::RunAllTests()
 			const FBuhCombatResult R = ResolveCombat(S, 2, 2, 200);
 			S = R.FinalState;
 			++Exchanges;
-			const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
+			const float D = FMath::Sqrt(FMath::Square(S.Fighters[1].X - S.Fighters[0].X) + FMath::Square(S.Fighters[1].Y - S.Fighters[0].Y));
 			if (D < 100.f - 1.f || S.Fighters[0].X >= S.Fighters[1].X) bStable = false;
 			if (R.StoppedReason == 3) break;
 		}
@@ -899,7 +917,7 @@ FString UBuhCombatSim::RunAllTests()
 	{
 		const FBuhCombatState S = MakeState(-50, 50, 100, 100, 0);
 		const FBuhCombatResult R = ResolveCombat(S, 0, 1, 200);
-		const float FinalDist = FMath::Abs(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X);
+		const float FinalDist = FMath::Sqrt(FMath::Square(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X) + FMath::Square(R.FinalState.Fighters[1].Y - R.FinalState.Fighters[0].Y));
 		const bool bNoOverlap = FinalDist >= 100.f - 1.f;
 		const bool bQuickHit = HasEvent(R, 0, 0, 10);
 		const bool bHeavyInterrupted = !HasEvent(R, 0, 1, 24);
@@ -955,7 +973,7 @@ FString UBuhCombatSim::RunAllTests()
 	{
 		const FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
 		const FBuhCombatResult R = ResolveCombat(S, 0, 1, 200);
-		const float FinalDist = FMath::Abs(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X);
+		const float FinalDist = FMath::Sqrt(FMath::Square(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X) + FMath::Square(R.FinalState.Fighters[1].Y - R.FinalState.Fighters[0].Y));
 		const bool bSeparated = FinalDist >= 100.f - 1.f;
 		const bool bNoCross = (R.FinalState.Fighters[0].X < R.FinalState.Fighters[1].X);
 		Check(TEXT("A quick-strike-keeps-separation"), bSeparated && bNoCross,
@@ -1017,7 +1035,7 @@ FString UBuhCombatSim::RunAllTests()
 			const FBuhCombatResult R = ResolveCombat(S, 3, 1, 200);
 			S = R.FinalState;
 			++Exchanges;
-			const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
+			const float D = FMath::Sqrt(FMath::Square(S.Fighters[1].X - S.Fighters[0].X) + FMath::Square(S.Fighters[1].Y - S.Fighters[0].Y));
 			if (D < 100.f - 1.f || S.Fighters[0].X >= S.Fighters[1].X) bStable = false;
 			if (R.StoppedReason == 3) break;
 			if (!R.bPlayerReady) break;
@@ -1198,7 +1216,7 @@ FString UBuhCombatSim::RunAllTests()
 				const TArray<FBuhTimelineSnapshot> T = GenerateTimeline(S, 0, Opp, 30);
 				(void)T;
 			}
-			const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
+			const float D = FMath::Sqrt(FMath::Square(S.Fighters[1].X - S.Fighters[0].X) + FMath::Square(S.Fighters[1].Y - S.Fighters[0].Y));
 			if (D < 100.f - 1.f || S.Fighters[0].X >= S.Fighters[1].X) bStable = false;
 		}
 		Check(TEXT("T8 repeated-branch-switching-stable"), bStable,
@@ -1495,6 +1513,16 @@ int32 UBuhCombatSim::GetFinalOpponentX(const FBuhCombatResult& Result)
 	return Result.FinalState.Fighters[1].X;
 }
 
+float UBuhCombatSim::GetFinalPlayerY(const FBuhCombatResult& Result)
+{
+	return Result.FinalState.Fighters[0].Y;
+}
+
+float UBuhCombatSim::GetFinalOpponentY(const FBuhCombatResult& Result)
+{
+	return Result.FinalState.Fighters[1].Y;
+}
+
 int32 UBuhCombatSim::GetFinalPlayerHealth(const FBuhCombatResult& Result)
 {
 	return Result.FinalState.Fighters[0].Health;
@@ -1635,6 +1663,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.Instant = inst;
 			Snap.PlayerX = S.Fighters[0].X;
 			Snap.OpponentX = S.Fighters[1].X;
+			Snap.PlayerY = S.Fighters[0].Y;
+			Snap.OpponentY = S.Fighters[1].Y;
 			Snap.PlayerFacing = S.Fighters[0].Facing;
 			Snap.OpponentFacing = S.Fighters[1].Facing;
 			Snap.PlayerAction = S.Fighters[0].Action;
@@ -1657,7 +1687,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		}
 
 		const TArray<FBuhOutcome> Outcomes = StepCombatInstant(S, PreDodgeDist, bJustActive, AttackStart);
-		const float D = FMath::Abs(S.Fighters[1].X - S.Fighters[0].X);
+		const float D = FMath::Sqrt(FMath::Square(S.Fighters[1].X - S.Fighters[0].X) + FMath::Square(S.Fighters[1].Y - S.Fighters[0].Y));
 		TArray<FBuhCombatEvent> InstEvents;
 
 		bool bKO = false;
@@ -1701,6 +1731,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.Instant = inst;
 			Snap.PlayerX = S.Fighters[0].X;
 			Snap.OpponentX = S.Fighters[1].X;
+			Snap.PlayerY = S.Fighters[0].Y;
+			Snap.OpponentY = S.Fighters[1].Y;
 			Snap.PlayerFacing = S.Fighters[0].Facing;
 			Snap.OpponentFacing = S.Fighters[1].Facing;
 			Snap.PlayerAction = S.Fighters[0].Action;
@@ -1726,6 +1758,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		Snap.Instant = inst;
 		Snap.PlayerX = S.Fighters[0].X;
 		Snap.OpponentX = S.Fighters[1].X;
+		Snap.PlayerY = S.Fighters[0].Y;
+		Snap.OpponentY = S.Fighters[1].Y;
 		Snap.PlayerFacing = S.Fighters[0].Facing;
 		Snap.OpponentFacing = S.Fighters[1].Facing;
 		Snap.PlayerAction = S.Fighters[0].Action;
@@ -1804,6 +1838,18 @@ float UBuhCombatSim::GetSnapshotOpponentX(int32 Index)
 	return 0.f;
 }
 
+float UBuhCombatSim::GetSnapshotPlayerY(int32 Index)
+{
+	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].PlayerY;
+	return 0.f;
+}
+
+float UBuhCombatSim::GetSnapshotOpponentY(int32 Index)
+{
+	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].OpponentY;
+	return 0.f;
+}
+
 int32 UBuhCombatSim::GetSnapshotPlayerFacing(int32 Index)
 {
 	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].PlayerFacing;
@@ -1870,13 +1916,13 @@ FString UBuhCombatSim::GetSnapshotInfoText(int32 Index)
 	const FBuhTimelineSnapshot& Snap = GCurrentTimeline[Index];
 	FString Out;
 	Out += FString::Printf(TEXT("Instant %d\n"), Snap.Instant);
-	Out += FString::Printf(TEXT("Player: %s %s (%d) HP %d X %.0f %s\n"),
+	Out += FString::Printf(TEXT("Player: %s %s (%d) HP %d X %.0f Y %.0f %s\n"),
 		BuhCombat::MoveName(Snap.PlayerAction), BuhPhaseName(Snap.PlayerPhase),
-		Snap.PlayerPhaseInstants, Snap.PlayerHealth, Snap.PlayerX,
+		Snap.PlayerPhaseInstants, Snap.PlayerHealth, Snap.PlayerX, Snap.PlayerY,
 		Snap.bPlayerReady ? TEXT("ready") : TEXT("busy"));
-	Out += FString::Printf(TEXT("Opponent: %s %s (%d) HP %d X %.0f %s\n"),
+	Out += FString::Printf(TEXT("Opponent: %s %s (%d) HP %d X %.0f Y %.0f %s\n"),
 		BuhCombat::MoveName(Snap.OpponentAction), BuhPhaseName(Snap.OpponentPhase),
-		Snap.OpponentPhaseInstants, Snap.OpponentHealth, Snap.OpponentX,
+		Snap.OpponentPhaseInstants, Snap.OpponentHealth, Snap.OpponentX, Snap.OpponentY,
 		Snap.bOpponentReady ? TEXT("ready") : TEXT("busy"));
 	if (Snap.Events.Num() == 0)
 	{
@@ -1909,9 +1955,9 @@ FString UBuhCombatSim::PredictText(const FBuhCombatState& InState, int32 PlayerD
 		}
 	}
 	if (!bFound) Out += TEXT("no contact");
-	Out += FString::Printf(TEXT(" | P HP=%d X=%.0f O HP=%d X=%.0f"),
-		R.FinalState.Fighters[0].Health, R.FinalState.Fighters[0].X,
-		R.FinalState.Fighters[1].Health, R.FinalState.Fighters[1].X);
+	Out += FString::Printf(TEXT(" | P HP=%d X=%.0f Y=%.0f O HP=%d X=%.0f Y=%.0f"),
+		R.FinalState.Fighters[0].Health, R.FinalState.Fighters[0].X, R.FinalState.Fighters[0].Y,
+		R.FinalState.Fighters[1].Health, R.FinalState.Fighters[1].X, R.FinalState.Fighters[1].Y);
 	return Out;
 }
 
@@ -1936,20 +1982,22 @@ void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
 	const FBuhTimelineSnapshot Snap = GetSnapshotAt(Instant);
 	const float PlayerX = Snap.PlayerX;
 	const float OpponentX = Snap.OpponentX;
-	const float PlayerYaw = (Snap.PlayerFacing == 1) ? 0.0f : 180.0f;
-	const float OpponentYaw = (Snap.OpponentFacing == 1) ? 0.0f : 180.0f;
+	const float PlayerY = Snap.PlayerY;
+	const float OpponentY = Snap.OpponentY;
+	const float PlayerYaw = FMath::RadiansToDegrees(FMath::Atan2(OpponentY - PlayerY, OpponentX - PlayerX));
+	const float OpponentYaw = FMath::RadiansToDegrees(FMath::Atan2(PlayerY - OpponentY, PlayerX - OpponentX));
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		AActor* Actor = *It;
 		if (!Actor) continue;
 		if (Actor->Tags.Contains(TEXT("GhostPlayer")))
 		{
-			Actor->SetActorLocation(FVector(PlayerX, 0.0f, 90.0f));
+			Actor->SetActorLocation(FVector(PlayerX, PlayerY, 90.0f));
 			Actor->SetActorRotation(FRotator(0.0f, PlayerYaw, 0.0f));
 		}
 		else if (Actor->Tags.Contains(TEXT("GhostOpponent")))
 		{
-			Actor->SetActorLocation(FVector(OpponentX, 0.0f, 90.0f));
+			Actor->SetActorLocation(FVector(OpponentX, OpponentY, 90.0f));
 			Actor->SetActorRotation(FRotator(0.0f, OpponentYaw, 0.0f));
 		}
 	}
@@ -1992,10 +2040,12 @@ FString UBuhCombatSim::GetMoveDurationText(int32 Move)
 }
 
 float UBuhCombatSim::GPlayerWalkTarget = -9999.f;
+float UBuhCombatSim::GPlayerWalkTargetY = 0.f;
 
-void UBuhCombatSim::SetPreviewWalkTarget(float TargetX)
+void UBuhCombatSim::SetPreviewWalkTarget(float TargetX, float TargetY)
 {
 	GPlayerWalkTarget = TargetX;
+	GPlayerWalkTargetY = TargetY;
 }
 
 FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove, int32 CurrentInstant)
@@ -2004,15 +2054,15 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 	if (bHasTimeline())
 	{
 		const FBuhTimelineSnapshot S0 = GetSnapshotAt(0);
-		State = MakeState(static_cast<int32>(S0.PlayerX), static_cast<int32>(S0.OpponentX), S0.PlayerHealth, S0.OpponentHealth, 0);
+		State = MakeState(static_cast<int32>(S0.PlayerX), static_cast<int32>(S0.OpponentX), S0.PlayerHealth, S0.OpponentHealth, 0, S0.PlayerY, S0.OpponentY);
 	}
 	else
 	{
-		State = MakeState(-500.0f, 500.0f, 100.0f, 100.0f, 0);
+		State = MakeState(-500, 500, 100, 100, 0);
 	}
 	if (PlayerMove == 6 && GPlayerWalkTarget >= -9998.f)
 	{
-		State = WithPlayerWalkTarget(State, GPlayerWalkTarget);
+		State = WithPlayerWalkTarget(State, GPlayerWalkTarget, GPlayerWalkTargetY);
 	}
 	// A Walk preview must show the walk's actual movement, not be interrupted by the
 	// reaction-pause mechanic (which fires at instant 0 for a reactable walk). Execution
@@ -2067,7 +2117,7 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 	float MinD = R.MinDistanceSeen;
 	if (R.StoppedReason == 5 && R.FinalState.Fighters.Num() == 2)
 	{
-		MinD = FMath::Abs(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X);
+		MinD = FMath::Sqrt(FMath::Square(R.FinalState.Fighters[1].X - R.FinalState.Fighters[0].X) + FMath::Square(R.FinalState.Fighters[1].Y - R.FinalState.Fighters[0].Y));
 	}
 
 	FString Summary = FString::Printf(TEXT("%s vs %s: P %d→%d, O %d→%d, min D %.0f"),
@@ -2090,9 +2140,9 @@ FString UBuhCombatSim::GetTimelineLengthText(int32 CurrentInstant)
 	const FBuhTimelineSnapshot Last = GetSnapshotAt(Len - 1);
 	const int32 Phase = S.PlayerPhase;
 	const TCHAR* PhaseName = (Phase == 0) ? TEXT("idle") : (Phase == 1) ? TEXT("startup") : (Phase == 2) ? TEXT("active") : TEXT("recovery");
-	const float Traveled = FMath::Abs(S.PlayerX - S0.PlayerX);
+	const float Traveled = FMath::Sqrt(FMath::Square(S.PlayerX - S0.PlayerX) + FMath::Square(S.PlayerY - S0.PlayerY));
 	float Remaining = 0.f;
-	if (GPlayerWalkTarget >= -9998.f) Remaining = FMath::Abs(GPlayerWalkTarget - S.PlayerX);
+	if (GPlayerWalkTarget >= -9998.f) Remaining = FMath::Sqrt(FMath::Square(GPlayerWalkTarget - S.PlayerX) + FMath::Square(GPlayerWalkTargetY - S.PlayerY));
 	FString StopReason;
 	switch (Last.StoppedReason)
 	{
@@ -2112,7 +2162,7 @@ FString UBuhCombatSim::GetPreviewDistanceText(int32 Instant)
 	const int32 Len = GetTimelineLength();
 	const int32 Index = FMath::Clamp(Instant, 0, Len - 1);
 	const FBuhTimelineSnapshot S = GetSnapshotAt(Index);
-	return FString::Printf(TEXT("Preview D: %.0f"), FMath::Abs(S.OpponentX - S.PlayerX));
+	return FString::Printf(TEXT("Preview D: %.0f"), FMath::Sqrt(FMath::Square(S.OpponentX - S.PlayerX) + FMath::Square(S.OpponentY - S.PlayerY)));
 }
 
 void UBuhCombatSim::PrintWidgetGeometry(UWidget* Widget)
@@ -2230,8 +2280,8 @@ static FAutoConsoleCommand GBUHDebugSnapshotCmd(
 			return;
 		}
 		const FBuhTimelineSnapshot& S = GCurrentTimeline[Index];
-		UE_LOG(LogTemp, Display, TEXT("BUH.DebugSnapshot: Index=%d Instant=%d PlayerAction=%d OpponentAction=%d PlayerPhase=%d OpponentPhase=%d PlayerX=%.0f OpponentX=%.0f"),
-			Index, S.Instant, S.PlayerAction, S.OpponentAction, S.PlayerPhase, S.OpponentPhase, S.PlayerX, S.OpponentX);
+		UE_LOG(LogTemp, Display, TEXT("BUH.DebugSnapshot: Index=%d Instant=%d PlayerAction=%d OpponentAction=%d PlayerPhase=%d OpponentPhase=%d PlayerX=%.0f PlayerY=%.0f OpponentX=%.0f OpponentY=%.0f"),
+			Index, S.Instant, S.PlayerAction, S.OpponentAction, S.PlayerPhase, S.OpponentPhase, S.PlayerX, S.PlayerY, S.OpponentX, S.OpponentY);
 	}));
 
 static FAutoConsoleCommand GBUHDiagnoseUICmd(
@@ -2406,13 +2456,15 @@ int32 UBuhCombatSim::ComputeOpponentMoveWithVars(
 	int32 OpponentHealth,
 	int32 Seed,
 	int32 StoredOpponentMove,
-	int32 LastPlayerMove)
+	int32 LastPlayerMove,
+	float PlayerY,
+	float OpponentY)
 {
 	if (bHasCurrentState)
 	{
 		return StoredOpponentMove;
 	}
-	FBuhCombatState State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed);
+	FBuhCombatState State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed, PlayerY, OpponentY);
 	return ChooseOpponentMove(State, LastPlayerMove, Seed);
 }
 
@@ -2426,7 +2478,10 @@ FBuhCombatResult UBuhCombatSim::ExecuteMoveWithVars(
 	int32 Seed,
 	int32 PlayerMove,
 	int32 OpponentMove,
-	float WalkTarget)
+	float WalkTarget,
+	float WalkTargetY,
+	float PlayerY,
+	float OpponentY)
 {
 	FBuhCombatState State;
 	if (bHasCurrentState)
@@ -2435,11 +2490,11 @@ FBuhCombatResult UBuhCombatSim::ExecuteMoveWithVars(
 	}
 	else
 	{
-		State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed);
+		State = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed, PlayerY, OpponentY);
 	}
 	if (State.Fighters.Num() >= 2)
 	{
-		State = WithPlayerWalkTarget(State, WalkTarget);
+		State = WithPlayerWalkTarget(State, WalkTarget, WalkTargetY);
 	}
 	return ResolveCombat(State, PlayerMove, OpponentMove, 200);
 }
@@ -2591,6 +2646,33 @@ void UBuhCombatSim::DrawGroundLine(APlayerController* PC, FVector Start, FVector
 	if (!World) return;
 	FColor Green(0, 255, 0, 255);
 	::DrawDebugLine(World, Start, End, Green, false, Duration, 0, Thickness);
+}
+
+bool UBuhCombatSim::GetGroundHitUnderCursor(APlayerController* PC, FVector2D ScreenPos, FVector& OutHitLocation)
+{
+	if (!PC) return false;
+	FHitResult Hit;
+	PC->GetHitResultUnderCursorByChannel(ETraceTypeQuery::TraceTypeQuery1, true, Hit);
+	if (Hit.bBlockingHit)
+	{
+		OutHitLocation = Hit.Location;
+		return true;
+	}
+	return false;
+}
+
+float UBuhCombatSim::GetGroundHitX(APlayerController* PC, FVector2D ScreenPos)
+{
+	FVector Hit;
+	if (GetGroundHitUnderCursor(PC, ScreenPos, Hit)) return Hit.X;
+	return ScreenToGroundX(PC, ScreenPos);
+}
+
+float UBuhCombatSim::GetGroundHitY(APlayerController* PC, FVector2D ScreenPos)
+{
+	FVector Hit;
+	if (GetGroundHitUnderCursor(PC, ScreenPos, Hit)) return Hit.Y;
+	return ScreenToGroundY(PC, ScreenPos);
 }
 
 

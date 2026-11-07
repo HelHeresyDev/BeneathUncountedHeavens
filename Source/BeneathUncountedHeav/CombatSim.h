@@ -13,6 +13,7 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 Health = 100;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float X = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float Y = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 Action = -1;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 Phase = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 PhaseInstants = 0;
@@ -23,6 +24,7 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkDir = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkRemaining = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float WalkTarget = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float WalkTargetY = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactedThreatFighter = -1;
 };
 
@@ -73,6 +75,8 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhTimelineSnapshot
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 Instant = 0;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float PlayerX = 0.f;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float OpponentX = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float PlayerY = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float OpponentY = 0.f;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 PlayerFacing = 1;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 OpponentFacing = -1;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 PlayerAction = -1;
@@ -115,13 +119,13 @@ public:
 	static FBuhCombatResult ResolveCombat(FBuhCombatState InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressReactionPause = false, bool bSuppressPlayerReadyBreak = false);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatState MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed);
+	static FBuhCombatState MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, float PlayerY = 0.f, float OpponentY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatState MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants);
+	static FBuhCombatState MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants, float PlayerY = 0.f, float OpponentY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatState WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX);
+	static FBuhCombatState WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString RunAllTests();
@@ -133,6 +137,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetFinalOpponentX(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float GetFinalPlayerY(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float GetFinalOpponentY(const FBuhCombatResult& Result);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetFinalPlayerHealth(const FBuhCombatResult& Result);
@@ -203,6 +213,12 @@ public:
 	static float GetSnapshotOpponentX(int32 Index);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float GetSnapshotPlayerY(int32 Index);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float GetSnapshotOpponentY(int32 Index);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetSnapshotPlayerFacing(int32 Index);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
@@ -255,9 +271,10 @@ public:
 	static FString GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove, int32 CurrentInstant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static void SetPreviewWalkTarget(float TargetX);
+	static void SetPreviewWalkTarget(float TargetX, float TargetY = 0.f);
 
 	static float GPlayerWalkTarget;
+	static float GPlayerWalkTargetY;
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetTimelineLengthText(int32 CurrentInstant);
@@ -275,7 +292,9 @@ public:
 		int32 OpponentHealth,
 		int32 Seed,
 		int32 StoredOpponentMove,
-		int32 LastPlayerMove);
+		int32 LastPlayerMove,
+		float PlayerY = 0.f,
+		float OpponentY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatResult ExecuteMoveWithVars(
@@ -288,7 +307,10 @@ public:
 		int32 Seed,
 		int32 PlayerMove,
 		int32 OpponentMove,
-		float WalkTarget);
+		float WalkTarget,
+		float WalkTargetY = 0.f,
+		float PlayerY = 0.f,
+		float OpponentY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void PrintWidgetGeometry(UWidget* Widget);
@@ -319,5 +341,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void DrawGroundLine(APlayerController* PC, FVector Start, FVector End, float Thickness, float Duration);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static bool GetGroundHitUnderCursor(APlayerController* PC, FVector2D ScreenPos, FVector& OutHitLocation);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float GetGroundHitX(APlayerController* PC, FVector2D ScreenPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static float GetGroundHitY(APlayerController* PC, FVector2D ScreenPos);
 
 };
