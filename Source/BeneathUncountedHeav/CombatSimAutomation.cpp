@@ -230,6 +230,172 @@ bool FBuhCombatFlowTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("N: Step 3 reset opponent X"), Reset.Fighters[1].X, 500.f);
 	}
 
+	// === 2D Movement Tests (Stage C) ===
+
+	// O: Walk in positive Y. Player at (0,0), opponent at (1000,0). Walk to (0,200).
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 1000, 100, 100, Seed, /*PlayerMove=*/6, /*OpponentMove=*/2, /*WalkTarget=*/0.f, /*WalkTargetY=*/200.f);
+		TestTrue(TEXT("O: player walked in +Y"), R.FinalState.Fighters[0].Y > 0.f);
+		TestTrue(TEXT("O: player reached +Y target"), FMath::Abs(R.FinalState.Fighters[0].Y - 200.f) < 1.f);
+		TestEqual(TEXT("O: player X unchanged"), R.FinalState.Fighters[0].X, 0.f);
+	}
+
+	// P: Walk in negative Y. Player at (0,200), opponent at (1000,0). Walk to (0,0).
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 200.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 1000, 100, 100, Seed, /*PlayerMove=*/6, /*OpponentMove=*/2, /*WalkTarget=*/0.f, /*WalkTargetY=*/0.f);
+		TestTrue(TEXT("P: player walked in -Y"), R.FinalState.Fighters[0].Y < 200.f);
+		TestTrue(TEXT("P: player reached -Y target"), FMath::Abs(R.FinalState.Fighters[0].Y) < 1.f);
+	}
+
+	// Q: Walk diagonally. Player at (0,0), opponent at (1000,1000). Walk to (200,200).
+	// Distance = sqrt(200^2+200^2) = 283 units. At 30 units/instant, takes ~10 instants.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 1000, 100, 100, Seed, /*PlayerMove=*/6, /*OpponentMove=*/2, /*WalkTarget=*/200.f, /*WalkTargetY=*/200.f);
+		TestTrue(TEXT("Q: player walked in +X"), R.FinalState.Fighters[0].X > 0.f);
+		TestTrue(TEXT("Q: player walked in +Y"), R.FinalState.Fighters[0].Y > 0.f);
+		TestTrue(TEXT("Q: player reached diagonal X target"), FMath::Abs(R.FinalState.Fighters[0].X - 200.f) < 1.f);
+		TestTrue(TEXT("Q: player reached diagonal Y target"), FMath::Abs(R.FinalState.Fighters[0].Y - 200.f) < 1.f);
+	}
+
+	// R: Walk a distance shorter than one instant. Player at (0,0), target (10,0).
+	// Distance 10 < 30 (one instant of walking), so the walk completes in one instant.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 1000, 100, 100, Seed, /*PlayerMove=*/6, /*OpponentMove=*/2, /*WalkTarget=*/10.f);
+		TestTrue(TEXT("R: short walk completed"), R.bPlayerReady);
+		TestTrue(TEXT("R: player reached short target"), FMath::Abs(R.FinalState.Fighters[0].X - 10.f) < 1.f);
+	}
+
+	// S: Walk away from opponent with Y separation. Player at (0,0), opponent at (300,0).
+	// Walk Away (5) should move the player away from the opponent in the ground plane.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 300, 100, 100, Seed, 0.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 300, 100, 100, Seed, /*PlayerMove=*/5, /*OpponentMove=*/2, /*WalkTarget=*/0.f);
+		TestTrue(TEXT("S: walk away moved player in -X"), R.FinalState.Fighters[0].X < 0.f);
+	}
+
+	// === 2D Combat Range Tests ===
+
+	// T: Quick Strike misses at distance 500 with Y separation.
+	// Player at (0,0), opponent at (300,400). Distance = 500. Quick range = 300. Should miss.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 300, 100, 100, Seed, 0.f, 400.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 300, 100, 100, Seed, /*PlayerMove=*/0, /*OpponentMove=*/2, /*WalkTarget=*/0.f, /*WalkTargetY=*/0.f, /*PlayerY=*/0.f, /*OpponentY=*/400.f);
+		TestEqual(TEXT("T: Quick misses at 2D distance 500"), R.FinalState.Fighters[1].Health, 100);
+	}
+
+	// U: Heavy Strike misses at distance 500 with Y separation.
+	// Player at (0,0), opponent at (300,400). Distance = 500. Heavy range = 400. Should miss.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 300, 100, 100, Seed, 0.f, 400.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 300, 100, 100, Seed, /*PlayerMove=*/1, /*OpponentMove=*/2, /*WalkTarget=*/0.f, /*WalkTargetY=*/0.f, /*PlayerY=*/0.f, /*OpponentY=*/400.f);
+		TestEqual(TEXT("U: Heavy misses at 2D distance 500"), R.FinalState.Fighters[1].Health, 100);
+	}
+
+	// V: Quick Strike connects at 2D distance 200 with Y separation.
+	// Player at (0,0), opponent at (0,200). Distance = 200. Quick range = 300. Should connect.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 0, 100, 100, Seed, 0.f, 200.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 0, 100, 100, Seed, /*PlayerMove=*/0, /*OpponentMove=*/-1, /*WalkTarget=*/0.f, /*WalkTargetY=*/0.f, /*PlayerY=*/0.f, /*OpponentY=*/200.f);
+		TestEqual(TEXT("V: Quick connects at 2D distance 200 (Y-sep)"), R.FinalState.Fighters[1].Health, 90);
+	}
+	// V2: Quick Strike connects at X distance 200 (control test).
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 200, 100, 100, Seed, 0.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 200, 100, 100, Seed, /*PlayerMove=*/0, /*OpponentMove=*/-1, /*WalkTarget=*/0.f, /*WalkTargetY=*/0.f, /*PlayerY=*/0.f, /*OpponentY=*/0.f);
+		TestEqual(TEXT("V2: Quick connects at X distance 200"), R.FinalState.Fighters[1].Health, 90);
+	}
+
+	// W: Dodge displaces in the ground plane. Player at (0,0), opponent at (300,0).
+	// Dodge (3) moves the player 60 units away from the opponent.
+	{
+		const FBuhCombatState S = UBuhCombatSim::MakeState(0, 300, 100, 100, Seed, 0.f, 0.f);
+		const FBuhCombatResult R = UBuhCombatSim::ExecuteMoveWithVars(
+			false, S, 0, 300, 100, 100, Seed, /*PlayerMove=*/3, /*OpponentMove=*/2, /*WalkTarget=*/0.f);
+		TestTrue(TEXT("W: dodge displaced player in -X"), R.FinalState.Fighters[0].X < 0.f);
+		TestTrue(TEXT("W: dodge moved 60 units"), FMath::Abs(R.FinalState.Fighters[0].X) > 50.f);
+	}
+
+	// === 2D Reaction Tests ===
+
+	// X: Continue resumes a partially completed diagonal walk.
+	// Player at (0,0), walks to (200,200). Opponent Quick causes reaction pause at instant 0.
+	// Continue Walk should resume the diagonal walk from the paused position.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 200.f, 200.f);
+		FBuhCombatResult R1 = UBuhCombatSim::ResolveCombat(Base, /*PlayerDecision=*/6, /*OpponentDecision=*/0, /*MaxInstants=*/200);
+		TestTrue(TEXT("X: diagonal walk reaction opportunity"), R1.bReactionOpportunity);
+		FBuhCombatResult R2 = UBuhCombatSim::ResolveCombat(R1.FinalState, /*PlayerDecision=*/7, /*OpponentDecision=*/-1, /*MaxInstants=*/200);
+		TestTrue(TEXT("X: continue diagonal walk moved in +X"), R2.FinalState.Fighters[0].X > 0.f);
+		TestTrue(TEXT("X: continue diagonal walk moved in +Y"), R2.FinalState.Fighters[0].Y > 0.f);
+	}
+
+	// Y: Original XY target is preserved after reaction pause.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 300.f, 400.f);
+		FBuhCombatResult R1 = UBuhCombatSim::ResolveCombat(Base, /*PlayerDecision=*/6, /*OpponentDecision=*/0, /*MaxInstants=*/200);
+		TestTrue(TEXT("Y: reaction opportunity with diagonal target"), R1.bReactionOpportunity);
+		TestTrue(TEXT("Y: walk target X preserved"), FMath::Abs(R1.FinalState.Fighters[0].WalkTarget - 300.f) < 1.f);
+		TestTrue(TEXT("Y: walk target Y preserved"), FMath::Abs(R1.FinalState.Fighters[0].WalkTargetY - 400.f) < 1.f);
+	}
+
+	// Z: Opponent's committed attack continues during reaction pause.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 500.f, 0.f);
+		FBuhCombatResult R1 = UBuhCombatSim::ResolveCombat(Base, /*PlayerDecision=*/6, /*OpponentDecision=*/1, /*MaxInstants=*/200);
+		TestTrue(TEXT("Z: reaction opportunity vs Heavy"), R1.bReactionOpportunity);
+		TestEqual(TEXT("Z: opponent action is Heavy"), R1.FinalState.Fighters[1].Action, 1);
+		TestTrue(TEXT("Z: opponent phase progressed"), R1.FinalState.Fighters[1].Phase > 0);
+	}
+
+	// === 2D Prediction/Ghost Tests ===
+
+	// AA: Timeline snapshots have correct Y values for diagonal walk.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		Base = UBuhCombatSim::WithPlayerWalkTarget(Base, 300.f, 300.f);
+		const TArray<FBuhTimelineSnapshot> T = UBuhCombatSim::GenerateTimeline(
+			Base, /*PlayerMove=*/6, /*OpponentMove=*/2, /*MaxInstants=*/30, /*bSuppressPlayerReadyBreak=*/true);
+		TestTrue(TEXT("AA: diagonal walk timeline has multiple instants"), T.Num() > 1);
+		TestTrue(TEXT("AA: final snapshot player Y > 0"), T.Last().PlayerY > 0.f);
+		TestTrue(TEXT("AA: final snapshot player Y approaches target"), T.Last().PlayerY > 100.f);
+		TestTrue(TEXT("AA: final snapshot player X > 0"), T.Last().PlayerX > 0.f);
+	}
+
+	// BB: Ghost positions (PlayerY/OpponentY) in snapshots match expected values.
+	{
+		FBuhCombatState Base = UBuhCombatSim::MakeState(0, 500, 100, 100, Seed, 0.f, 100.f);
+		const TArray<FBuhTimelineSnapshot> T = UBuhCombatSim::GenerateTimeline(
+			Base, /*PlayerMove=*/-1, /*OpponentMove=*/-1, /*MaxInstants=*/5, /*bSuppressPlayerReadyBreak=*/true);
+		TestTrue(TEXT("BB: snapshot has opponent Y"), T[0].OpponentY > 0.f);
+		TestTrue(TEXT("BB: opponent Y preserved in snapshot"), FMath::Abs(T[0].OpponentY - 100.f) < 1.f);
+	}
+
+	// CC: Changing destination does not mutate authoritative state.
+	{
+		FBuhCombatState S = UBuhCombatSim::MakeState(0, 1000, 100, 100, Seed, 0.f, 0.f);
+		const float OrigX = S.Fighters[0].X;
+		const float OrigY = S.Fighters[0].Y;
+		S = UBuhCombatSim::WithPlayerWalkTarget(S, 500.f, 300.f);
+		TestEqual(TEXT("CC: walk target does not mutate player X"), S.Fighters[0].X, OrigX);
+		TestEqual(TEXT("CC: walk target does not mutate player Y"), S.Fighters[0].Y, OrigY);
+	}
+
 	return true;
 }
 
