@@ -210,7 +210,7 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 1. **C++ simulation tests** — prove the resolver logic. Run via MCP `AutomationTestToolset`.
 2. **Blueprint integration tests** — prove the controller is wired and callable. Run via MCP `AutomationTestToolset`.
 3. **Headless PIE state inspection** — prove initial state and no auto-advance. Via `ObjectTools.get_properties` on live PIE actors.
-4. **Graphical PIE rendering** — prove the fighters and UI actually draw. Via `run_graphical_visual_test.sh`.
+4. **Graphical PIE rendering** — prove the fighters and UI actually draw. Via `tests/run_graphical_visual_test.sh`.
 
 Passing one type of test does NOT prove another type succeeded.
 
@@ -224,7 +224,7 @@ Passing one type of test does NOT prove another type succeeded.
 
 ### 6.3 Graphical PIE verification
 
-`run_graphical_visual_test.sh` is the only way to get a real rendered screenshot. See §7 for the VRAM-safe workflow.
+`tests/run_graphical_visual_test.sh` is the only way to get a real rendered screenshot. See §7 for the VRAM-safe workflow.
 
 The script captures the **initial state** only (both fighters, UI, prediction panel). Driving button clicks requires additional automation or manual PIE.
 
@@ -249,7 +249,7 @@ MCP cannot click UMG buttons. In a **graphical** PIE session on `Lvl_TacticalDue
 
 ### 7.1 Graphical visual test & self-wake
 
-`run_graphical_visual_test.sh` proves the two fighters actually draw (the headless `-nullrhi` editor renders nothing). It:
+`tests/run_graphical_visual_test.sh` proves the two fighters actually draw (the headless `-nullrhi` editor renders nothing). It:
 1. Waits for Qwen/llama.cpp to idle-sleep (VRAM < 4 GiB).
 2. Closes the headless MCP editor.
 3. Launches the full graphical editor (`UnrealEditor-xwayland`).
@@ -257,7 +257,7 @@ MCP cannot click UMG buttons. In a **graphical** PIE session on `Lvl_TacticalDue
 5. Closes the graphical editor.
 6. Writes `tmp_opencode/visual_test/<run_id>/result.json`.
 
-**Run it via a BLOCKING bash tool call** (`bash run_graphical_visual_test.sh`), NOT backgrounded with `nohup … &`. The blocking call keeps the session waiting (no inference) so llama.cpp sleeps; when the script exits, the tool call returns its result and the session's next inference wakes the model automatically.
+**Run it via a BLOCKING bash tool call** (`bash tests/run_graphical_visual_test.sh`), NOT backgrounded with `nohup … &`. The blocking call keeps the session waiting (no inference) so llama.cpp sleeps; when the script exits, the tool call returns its result and the session's next inference wakes the model automatically.
 
 **Never launch a nested `opencode run` from inside the script** to "wake" the model. That is a nested OpenCode process that times out and never reloads the model. The wake comes from the *original* session's own next inference.
 
@@ -483,3 +483,199 @@ Every *graphical* launch goes through `…/Binaries/Linux/UnrealEditor-xwayland`
 - Graphical PIE confirmed by the user: Continue button appears during reaction opportunities for Walk Toward and Walk Away.
 
 **Lesson:** When a reaction decision is missing from the UI, check the C++ eligibility check (`GetReactionInfo`) against the actual action IDs the UI commits. The UI Walk buttons commit Actions 4 and 5, not 6. `IsReactableWalk` already covered all three, but `GetReactionInfo` did not. The two checks must stay in sync. Diagnostic `PrintString` nodes in `ExecuteMove` are the fastest way to confirm the actual PIE state when headless PIE cannot reproduce the scenario.
+
+### 9.18 Stale CurrentState lifecycle caused walk to commit from wrong positions (RESOLVED)
+
+**Problem:** Destination Walk (Action 6) committed from stale fighter positions instead of the current `PlayerX`/`OpponentX`. The walk target was correct, but the starting position in the sim state was wrong, causing the fighter to move from the wrong location.
+
+**Cause:** `ExecuteMove` selects between two states: if `bHasCurrentState` is true, it reuses the stored `CurrentState`; otherwise it builds a fresh `MakeState` from `PlayerX`/`OpponentX`. After any prior `ExecuteMove`, `bHasCurrentState` was set to true and never cleared. `ResetEncounter` restored positions and health but did **not** clear `bHasCurrentState` or `CurrentState`, so the next `ExecuteMove` reused the stale state from the previous encounter.
+
+**Fix:**
+- `ResetEncounter` now calls `Variables|Default|SetHasCurrentState false`, ensuring the first `ExecuteMove` after a reset uses a fresh `MakeState` with current `PlayerX`/`OpponentX`.
+- `ExecuteMove` uses `Variables|Default|GetHasCurrentState` (not the non-existent `|GetbHasCurrentState`) to read the flag.
+- Added `LogCombatState` (C++ helper in `CombatSim.cpp`) for `[WalkTrace]` diagnostics before/after `ResolveCombat` in `ExecuteMove`, proving the state transition.
+
+**Verified:**
+- `[WalkTrace]` logs confirmed: PreResolve shows fresh state with correct positions; PostResolve shows the walk progressing from the correct starting position.
+- All 4 `BUH.*` automation suites pass.
+- PIE property inspection: `PlayerMove=-1` (idle), `PlayerX=-500`, `OpponentX=500` after `ResetEncounter`.
+- First scene is clean: no green walk-target line (`PlayerMove != 6`), no visible ghost (`BP_DestGhost_C_0.bHidden=true`).
+
+**Lesson:** A boolean "has valid state" flag must be cleared on every reset path. If `ResetEncounter` restores positions but leaves `bHasCurrentState=true`, the next execution reuses the old `CurrentState` with stale positions. The flag and the state it guards must be reset together. The `b` prefix is stripped in Blueprint variable node names (`bHasCurrentState` → `GetHasCurrentState`/`SetHasCurrentState`), so the old `|GetbHasCurrentState` form fails with "does not exist".
+
+### 9.19 Reusable movement path renderer replaces DrawGroundLine (RESOLVED)
+
+**Problem:** The Walk targeting visualization used `DrawDebugLine`, a development-only API that does not persist in shipping builds and cannot support future multi-segment colored paths (Dash red/green, Jump 3D parabola). Additionally, the path line rendered black instead of bright green, and the path was never cleared after targeting ended.
+
+**Cause:** No dedicated runtime path renderer existed. `DrawGroundLine` in `CombatSim.cpp` called `DrawDebugLine` directly. The unlit materials had `Constant3Vector` connected to `MP_BaseColor` instead of `MP_EmissiveColor` — Unlit shading uses Emissive for visible color. Path clearing was not wired because `write_graph_dsl` fails on the pre-existing `StateMachine|GetState` node in `WBP_CombatUI:EventGraph`.
+
+**Fix:**
+- Created `ABUHPathRenderer` C++ actor (`Source/BeneathUncountedHeav/PathRenderer.h`/`.cpp`) with a `USplineComponent` root and four `UStaticMeshComponent` segments. UE 5.8 `USplineMeshComponent` lacks `StartSplinePointIndex`/`EndSplinePointIndex`, so `UStaticMeshComponent` cubes positioned along the spline are used instead.
+- `SetLine(Start, End, Color)` positions the spline with two points and places the four cube segments along it. `ClearPath()` hides all segments. `SetPathVisible(bool)` toggles visibility.
+- `M_PathGreen` and `M_PathRed` unlit materials: `Constant3Vector` connected to `MP_EmissiveColor` (not `MP_BaseColor`). Assigned to the actor's `GreenMaterial`/`RedMaterial` `EditDefaultsOnly` properties via `ConstructorHelpers::FObjectFinder` in the constructor.
+- Actor `BUHPathRenderer_1` placed in `Lvl_TacticalDuel` with tag `PathRenderer`.
+- `UBuhCombatSim::DrawGroundLine` modified to iterate `TActorIterator<ABUHPathRenderer>`, call `SetLine(Start, End, EPathSegmentColor::Green)` on the first found renderer, and fall back to `DrawDebugLine` if none exists.
+- `DrawWalkPath` and `ClearWalkPath` static helpers added to `UBuhCombatSim` as wrappers around the PathRenderer.
+- **Path clearing wired via targeted node-level edits** (not DSL rewrite):
+  - `BP_CombatManager:ExecuteMove` — `ClearWalkPath` node added after `RefreshUI`, connected via exec chain + `GetPlayerController` → `PC` pin.
+  - `BP_CombatManager:ResetEncounter` — same pattern.
+  - `WBP_CombatUI:EventGraph` walk-cancel branch — `ClearWalkPath` node inserted between `SetActorHiddenInGame` and the next node in the right-click/Escape cancel chain.
+  - Enter-key execute, R-key reset, BtnExecute, BtnReset, BtnBack all route through `ExecuteMove` or `ResetEncounter`, so they inherit the clearing automatically.
+
+**Verified:**
+- PIE: actor found with correct materials, tag, spline, and 4 mesh segments.
+- All 4 `BUH.*` automation suites pass (run twice: after material fix and after ClearWalkPath wiring).
+- No PathRenderer errors in logs.
+- Both Blueprints compiled cleanly and saved.
+
+**Lesson:** UE 5.8 `USplineMeshComponent` does not expose `StartSplinePointIndex`/`EndSplinePointIndex`; use `UStaticMeshComponent` segments positioned along a `USplineComponent` instead. Unlit materials must supply color through `MP_EmissiveColor`, not `MP_BaseColor`. `EditDefaultsOnly` properties on C++ actors must be assigned in the constructor via `ConstructorHelpers::FObjectFinder`. The `write_graph_dsl` tool cannot rewrite graphs containing `StateMachine|GetState` nodes; use targeted node-level edits (`create_node`, `connect_pins`, `break_pins`) or C++ routing instead. When a function graph (e.g. `ExecuteMove`, `ResetEncounter`) is the natural insertion point, adding `ClearWalkPath` there covers all callers (keyboard, buttons, EventTick) without modifying the complex EventGraph.
+
+### 9.20 Path renderer upgraded to a reusable segment pool + renderer-only automation (RESOLVED)
+
+**Problem:** The original `ABUHPathRenderer` used four fixed `UStaticMeshComponent` segments, which cannot represent variable segment counts or sampled 3D curves (Jump parabola) with per-segment red/green boundaries. The verification todo required proving the renderer alone draws straight/segmented/curved paths, reuses components without leaking, and that the real gameplay call path (`DrawWalkPath`/`ClearWalkPath`) works.
+
+**Cause:** Fixed 4-segment design; no explicit per-segment color ranges; no automation exercising the renderer or the CombatSim statics.
+
+**Fix:**
+- Rewrote `PathRenderer.h`/`.cpp`: replaced the fixed `MeshSegments` array with a `Transient` `SegmentPool` (`TArray<TObjectPtr<UStaticMeshComponent>>`) grown on demand via `NewObject<UStaticMeshComponent>` + `SetupAttachment` + `RegisterComponent` + `SetCastShadow(false)`. `SetPath(Points, Segments)` now takes `FBuhPathSegment {StartPointIndex, EndPointIndex, Color}` and places one piece per consecutive point pair inside each segment's index range, so red/green transitions land on supplied boundaries. `SetLine` wraps 2 points / 1 segment. `LastPathPieceCount` tracks visibility count because `USceneComponent` has no public `IsHiddenInGame()` getter.
+- Added `PathRendererAutomation.cpp` → `BUH.PathRendererTests` (EditorContext): A straight green line; B straight red→green at a supplied boundary (not midpoint); C sampled 3D parabolic arc with real vertical curvature and a red→green boundary at sample 3 (not the apex); D 20 varied draws proving pool reuse (size == high-water mark, bounded) and no actor/component leak (count returns to baseline); E full lifecycle through the real `UBuhCombatSim::DrawWalkPath`/`ClearWalkPath`/`DrawGroundLine` statics via a spawned `APlayerController` (appear → update → clear → reappear → ground line → final clear).
+- `DrawGroundLine`'s `DrawDebugLine` fallback is **kept** as a no-renderer safety net; it is unreachable in the shipped level because `BUHPathRenderer_1` is placed.
+
+**Verified:**
+- `BUH.PathRendererTests` passes (A/B/C/D/E). All 4 existing `BUH.*` suites still pass — no regression.
+- PIE: `BUHPathRenderer_1` present with `M_PathGreen`/`M_PathRed`/`Cube`; no PathRenderer errors in logs.
+
+**Lesson:** For variable-count, multi-color, sampled paths, a per-point-pair reusable static-mesh pool beats a fixed segment count and beats `USplineMeshComponent` (which only connects two endpoints and cannot follow intermediate samples). Track visibility count in a member (`LastPathPieceCount`) rather than querying `IsHiddenInGame` (no public getter). A `for (TActorIterator ...; It; ++It) { ...; break; }` loop trips `-Werror,-Wunreachable-code-loop-increment`; use `TActorIterator It(World); if (It) ...` instead. The CombatSim statics resolve the world from `PC->GetWorld()`, so a headless lifecycle test must spawn an `APlayerController` in the editor world to drive them.
+
+### 9.21 Removed per-frame PrintString flood from WBP_CombatUI:EventTick (RESOLVED)
+
+**Problem:** The screen was flooded every frame with three obsolete diagnostics in the `EventTick` walk-targeting branch: `Mouse: X/Y`, `Ground: X/Y`, and `DIAGONAL TARGET - X only will be used`. The "X only" warning contradicted the verified 2D Walk implementation (`SelectWalkDestination` receives both X and Y).
+
+**Cause:** Leftover `Development|PrintString` exec nodes (and a misleading `Branch` wrapping the diagonal one) inside the `(if (|GetbWalkTargeting) ...)` branch, which runs every frame while targeting.
+
+**Fix (targeted node-level edits, no EventGraph rewrite):**
+- Identified the three nodes by dumping each `PrintString`'s `InString` pin via `get_node_infos`: `K2Node_CallFunction_23` (Mouse, InString ← string-append), `K2Node_CallFunction_30` (Ground, InString ← string-append), `K2Node_CallFunction_41` (DIAGONAL, literal text) inside `K2Node_IfThenElse_1`.
+- Rewired the exec chain and deleted: `IfThenElse_0.then → CallFunction_25.execute` then delete `CallFunction_23`; `CallFunction_27.then → CallFunction_31.execute` then delete `CallFunction_30`; `CallFunction_38.then → IfThenElse_2.execute` then delete `CallFunction_41` and `IfThenElse_1`.
+- Retained the non-flood diagnostics: `WBP_CombatUI CONSTRUCTED` (one-shot) and the four `HYPOTHETICAL CLICK: ...` (fire only on button press).
+
+**Verified:**
+- `compile_blueprint` clean; re-read DSL confirms `Mouse:`/`Ground:`/`DIAGONAL` gone, `SelectWalkDestination` still receives both `_returnvalue_2` (X) and `_returnvalue_3` (Y) — 2D Walk intact, no X-only fallback.
+- All 5 `BUH.*` automation suites pass (5/5, 0 failed) — no gameplay regression.
+- PIE: exactly one `BUHPathRenderer_1` actor, no accumulation.
+- Lifecycle (§2) confirmed by code + `BUH.PathRendererTests` E: `SetLine` is persistent; EventTick redraws the confirmed line while `GetPlayerMove == 6` (Walk), so confirm keeps the line fixed, cancel-reselection restores it (move still 6), cancel-without-target clears it (move ≠ 6), and no redraw occurs after `ClearWalkPath` when move ≠ 6.
+
+**Lesson:** To remove an exec node mid-chain, reconnect its predecessor's `then` to its successor's `execute` (`connect_pins` auto-breaks the old single exec link) before `delete_node`; for a `Branch` whose only purpose is a diagnostic, delete the child `PrintString` first, then the `Branch`, after rewiring the branch's input `then` to the next exec node. `get_node_infos` exposes each pin's `value` and `connected_pins`, which is how you map an anonymous `K2Node_CallFunction_N` to its actual `PrintString` text. `find_actors` returns `refPath` objects (actor name = last path segment), not `name`/`actorClass` fields.
+
+### 9.22 Stale Walk path/marker lingered after Back → other action (RESOLVED)
+
+**Problem:** After selecting Walk, confirming a destination, clicking Back, then choosing another action (e.g. Quick Strike), the green Walk path and the yellow DestPlayer marker remained visible. The screenshot showed "Your: Quick" with the old green line still rendered.
+
+**Cause (confirmed from live `WBP_CombatUI:EventGraph` DSL):**
+- `OnClicked(BtnBack)` set `HypotheticalOpponentMove=-1`, `RefreshUI`, toggled buttons, and hid the DestPlayer marker, but never called `ClearWalkPath`, never reset `PlayerMove`, and never set `bWalkTargeting=false`.
+- `OnClicked(BtnQuick/Heavy/Guard/Dodge)` called `Select*` + `RefreshUI` + button visibility but none called `ClearWalkPath`, hid DestPlayer, or exited Walk targeting.
+- `EventTick` (line 66–68) redraws the Walk line every frame while `GetPlayerMove == 6`; it never clears when leaving Walk. `SetLine` on `ABUHPathRenderer` is persistent, so the last-drawn line lingers. After Walk confirm `PlayerMove==6`; Back left it 6, so EventTick kept redrawing to the (hidden) DestPlayer location until `PlayerMove` changed.
+
+**Fix (shared helper + targeted node edits, no EventGraph rewrite):**
+- Created a `ClearPendingMovementPreview` function graph on `WBP_CombatUI` that does, in order: `CombatSim|ClearWalkPath (Game|GetPlayerController 0)`, hide all `DestPlayer` actors (`Actor|GetAllActorsWithTag` + `Rendering|SetActorHiddenInGame`), and `Class|BPCombatManager|SetPlayerMove -1 (Variables|Default|GetManager)` (deselect so EventTick stops redrawing).
+- Wired the helper as the first exec node in all five handlers: Back (`K2Node_ComponentBoundEvent_19`), Quick (`_0`), Heavy (`_1`), Guard (`_2`), Dodge (`_5`). For Quick/Heavy/Guard/Dodge the subsequent `Select*` overrides `PlayerMove` to 0/1/2/3; for Back it stays `-1`.
+- `SetPlayerMove` is a cross-class variable-setter on `BPCombatManager` (type_id `Class|BPCombatManager|SetPlayerMove`), which `create_node` CAN create — unlike same-class setters (`|SetbWalkTargeting` on `WBP_CombatUI` itself), which `create_node`/`write_graph_dsl` cannot create. So the helper cannot reset `bWalkTargeting`; documented as a known limitation (only matters for the edge case of clicking an action *during* active targeting, which is not in the test scenarios — after Walk confirm `bWalkTargeting` is already false).
+
+**Verified:**
+- `compile_blueprint` clean; re-read DSL confirms `ClearPendingMovementPreview` is the first node in Back/Quick handlers.
+- All 5 `BUH.*` automation suites pass (5/5, 0 failed) — no gameplay regression.
+- Graphical PIE 11-scenario verification is user-driven (headless `-nullrhi` cannot click UMG buttons); see the manual steps in `todo.md` §5.
+
+**Lesson:** `K2Node_ComponentBoundEvent`'s exec `then` output is at pin `index_id 1` (index 0 is the `OutputDelegate` data pin) — connecting index 0 to an exec input fails with "Could not connect pin OutputDelegate to execute". `create_node` creates cross-class variable-setters (`Class|X|SetVar`) but not same-class ones (`|SetVar`); route same-class variable sets through a different mechanism or accept the limitation. A shared preview-cleanup helper called at every action-selection boundary is cleaner than per-button workarounds, and resetting `PlayerMove` to the no-move sentinel (`-1`, i.e. `PlayerMove < 0`) is what actually stops the EventTick redraw — clearing the renderer geometry alone is not enough while `PlayerMove==6`.
+
+### 9.23 write_graph_dsl wipes EventTick bodies; cross-class TargetingAction replaces same-class targeting flags (RESOLVED — Dash button event still open)
+
+**Problem 1 (EventTick wipe):** While wiring Dash targeting, a `write_graph_dsl` call targeting `WBP_CombatUI:EventGraph` with a small Dash test block **replaced the entire EventTick body** with only that block, instead of attaching to the existing exec flow. The original Walk targeting, keyboard shortcuts (One/Two/Three/Four/Enter/R), and timeline slider (Left/Right) all vanished from the exec flow. `find_nodes` confirmed `DrawGroundLine`, `GetbWalkTargeting`, and `ClearWalkPath` nodes were deleted (not orphaned). This contradicts the earlier belief that `write_graph_dsl` "attaches bodies to found entry nodes (does not wipe the graph)" — that holds for **function graphs**, but for **event graphs** (EventTick) it wipes the event body.
+
+**Problem 2 (same-class variable nodes not creatable):** The original EventTick gated Walk targeting on the same-class boolean `bWalkTargeting` (getter type_id `|GetbWalkTargeting`). Both `create_node` and `write_graph_dsl` fail to create any same-class `WBP_CombatUI` variable getter/setter — even for variables that already exist (`|GetbWalkTargeting`, `|SetbWalkTargeting`, `|GetbTargetingDash`, full-form `Variables|WBP_CombatUI|GetWalkTargeting` all return "does not exist"). The existing nodes were created through manual editor work. So the wiped EventTick could not be restored verbatim via MCP.
+
+**Problem 3 (cross-class variable setters mis-wire):** `(Class|BPCombatManager|SetTargetingAction _manager -1)` fails `write_graph_dsl` with `Could not connect pin Manager to TargetingAction. The pins may be incompatible types.` Cross-class variable **getters**, comparisons, and **function calls** merge cleanly, but cross-class variable **setters** do not.
+
+**Fix (cross-class TargetingAction design, no same-class variable nodes):**
+- Added `TargetingAction` int to `BP_CombatManager` (default `-1`; `6`=Walk, `8`=Dash, `-1`=none).
+- Added three wrapper functions on `BP_CombatManager` to dodge the setter mis-wire: `BeginWalkTargeting` (`SetTargetingAction 6`), `BeginDashTargeting` (`SetTargetingAction 8`), `CancelTargeting` (`SetTargetingAction -1`).
+- Rewrote `WBP_CombatUI:EventTick` from scratch using only creatable nodes: gate on `(>= (Class|BPCombatManager|GetTargetingAction _manager) 0)`, branch on `== 8` for Dash (`DrawDashPath` + `SelectDashDestination`) vs Walk (`DrawGroundLine` + `SelectWalkDestination`), `CancelTargeting` on Left-click confirm and Right-click/Escape cancel, plus after-confirm `DrawGroundLine`/`DrawDashPath`, the keyboard shortcuts, and the timeline slider. Uses `Class|BPCombatManager|GetState` (NOT `StateMachine|GetState`, which fails with an `UpdateContext` pin conflict).
+- Rewrote `OnClicked(BtnWalkMove)` to call `BeginWalkTargeting` (replacing the now-unused same-class `bWalkTargeting`/`bSuppressWalkClick`/`bShowMouseCursor` setters).
+- Added `BtnDashMove` (Button) + `TxtDashMove` ("Dash") to the Move submenu via `UMGToolSet.UMGToolSet.AddWidget`, set the text via `ObjectTools.set_properties` (params are `instance` + `values` as a JSON string), and made it a variable via `ToggleWidgetAsVariable`.
+
+**Verified:** `compile_blueprint` clean on both `WBP_CombatUI` and `BP_CombatManager`; all 5 `BUH.*` automation suites pass (5/5, 0 failed).
+
+**RESOLVED (BtnDashMove OnClicked event, automatic):** The `OnClicked` `K2Node_ComponentBoundEvent` for a newly-added widget variable is NOT registered by `ToggleWidgetAsVariable`/`CompileWidgetBlueprint`/`compile_blueprint`/`save_assets`/`load_asset`, and both `write_graph_dsl` (`event OnClicked(BtnDashMove)`) and `create_node` (`AddEvent|OnClicked(BtnDashMove)`) fail with "does not exist". The fix is the **native editor API** exposed by the installed MCP server: `UMGToolSet.UMGToolSet.BindToEventProperty` (wraps `FWidgetBlueprintOperationUtils::BindToEventProperty`, UMGEditor module). Call it with `widgetBlueprint`=WBP_CombatUI, `eventName`="OnClicked", `propertyName`="BtnDashMove" (the variable that owns the event), `propertyClass`=`/Script/UMG.Button`. It returns `true` and creates the same bound-event node the Widget Designer's "+" button makes. After that, `write_graph_dsl` with `(event OnClicked(BtnDashMove) ...)` attaches the body normally (it calls `BeginDashTargeting` + cursor + targeting text). Compiled clean, saved, all 5 `BUH.*` suites pass, widget still visible/clickable. **No manual editor step is needed.**
+
+**Lesson:** (1) `write_graph_dsl` on an **event graph** (EventTick) wipes the event body — only function-graph writes attach; never use it to "add a block" to EventTick, rewrite the whole event instead. (2) Same-class `WBP_CombatUI` variable getters/setters are not creatable by MCP — design targeting gates around cross-class variables/functions. (3) Cross-class variable setters mis-wire in `write_graph_dsl`; wrap them in a same-class function on the target class and call that. (4) `StateMachine|GetState` conflicts on an `UpdateContext` pin — use `Class|BPCombatManager|GetState`. (5) A newly-added widget variable's `OnClicked` ComponentBoundEvent is not class-registered by the ordinary compile/save/reload path — use `UMGToolSet.UMGToolSet.BindToEventProperty` (native `FWidgetBlueprintOperationUtils::BindToEventProperty`) to create the bound-event node automatically, then populate it with `write_graph_dsl`. (6) `ObjectTools.set_properties` takes `instance` + `values` (JSON string), not `widget`/`properties`.
+
+### 9.24 Dash cursor disappearance, stale initial state, and misplaced Dash button (RESOLVED)
+
+**Problem 1 (cursor disappears after Dash click):** Both `SetInputModeGameAndUI` nodes in `WBP_CombatUI` (`K2Node_CallFunction_359` in `OnClicked(BtnWalkMove)`, `K2Node_CallFunction_530` in `OnClicked(BtnDashMove)`) had `bHideCursorDuringCapture = true`. For the Game-and-UI input mode the cursor is shown by default, but the capture-hide flag suppressed it the moment the targeting input mode was applied, so the cursor vanished on the Dash (and Walk) button click. `Game|Player|SetShowMouseCursor` does not exist as a DSL node form, so the fix had to target the input-mode node's own pin. **Fix:** `BlueprintTools.set_pin_value` on input pin index 4 (`bHideCursorDuringCapture`) = `false` on both nodes. Verified both read back `false`.
+
+**Problem 2 (initial state not clean):** Two gaps. (a) `EventConstruct` hid `BtnWalkMove` but never `BtnDashMove`, so the Dash button was visible on a fresh launch. (b) `ResetEncounter` reset health/moves/positions/materials and called `ClearWalkPath` + `RefreshUI`, but did not reset `TargetingAction` or hide the `DestPlayer` marker, so a mid-session Reset (R key) left stale targeting state and a visible marker. **Fix:** added a `GetBtnDashMove` "Hidden" line to `EventConstruct` (and mirrored `BtnDashMove` visibility in all 12 events that reference `BtnWalkMove` — shown in `OnClicked(BtnMove)`/`OnClicked(BtnDodge)`, hidden in the rest). For `ResetEncounter`, `write_graph_dsl` could not recreate the same-class bool setters `|SetbHasCurrentState`/`|SetbReactionOpportunity` (they exist in the graph but are not creatable), so instead of rewriting the function I **appended nodes via `create_node` + `connect_pins`**: a `CallFunction|CancelTargeting` node (resets `TargetingAction` to -1) wired after `ClearWalkPath.then`, then an `Actor|GetAllActorsWithTag "DestPlayer"` node feeding a `Rendering|SetActorHiddenInGame` node (bHidden=true). Verified the fresh PIE CombatManager reads `State=0, TargetingAction=-1, PlayerMove=-1, OpponentMove=1, health 100/100, bHasCurrentState=false`.
+
+**Problem 3 (Dash button below Execute):** `BtnDashMove` had been appended to the end of `LeftPanelContent` (child index 17), placing it below Execute rather than alongside Walk (child index 8). **Fix:** `UMGToolSet.UMGToolSet.MoveWidget` with `widget=BtnDashMove`, `newParent=LeftPanelContent`, `childIndex=9`. Verified the new order: index 8 `BtnWalkMove`, 9 `BtnDashMove`, 10 `DestSlider`. The `OnClicked(BtnDashMove)` binding and `BeginDashTargeting` call were preserved (no duplicate button).
+
+**Verified:** `compile_blueprint` clean on both `WBP_CombatUI` and `BP_CombatManager`; both saved; all 5 `BUH.*` automation suites pass (5/5, 0 failed). Fresh PIE CombatManager state confirmed clean via `ObjectTools.get_properties`.
+
+**Still requires manual graphical PIE confirmation:** (1) the cursor actually staying visible after the Dash click and while moving over the arena (a visual property that `-nullrhi` headless PIE cannot capture); (2) the full section-5 action-transition sequence (fresh Play → Move submenu → Dash → confirm → Back → Walk → Dash → Quick → Execute → Reset → repeat); (3) that clicking another UMG button during targeting does not confirm a ground destination (the original Walk flow had no explicit click-suppression and worked in PIE, so the identical Dash flow is expected to behave the same — confirm visually).
+
+**Lesson:** (1) A disappearing cursor under `SetInputModeGameAndUI` is usually `bHideCursorDuringCapture=true` on the input-mode node — fix it with `set_pin_value` on that node's input pin, not a `SetShowMouseCursor` call (which has no DSL node form). (2) When `write_graph_dsl` cannot recreate same-class bool setters that already exist in a function graph, don't rewrite the function — **append** the needed nodes with `create_node` + `connect_pins` and wire them into the existing exec chain. (3) A widget "below Execute" is a child-index problem in the panel — fix it with `UMGToolSet.MoveWidget` (`childIndex`), not by recreating the widget. (4) Fresh-launch UI cleanliness requires the Construct event to hide every submenu button, not just the ones that existed when it was written.
+
+### 9.25 Dash path stayed all-red at a reaction pause; remaining path must reflect reaction eligibility (RESOLVED)
+
+**Problem:** During Dash execution, `WBP_CombatUI:EventTick` redraws the remaining Dash path every frame via `CombatSim|DrawDashPath` (node `K2Node_CallFunction_276`) from the fighter's **current** position to the `DestPlayer` marker. But `DrawDashPath` always applied the 3-locked-Instant red boundary from the path start, ignoring how many movement Instants had already elapsed. At a reaction pause (`PlayerPhase==2`, `PlayerInstantsInPhase>=3`) the entire remaining path should be green (reactable), but it was drawn all red — the locked window was being re-counted from the current position instead of from the original Dash start.
+
+**Root cause:** `DrawDashPath` had no notion of elapsed movement Instants. It unconditionally simulated 3 locked Instants from `Start` and colored that prefix red. During execution `Start` is the fighter's current position (already partway along the Dash), so the 3-Instant red prefix was being applied to the *remaining* path rather than the *original* locked window.
+
+**Fix (C++):** `UBuhCombatSim::DrawDashPath` now takes `int32 ElapsedMovementInstants = 0`. It computes `RemainingLocked = FMath::Max(0, 3 - ElapsedMovementInstants)`. If `RemainingLocked <= 0` (all locked Instants elapsed) it draws the entire remaining line green via `SetLine`. Otherwise it simulates the remaining locked Instants Instant-by-Instant from `Start` (90 uu/Instant) to compute the red/green boundary, then draws red `Start→Boundary` and green `Boundary→End` via `SetPath` (or a single red `SetLine` if the path is entirely within the locked window). The default `0` keeps the planning-preview call (node `K2Node_CallFunction_243`) unchanged — it still draws the first 3 Instants red.
+
+**Fix (Blueprint):** In `WBP_CombatUI:EventTick`, the execution-path `DrawDashPath` call (`K2Node_CallFunction_276`) now passes `(PlayerPhase==2) ? PlayerInstantsInPhase : 0` as the 4th argument. Built with `create_node` + `connect_pins` (same-class variable getters are not creatable, so cross-class `Class|BPCombatManager|GetPlayerPhase` / `GetPlayerInstantsinPhase` getters were used): a `GetPlayerPhase` node, an `Equal(==)` node (B=2), a `GetPlayerInstantsinPhase` node, and a `SelectInt` node (A=InstantsInPhase, B=0, bPickA=Equal), wired to the `ElapsedMovementInstants` pin. `PlayerInstantsInPhase` only counts movement Instants in Phase 2, so the `Phase==2` guard prevents passing startup/recovery Instants as elapsed movement.
+
+**Verified:** C++ rebuilt clean; all 6 `BUH.*` automation suites pass (6/6, 0 failed), including the new `BUH.DashPathColorTests` (A–G) which drive `DrawDashPath` with a live `APlayerController` and check the red/green boundary for every elapsed-Instant count: A) Elapsed=0 → red 0..270/green 270..720, B) Elapsed=1 → red 0..180, C) Elapsed=2 → red 0..90, D) Elapsed=3 (reaction pause) → all green, E) Elapsed=4 → all green, F) 2-Instant path Elapsed=0 → all red, G) 3-Instant path Elapsed=0 → all red. `WBP_CombatUI` compiled and saved; fresh PIE CombatManager state confirmed clean.
+
+**Still requires manual graphical PIE confirmation:** the remaining Dash path turning green at a reaction pause (a visual property `-nullrhi` headless PIE cannot capture). Steps: Play → Move → Dash → click a destination ≥ 4 Instants away → Execute → watch the path; the first 3 Instants stay red, and once the fighter passes the 3rd Instant the remaining path should turn fully green.
+
+**Lesson:** (1) A path renderer that always applies a fixed locked prefix from the path start is wrong during execution, because the path start is the fighter's *current* position, not the original action start — the renderer must be told how many locked Instants have already elapsed. (2) When a C++ static needs a new optional parameter, give it a default value so existing call sites (planning preview) are unaffected, and wire the new value only at the execution call site. (3) `PlayerInstantsInPhase` is phase-relative, so guard it with `Phase==2` before using it as elapsed *movement* Instants. (4) After an editor restart the `AutomationTestToolset` requires `DiscoverTests()` before `ListTests`/`RunTests` — without it every query returns 0 tests even though the module loaded fine.
+
+### 9.26 Live Dash reaction path still red — stale Blueprint countdown, not CurrentState (PARTIAL — real cause was node pruning, see §9.27)
+
+**Problem:** After the §9.25 fix, the user re-tested in graphical PIE and the remaining Dash path was still mostly red at a reaction pause ("Reaction opportunity" shown, Continue legal, player mid-Dash). The §9.25 fix wired the execution `DrawDashPath` to `(PlayerPhase==2) ? PlayerInstantsInPhase : 0`, but that did not change the visible behavior.
+
+**Root cause (confirmed by inspecting the live graph, not assumed):** `BP_CombatManager:EventTick` maintains its **own** `PlayerPhase`/`PlayerInstantsInPhase` countdown, decremented every 0.05s while `PlayerPhase==2`, that is **separate from** the authoritative CombatSim `CurrentState`. That Blueprint countdown drifts from the real simulation (it is a UI-side approximation, not the source of truth), so `WBP_CombatUI:EventTick` was feeding a stale, often-wrong elapsed value into `DrawDashPath`. The fix had to read elapsed movement Instants from the **authoritative `CurrentState`**, not from those Blueprint variables.
+
+**Fix (C++):** Added a read-only helper `UBuhCombatSim::GetDashElapsedMovementInstants(const FBuhCombatState& S)` returning `Fighters[0].PhaseInstants` only when `Fighters[0].Action==8 && Fighters[0].Phase==2` (Dash, Active phase), else `0`. It derives elapsed movement directly from the saved authoritative state — no independent reconstruction from Blueprint variables, no `CurrentState` overwrite.
+
+**Fix (Blueprint, surgical node wiring):** `write_graph_dsl` on the corrected `WBP_CombatUI:EventTick` failed with `Could not connect pin Manager to UpdateContext. The pins may be incompatible types. in: (bind _state (StateMachine|GetState _manager)) in: (event UserInterface|EventTick)` (the known `StateMachine|GetState` pin conflict). The graph stayed intact, so the rewire was done with targeted `create_node`/`connect_pins`/`break_pins`:
+- New `GetCurrentState` node (`K2Node_VariableGet_50`) fed from the existing manager getter `K2Node_VariableGet_114`.
+- New `GetDashElapsedMovementInstants` node (`K2Node_CallFunction_107`) fed by `GetCurrentState`'s `CurrentState` output.
+- Broke the old `SelectInt` (`K2Node_CallFunction_12`) → execution `DrawDashPath` (`K2Node_CallFunction_276`) input 4 link.
+- Connected `GetDashElapsedMovementInstants` `ReturnValue` → `DrawDashPath` input 4 (`ElapsedMovementInstants`).
+- The planning-preview `DrawDashPath` (`K2Node_CallFunction_243`) keeps its default `ElapsedMovementInstants=0` (first 3 Instants red), unchanged.
+
+**Regression test (real integration, not synthetic):** Added `BUH.DashReactionIntegrationTest` in `PathRendererAutomation.cpp`. It builds a real encounter (`MakeState(-500,500,100,100,0)`), commits a Dash (`Fighters[0].Action=8, Phase=2, PhaseInstants=3, DashTarget=220`), runs `ResolveCombat(S,-1,1,200)` to a genuine reaction pause (asserts `StoppedReason==5` + `bReactionOpportunity`), then asserts `GetDashElapsedMovementInstants` equals the state's `PhaseInstants` (≥3) and that `DrawDashPath` with that value yields a fully green remaining path. A regression guard re-runs the same state with `Elapsed=0` and asserts it yields a red segment — proving the old stale-value bug is caught.
+
+**Verified:** C++ rebuilt clean (LSP include-path noise in `PathRendererAutomation.cpp` is not a real error — UE build is source of truth). Headless editor restarted (PID `243967`), `Lvl_TacticalDuel` opened, `DiscoverTests` run, then: `BUH.DashReactionIntegrationTest` Success; combined `BUH.DashPathColorTests` + `BUH.PathRendererTests` + `BUH.DashReactionIntegrationTest` all Success (3 passed, 0 failed). `WBP_CombatUI` compiled clean and saved.
+
+**Still requires manual graphical PIE confirmation:** the remaining Dash path turning green at a reaction pause is a visual property `-nullrhi` headless PIE cannot capture. Steps: Play → Move → Dash → click a destination ≥ 4 Instants away → Execute → watch the path; the first 3 Instants stay red, and once the fighter passes the 3rd Instant the remaining path should turn fully green.
+
+**Correction (see §9.27):** this §9.26 fix was necessary but **not sufficient**. The user's graphical-PIE logs proved the `GetDashElapsedMovementInstants` node was **pruned** by the compiler (impure `BlueprintCallable` used as a nested data expression with an unconnected exec pin), so its output was read as default `0` regardless of the correct `CurrentState` wiring. The path stayed red because of the pruning, not the stale countdown. The real fix (declare the helper `BlueprintPure`) is in §9.27.
+
+**Lesson:** (1) A UI-side phase/Instant countdown maintained in `EventTick` is **not** the source of truth — derive elapsed movement from the authoritative `CurrentState` via a read-only C++ helper. (2) `write_graph_dsl` still cannot handle `StateMachine|GetState` on an event graph; when the DSL fails, the graph is intact and the rewire can be done surgically with `create_node`/`connect_pins`/`break_pins`. (3) A regression test must drive the **real** resolver to a reaction pause and read the **real** helper, not just feed a synthetic elapsed value — that is what catches a stale-value bug that a direct-value test misses. (4) Keep the planning-preview call on its default `ElapsedMovementInstants=0` so the initial red preview is unaffected.
+
+### 9.27 Proven Blueprint compiler pruning: impure helper used as nested data expression (RESOLVED — cursor instrumentation added)
+
+**Problem:** The user supplied two graphical-PIE logs (`Saved/Logs/BeneathUncountedHeav.log`, `BeneathUncountedHeav_2.log`) that both contained the same `WBP_CombatUI` compiler warning: `GetDashElapsedMovementInstants was pruned because its Exec pin is not connected, the connected value is not available and will instead be read as default`. A second warning reported the same for `GetFinalInstantIndex`. This is the proven root cause of the red remaining Dash path: the helper was pruned, so its output was read as default `0` (not the real elapsed value), making `RemainingLocked=3` and the whole remaining path red. The §9.26 surgical wiring had connected the **data** pins but left the **exec** pin of the impure (`BlueprintCallable`) node disconnected, which is exactly what triggers the prune.
+
+**Root cause (confirmed, not assumed):** `UBuhCombatSim::GetDashElapsedMovementInstants` and `UBuhCombatSim::GetFinalInstantIndex` were declared `UFUNCTION(BlueprintCallable)` (impure — they carry an exec pin) but were wired as **nested data expressions** inside the execution `DrawDashPath` call in `WBP_CombatUI:EventTick` with no exec-pin connection. The Blueprint compiler prunes an impure call whose exec input is unconnected and substitutes the default output value. Both helpers are genuinely read-only (no game-state mutation), so they belong as `BlueprintPure`.
+
+**Fix (C++, approach B from the todo):** Changed both declarations in `CombatSim.h` from `BlueprintCallable` to `BlueprintPure`:
+- `GetDashElapsedMovementInstants(const FBuhCombatState& S)` → `BlueprintPure`.
+- `GetFinalInstantIndex()` → `BlueprintPure`.
+Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarted the headless editor to load the new module. No Blueprint node surgery was needed: once the function is pure it has no exec pin, so the existing nested data-expression wiring (`GetCurrentState` → `GetDashElapsedMovementInstants` → `DrawDashPath` arg 4) is valid as-is and the `CurrentState` input is preserved.
+
+**Verified:** After the rebuild + fresh editor load, `WBP_CombatUI` compiles with **zero** pruning warnings (both `GetDashElapsedMovementInstants` and `GetFinalInstantIndex` gone). The asset was saved and a fresh editor load recompiles it cleanly, so the fix persists from disk. All 7 `BUH.*` automation suites pass (0 failed). `GetFinalInstantIndex` is read-only and feeds the timeline prediction range, so pruning it to 0 would have collapsed the prediction to instant 0; making it pure restores the correct final-instant index.
+
+**Cursor instrumentation (§4):** The on-disk `OnClicked(BtnDashMove)` / `OnClicked(BtnWalkMove)` handlers already call `SetInputModeGameAndUI(..., bHideCursorDuringCapture=false)`, so that call should not hide the cursor. To find the real failure point, `LogCursorState(PC, Tag)` was wired surgically (create_node + break_pins + connect_pins) immediately **after** `SetInputModeGameAndUI` in both handlers: Dash node `K2Node_CallFunction_109` (Tag `DashAfterInput`, PC from `GetPlayerController` `K2Node_CallFunction_110`), Walk node `K2Node_CallFunction_111` (Tag `WalkAfterInput`, PC from `K2Node_CallFunction_112`). Each is inserted between `SetInputModeGameAndUI` and `Begin*Targeting` by breaking the old `then→execute` link and reconnecting through the new node. The WBP compiles clean and all 7 BUH suites still pass. The actual cursor-state failure point (and whether `bHideCursorDuringCapture=false` is sufficient or a later point hides the cursor) must be read from the `DashDiag`/`LogCursorState` log lines after a real graphical-PIE Dash and Walk click.
+
+**Lesson:** (1) A `BlueprintCallable` (impure) function used as a nested data expression with its exec pin unconnected is **pruned** by the compiler and its output read as default — the warning is the tell. If the function is genuinely read-only, declare it `BlueprintPure` (no exec pin) instead of forcing an exec connection into a data-expression slot. (2) "Compiles successfully" is not a successful repair if the pruning warning is still present — inspect the compiler warnings, not just the return value. (3) Surgical `create_node`/`break_pins`/`connect_pins` remains the reliable way to insert nodes into an existing exec chain when `write_graph_dsl` cannot express the change.

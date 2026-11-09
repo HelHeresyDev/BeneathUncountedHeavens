@@ -25,6 +25,8 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 WalkRemaining = 0;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float WalkTarget = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float WalkTargetY = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float DashTarget = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float DashTargetY = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactedThreatFighter = -1;
 };
 
@@ -126,6 +128,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState WithPlayerDashTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState WithPlayerDashTargetFromPreview(const FBuhCombatState& InState);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString RunAllTests();
@@ -255,7 +263,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 MoveGhostsToFinalInstant();
 
-	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
 	static int32 GetFinalInstantIndex();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
@@ -273,8 +281,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetPreviewWalkTarget(float TargetX, float TargetY = 0.f);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetPreviewDashTarget(float TargetX, float TargetY = 0.f);
+
 	static float GPlayerWalkTarget;
 	static float GPlayerWalkTargetY;
+	static float GPlayerDashTarget;
+	static float GPlayerDashTargetY;
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetExecDashTarget(float TargetX, float TargetY = 0.f);
+
+	static float GExecDashTarget;
+	static float GExecDashTargetY;
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetTimelineLengthText(int32 CurrentInstant);
@@ -343,6 +362,21 @@ public:
 	static void DrawGroundLine(APlayerController* PC, FVector Start, FVector End, float Thickness, float Duration);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void DrawWalkPath(APlayerController* PC, FVector Start, FVector End);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void DrawDashPath(APlayerController* PC, FVector Start, FVector End, int32 ElapsedMovementInstants = 0);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 GetDashElapsedMovementInstants(const FBuhCombatState& S);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void LogCursorState(APlayerController* PC, FString Tag);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void ClearWalkPath(APlayerController* PC);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static bool GetGroundHitUnderCursor(APlayerController* PC, FVector2D ScreenPos, FVector& OutHitLocation);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
@@ -350,5 +384,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static float GetGroundHitY(APlayerController* PC, FVector2D ScreenPos);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void LogCombatState(const FBuhCombatState& S, const FString& Context);
 
 };

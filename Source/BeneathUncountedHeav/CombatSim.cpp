@@ -6,6 +6,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/App.h"
 #include "Engine/World.h"
+#include "Engine/EngineBaseTypes.h"
 #include "GameFramework/Actor.h"
 #include "EngineUtils.h"
 #include "Components/Widget.h"
@@ -13,6 +14,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Misc/Parse.h"
+#include "PathRenderer.h"
 #include "WidgetBlueprint.h"
 #include "BaseWidgetBlueprint.h"
 #include "Components/StaticMeshComponent.h"
@@ -32,8 +34,8 @@ namespace BuhCombat
 		int32 ReactionDelay;
 	};
 
-	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away, 6 Walk (destination)
-	static const FMoveData MoveData[7] = {
+	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away, 6 Walk (destination), 7 Continue (dummy), 8 Dash
+	static const FMoveData MoveData[9] = {
 		{ 6, 1, 8, 10, 300, 0, 9999 },
 		{ 13, 1, 8, 24, 400, 0, 9999 },
 		{ 0, 10, 0, 0, 9999, 0, 9999 },
@@ -41,6 +43,8 @@ namespace BuhCombat
 		{ 0, 5, 0, 0, 9999, 30, 0 },
 		{ 0, 5, 0, 0, 9999, 30, 0 },
 		{ 0, 9999, 0, 0, 9999, 30, 0 },
+		{ 0, 0, 0, 0, 9999, 0, 9999 },
+		{ 1, 8, 3, 0, 9999, 90, 9999 },
 	};
 
 	static const int32 Approach = 30;
@@ -60,6 +64,7 @@ namespace BuhCombat
 		case 5: return TEXT("Walk Away");
 		case 6: return TEXT("Walk");
 		case 7: return TEXT("Continue");
+		case 8: return TEXT("Dash");
 		default: return TEXT("Idle");
 		}
 	}
@@ -75,12 +80,16 @@ FBuhCombatState UBuhCombatSim::MakeState(int32 PlayerX, int32 OpponentX, int32 P
 	S.Fighters[0].Team = 0;
 	S.Fighters[0].WalkTarget = static_cast<float>(PlayerX);
 	S.Fighters[0].WalkTargetY = PlayerY;
+	S.Fighters[0].DashTarget = static_cast<float>(PlayerX);
+	S.Fighters[0].DashTargetY = PlayerY;
 	S.Fighters[1].X = static_cast<float>(OpponentX);
 	S.Fighters[1].Y = OpponentY;
 	S.Fighters[1].Health = OpponentHealth;
 	S.Fighters[1].Team = 1;
 	S.Fighters[1].WalkTarget = static_cast<float>(OpponentX);
 	S.Fighters[1].WalkTargetY = OpponentY;
+	S.Fighters[1].DashTarget = static_cast<float>(OpponentX);
+	S.Fighters[1].DashTargetY = OpponentY;
 	S.Instant = 0;
 	S.Seed = Seed;
 	return S;
@@ -101,7 +110,28 @@ FBuhCombatState UBuhCombatSim::WithPlayerWalkTarget(const FBuhCombatState& InSta
 	FBuhCombatState S = InState;
 	S.Fighters[0].WalkTarget = TargetX;
 	S.Fighters[0].WalkTargetY = TargetY;
+	if (GExecDashTarget >= -9998.f)
+	{
+		S = WithPlayerDashTarget(S, GExecDashTarget, GExecDashTargetY);
+	}
 	return S;
+}
+
+FBuhCombatState UBuhCombatSim::WithPlayerDashTarget(const FBuhCombatState& InState, float TargetX, float TargetY)
+{
+	FBuhCombatState S = InState;
+	S.Fighters[0].DashTarget = TargetX;
+	S.Fighters[0].DashTargetY = TargetY;
+	return S;
+}
+
+FBuhCombatState UBuhCombatSim::WithPlayerDashTargetFromPreview(const FBuhCombatState& InState)
+{
+	if (GPlayerDashTarget >= -9998.f)
+	{
+		return WithPlayerDashTarget(InState, GPlayerDashTarget, GPlayerDashTargetY);
+	}
+	return InState;
 }
 
 struct FBuhOutcome { int32 Fighter; int32 Type; int32 Damage; };
@@ -162,6 +192,27 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 				{
 					F.X = F.WalkTarget;
 					F.Y = F.WalkTargetY;
+					F.Phase = 3;
+					F.PhaseInstants = 0;
+					bMoved[i] = true;
+				}
+				else
+				{
+					const float Scale = static_cast<float>(BuhCombat::MoveData[F.Action].Movement) / RemDist;
+					F.X += RemX * Scale;
+					F.Y += RemY * Scale;
+					bMoved[i] = true;
+				}
+			}
+			else if (F.Action == 8)
+			{
+				const float RemX = F.DashTarget - F.X;
+				const float RemY = F.DashTargetY - F.Y;
+				const float RemDist = FMath::Sqrt(RemX * RemX + RemY * RemY);
+				if (RemDist <= static_cast<float>(BuhCombat::MoveData[F.Action].Movement))
+				{
+					F.X = F.DashTarget;
+					F.Y = F.DashTargetY;
 					F.Phase = 3;
 					F.PhaseInstants = 0;
 					bMoved[i] = true;
@@ -268,6 +319,16 @@ static bool IsReactableWalk(const FBuhFighterState& F)
 	return (F.Action == 4 || F.Action == 5 || F.Action == 6) && (F.Phase == 1 || F.Phase == 2) && BuhCombat::MoveData[F.Action].ReactionDelay <= 0;
 }
 
+static bool IsReactableDash(const FBuhFighterState& F)
+{
+	return F.Action == 8 && F.Phase == 2 && F.PhaseInstants >= 3;
+}
+
+static bool IsReactableMovement(const FBuhFighterState& F)
+{
+	return IsReactableWalk(F) || IsReactableDash(F);
+}
+
 static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 AttackStart[2], FBuhCombatEvent& OutEvent)
 {
 	for (int32 Threat = 0; Threat < 2; ++Threat)
@@ -275,7 +336,7 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 		if (AttackStart[Threat] != Threat) continue;
 		const int32 Defender = 1 - Threat;
 		FBuhFighterState& Def = S.Fighters[Defender];
-		if (!IsReactableWalk(Def)) continue;
+		if (!IsReactableMovement(Def)) continue;
 		if (Def.ReactedThreatFighter == Threat) continue;
 		Def.ReactedThreatFighter = Threat;
 		OutEvent.Instant = Inst;
@@ -284,6 +345,10 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 		OutEvent.Damage = 0;
 		OutEvent.Detail = FString::Printf(TEXT("F%d sees F%d begin %s; reaction opportunity"),
 			Def.Team, S.Fighters[Threat].Team, BuhCombat::MoveName(S.Fighters[Threat].Action));
+		// Temporary diagnostic (graphical-PIE investigation): confirm Continue legality at the pause.
+		const bool bContinueLegal = (Def.Action == 4 || Def.Action == 5 || Def.Action == 6 || Def.Action == 8);
+		UE_LOG(LogTemp, Warning, TEXT("DashDiag REACTION PAUSE: defender F%d Action=%d Phase=%d PhaseInstants=%d ContinueLegal=%d"),
+			Def.Team, Def.Action, Def.Phase, Def.PhaseInstants, bContinueLegal ? 1 : 0);
 		return true;
 	}
 	return false;
@@ -303,16 +368,21 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 	float PreDodgeDist[2] = { 1e9f, 1e9f };
 	int32 PendingAttackStart[2] = { -1, -1 };
 
+	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] ResolveCombat IN playerDec=%d oppDec=%d P(x=%.1f y=%.1f act=%d ph=%d pi=%d wt=%.1f wty=%.1f) O(x=%.1f y=%.1f act=%d ph=%d pi=%d wt=%.1f wty=%.1f)"),
+		PlayerDecision, OpponentDecision,
+		InState.Fighters[0].X, InState.Fighters[0].Y, InState.Fighters[0].Action, InState.Fighters[0].Phase, InState.Fighters[0].PhaseInstants, InState.Fighters[0].WalkTarget, InState.Fighters[0].WalkTargetY,
+		InState.Fighters[1].X, InState.Fighters[1].Y, InState.Fighters[1].Action, InState.Fighters[1].Phase, InState.Fighters[1].PhaseInstants, InState.Fighters[1].WalkTarget, InState.Fighters[1].WalkTargetY);
+
 	// Commit decisions for ready fighters, and allow a reactable walking fighter
 	// to commit a reaction even while it is already busy.
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 8) continue;
+		if (Decision < 0 || Decision >= 9) continue;
 		FBuhFighterState& F = S.Fighters[i];
 		if (Decision == 7)
 		{
-			if (IsReactableWalk(F)) { /* Continue Walk: preserve existing state */ }
+			if (IsReactableMovement(F)) { /* Continue Walk/Dash: preserve existing state */ }
 			continue;
 		}
 		if (F.Phase == 0)
@@ -323,7 +393,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			F.bCommitted = true;
 			if (Decision == 0 || Decision == 1) PendingAttackStart[i] = i;
 		}
-		else if (IsReactableWalk(F))
+		else if (IsReactableMovement(F))
 		{
 			F.Action = Decision;
 			F.Phase = 1;
@@ -331,6 +401,9 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			F.bCommitted = true;
 		}
 	}
+
+	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] ResolveCombat COMMIT P(act=%d ph=%d) O(act=%d ph=%d)"),
+		S.Fighters[0].Action, S.Fighters[0].Phase, S.Fighters[1].Action, S.Fighters[1].Phase);
 
 	bool bJustActive[2] = { false, false };
 
@@ -449,6 +522,9 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 
 	Result.StoppedReason = 4;
 	Result.FinalState = S;
+	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] ResolveCombat OUT P(x=%.1f y=%.1f act=%d ph=%d) O(x=%.1f y=%.1f act=%d ph=%d)"),
+		S.Fighters[0].X, S.Fighters[0].Y, S.Fighters[0].Action, S.Fighters[0].Phase,
+		S.Fighters[1].X, S.Fighters[1].Y, S.Fighters[1].Action, S.Fighters[1].Phase);
 	return Result;
 }
 
@@ -471,6 +547,8 @@ namespace BuhCombatTest
 			if (FMath::Abs(a.Y - b.Y) > 0.01f) return false;
 			if (FMath::Abs(a.WalkTarget - b.WalkTarget) > 0.01f) return false;
 			if (FMath::Abs(a.WalkTargetY - b.WalkTargetY) > 0.01f) return false;
+			if (FMath::Abs(a.DashTarget - b.DashTarget) > 0.01f) return false;
+			if (FMath::Abs(a.DashTargetY - b.DashTargetY) > 0.01f) return false;
 		}
 		return true;
 	}
@@ -1449,6 +1527,115 @@ FString UBuhCombatSim::RunAllTests()
 				R.StoppedReason, R.ReactionInstant, R.ReactionFighter, R.ObservedThreatAction));
 	}
 
+	// Test DA1 — a Dash moves the fighter to the target and stops (reaches destination).
+	// Opponent is busy Guarding (Phase 2, Action 2) so it never commits an attack.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].DashTarget = -350.f;
+		const FBuhCombatResult R = ResolveCombat(S, 8, -1, 200);
+		const bool bReached = FMath::Abs(R.FinalState.Fighters[0].X - (-350.f)) < 1.f;
+		const bool bReady = R.bPlayerReady;
+		Check(TEXT("DA1 dash-reaches-target"), bReached && bReady,
+			FString::Printf(TEXT("finalX=%.2f ready=%d reason=%d"), R.FinalState.Fighters[0].X, bReady, R.StoppedReason));
+	}
+
+	// Test DA2 — a Dash behind the fighter dashes away to the target.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].DashTarget = -650.f;
+		const FBuhCombatResult R = ResolveCombat(S, 8, -1, 200);
+		const bool bReached = FMath::Abs(R.FinalState.Fighters[0].X - (-650.f)) < 1.f;
+		Check(TEXT("DA2 dash-away-reaches-target"), bReached,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test DA3 — a Dash clamps to the target and does not overshoot.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].DashTarget = -480.f;
+		const FBuhCombatResult R = ResolveCombat(S, 8, -1, 200);
+		const bool bNoOvershoot = FMath::Abs(R.FinalState.Fighters[0].X - (-480.f)) < 1.f;
+		Check(TEXT("DA3 dash-no-overshoot"), bNoOvershoot,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test DA4 — an unset Dash target (target == current position) is a no-op.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		const FBuhCombatResult R = ResolveCombat(S, 8, -1, 200);
+		const bool bStayed = FMath::Abs(R.FinalState.Fighters[0].X - (-500.f)) < 1.f;
+		const bool bReady = R.bPlayerReady;
+		Check(TEXT("DA4 dash-unset-noop"), bStayed && bReady,
+			FString::Printf(TEXT("finalX=%.2f ready=%d"), R.FinalState.Fighters[0].X, bReady));
+	}
+
+	// Test DA5 — a Dash at exactly max range (720 uu) reaches the target in 8 movement Instants.
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].DashTarget = 220.f;  // 720 uu toward the opponent
+		const FBuhCombatResult R = ResolveCombat(S, 8, -1, 200);
+		const bool bReached = FMath::Abs(R.FinalState.Fighters[0].X - 220.f) < 1.f;
+		Check(TEXT("DA5 dash-max-range-reaches"), bReached,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test DA6 — a Dash target beyond max range is clamped by the 8-Instant cap (stops at 720 uu).
+	{
+		FBuhCombatState S = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 2, 0);
+		S.Fighters[1].Action = 2;
+		S.Fighters[0].DashTarget = 500.f;  // 1000 uu, beyond the 720 uu cap
+		const FBuhCombatResult R = ResolveCombat(S, 8, -1, 200);
+		const bool bClamped = FMath::Abs(R.FinalState.Fighters[0].X - 220.f) < 1.f;  // -500 + 720
+		Check(TEXT("DA6 dash-beyond-max-clamped"), bClamped,
+			FString::Printf(TEXT("finalX=%.2f"), R.FinalState.Fighters[0].X));
+	}
+
+	// Test DA7 — the first 3 movement Instants of a Dash are locked (no reaction pause).
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 8;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 0;  // locked (first movement Instant)
+		S.Fighters[0].DashTarget = 220.f;
+		const FBuhCombatResult R = ResolveCombat(S, -1, 1, 200);
+		const bool bNoPause = !(R.StoppedReason == 5 && R.bReactionOpportunity);
+		Check(TEXT("DA7 dash-locked-window-no-pause"), bNoPause,
+			FString::Printf(TEXT("reason=%d instant=%d"), R.StoppedReason, R.ReactionInstant));
+	}
+
+	// Test DA8 — a Dash becomes reactable from the 4th movement Instant (reaction pause fires).
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 8;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 3;  // reactable (4th movement Instant)
+		S.Fighters[0].DashTarget = 220.f;
+		const FBuhCombatResult R = ResolveCombat(S, -1, 1, 200);
+		const bool bPaused = (R.StoppedReason == 5) && R.bReactionOpportunity &&
+			(R.ReactionInstant == 0) && (R.ReactionFighter == 0) && (R.ObservedThreatAction == 1);
+		Check(TEXT("DA8 dash-reactable-window-pause"), bPaused,
+			FString::Printf(TEXT("reason=%d instant=%d fighter=%d threat=%d"),
+				R.StoppedReason, R.ReactionInstant, R.ReactionFighter, R.ObservedThreatAction));
+	}
+
+	// Test DA9 — Continue (7) resumes a Dash, preserving its action.
+	{
+		FBuhCombatState S = MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 8;
+		S.Fighters[0].Phase = 2;
+		S.Fighters[0].PhaseInstants = 3;
+		S.Fighters[0].DashTarget = 220.f;
+		const FBuhCombatResult R = ResolveCombat(S, 7, 1, 200);
+		const bool bStillDashing = (R.FinalState.Fighters[0].Action == 8);
+		Check(TEXT("DA9 dash-continue-resumes"), bStillDashing,
+			FString::Printf(TEXT("action=%d reason=%d"), R.FinalState.Fighters[0].Action, R.StoppedReason));
+	}
+
 	// Test V1 — ResolveCombat with fewer than two fighters returns a controlled error.
 	{
 		FBuhCombatState S;
@@ -1600,8 +1787,8 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	{
 		Info.ThreatRemainingPrep = FMath::Max(0, BuhCombat::MoveData[Threat.Action].Startup - Threat.PhaseInstants);
 	}
-	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue (if the player was walking).
-	if (Info.PlayerCurrentAction == 4 || Info.PlayerCurrentAction == 5 || Info.PlayerCurrentAction == 6)
+	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue (if the player was walking or dashing).
+	if (Info.PlayerCurrentAction == 4 || Info.PlayerCurrentAction == 5 || Info.PlayerCurrentAction == 6 || Info.PlayerCurrentAction == 8)
 	{
 		Info.LegalActions = { 0, 1, 2, 3, 7 };
 	}
@@ -1622,11 +1809,11 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 8) continue;
+		if (Decision < 0 || Decision >= 9) continue;
 		FBuhFighterState& F = S.Fighters[i];
 		if (Decision == 7)
 		{
-			if (IsReactableWalk(F)) { /* Continue Walk: preserve existing state */ }
+			if (IsReactableMovement(F)) { /* Continue Walk/Dash: preserve existing state */ }
 			continue;
 		}
 		if (F.Phase == 0)
@@ -1637,7 +1824,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			F.bCommitted = true;
 			if (Decision == 0 || Decision == 1) PendingAttackStart[i] = i;
 		}
-		else if (IsReactableWalk(F))
+		else if (IsReactableMovement(F))
 		{
 			F.Action = Decision;
 			F.Phase = 1;
@@ -2033,19 +2220,37 @@ FString UBuhCombatSim::GetMoveNameText(int32 Move)
 
 FString UBuhCombatSim::GetMoveDurationText(int32 Move)
 {
-	if (Move < 0 || Move >= 7) return TEXT("Unknown");
+	if (Move < 0 || Move >= 9) return TEXT("Unknown");
 	if (Move == 6) return TEXT("Walks to destination marker");
+	if (Move == 8) return TEXT("Dashes to destination (90 uu/Instant, max 720 uu)");
 	const BuhCombat::FMoveData& M = BuhCombat::MoveData[Move];
 	return FString::Printf(TEXT("Prep %d / Active %d / Recovery %d"), M.Startup, M.Active, M.Recovery);
 }
 
 float UBuhCombatSim::GPlayerWalkTarget = -9999.f;
 float UBuhCombatSim::GPlayerWalkTargetY = 0.f;
+float UBuhCombatSim::GPlayerDashTarget = -9999.f;
+float UBuhCombatSim::GPlayerDashTargetY = 0.f;
 
 void UBuhCombatSim::SetPreviewWalkTarget(float TargetX, float TargetY)
 {
 	GPlayerWalkTarget = TargetX;
 	GPlayerWalkTargetY = TargetY;
+}
+
+void UBuhCombatSim::SetPreviewDashTarget(float TargetX, float TargetY)
+{
+	GPlayerDashTarget = TargetX;
+	GPlayerDashTargetY = TargetY;
+}
+
+float UBuhCombatSim::GExecDashTarget = -9999.f;
+float UBuhCombatSim::GExecDashTargetY = 0.f;
+
+void UBuhCombatSim::SetExecDashTarget(float TargetX, float TargetY)
+{
+	GExecDashTarget = TargetX;
+	GExecDashTargetY = TargetY;
 }
 
 FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove, int32 CurrentInstant)
@@ -2064,10 +2269,14 @@ FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove
 	{
 		State = WithPlayerWalkTarget(State, GPlayerWalkTarget, GPlayerWalkTargetY);
 	}
-	// A Walk preview must show the walk's actual movement, not be interrupted by the
+	if (PlayerMove == 8 && GPlayerDashTarget >= -9998.f)
+	{
+		State = WithPlayerDashTarget(State, GPlayerDashTarget, GPlayerDashTargetY);
+	}
+	// A Walk/Dash preview must show the movement's actual motion, not be interrupted by the
 	// reaction-pause mechanic (which fires at instant 0 for a reactable walk). Execution
 	// (ExecuteMove) still uses the default bSuppressReactionPause=false.
-	const bool bSuppress = (PlayerMove == 6);
+	const bool bSuppress = (PlayerMove == 6 || PlayerMove == 8);
 	const bool bSuppressPlayerReadyBreak = (PlayerMove < 0);
 	const FBuhCombatResult R = ResolveCombat(State, PlayerMove, OpponentMove, 200, bSuppress, bSuppressPlayerReadyBreak);
 
@@ -2644,8 +2853,149 @@ void UBuhCombatSim::DrawGroundLine(APlayerController* PC, FVector Start, FVector
 {
 	UWorld* World = PC ? PC->GetWorld() : nullptr;
 	if (!World) return;
+	for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+	{
+		ABUHPathRenderer* Renderer = *It;
+		if (Renderer)
+		{
+			Renderer->SetLine(Start, End, EPathSegmentColor::Green);
+			return;
+		}
+	}
 	FColor Green(0, 255, 0, 255);
 	::DrawDebugLine(World, Start, End, Green, false, Duration, 0, Thickness);
+}
+
+void UBuhCombatSim::DrawWalkPath(APlayerController* PC, FVector Start, FVector End)
+{
+	UWorld* World = PC ? PC->GetWorld() : nullptr;
+	if (!World) return;
+	for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+	{
+		ABUHPathRenderer* Renderer = *It;
+		if (Renderer)
+		{
+			Renderer->SetLine(Start, End, EPathSegmentColor::Green);
+			return;
+		}
+	}
+}
+
+void UBuhCombatSim::DrawDashPath(APlayerController* PC, FVector Start, FVector End, int32 ElapsedMovementInstants)
+{
+	UWorld* World = PC ? PC->GetWorld() : nullptr;
+	if (!World) return;
+	const float TotalDist = FVector::Dist(Start, End);
+	if (TotalDist < 1e-3f) return;
+	// The first 3 Dash movement Instants are locked (red); the rest are reactable (green).
+	// During execution the path is drawn from the fighter's CURRENT position, so any
+	// movement Instants that have already elapsed must not be re-counted as locked. Only
+	// the not-yet-elapsed locked Instants remain red; the remainder is reactable (green).
+	const float DashSpeed = 90.f;
+	const int32 RemainingLocked = FMath::Max(0, 3 - ElapsedMovementInstants);
+	UE_LOG(LogTemp, Warning, TEXT("DashDiag: Elapsed=%d RemainingLocked=%d Start=(%.1f,%.1f) End=(%.1f,%.1f) TotalDist=%.1f"),
+		ElapsedMovementInstants, RemainingLocked, Start.X, Start.Y, End.X, End.Y, TotalDist);
+	if (RemainingLocked <= 0)
+	{
+		// All locked Instants have elapsed: the entire remaining path is reactable.
+		for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+		{
+			ABUHPathRenderer* Renderer = *It;
+			if (Renderer)
+			{
+				Renderer->SetLine(Start, End, EPathSegmentColor::Green);
+				int32 R = 0, G = 0;
+				Renderer->GetVisibleColorCounts(R, G);
+				UE_LOG(LogTemp, Warning, TEXT("DashDiag: AllGreen drawn. Renderer Red=%d Green=%d"), R, G);
+				return;
+			}
+		}
+		return;
+	}
+	FVector Cur = Start;
+	for (int32 i = 0; i < RemainingLocked; ++i)
+	{
+		const float RemX = End.X - Cur.X;
+		const float RemY = End.Y - Cur.Y;
+		const float RemDist = FMath::Sqrt(RemX * RemX + RemY * RemY);
+		if (RemDist <= DashSpeed)
+		{
+			Cur = End;
+			break;
+		}
+		const float Scale = DashSpeed / RemDist;
+		Cur.X += RemX * Scale;
+		Cur.Y += RemY * Scale;
+	}
+	const FVector Boundary = Cur;
+	const bool bEntirelyRed = (FVector::Dist(Boundary, End) < 1e-3f);
+	for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+	{
+		ABUHPathRenderer* Renderer = *It;
+		if (Renderer)
+		{
+			if (bEntirelyRed)
+			{
+				Renderer->SetLine(Start, End, EPathSegmentColor::Red);
+				int32 R = 0, G = 0;
+				Renderer->GetVisibleColorCounts(R, G);
+				UE_LOG(LogTemp, Warning, TEXT("DashDiag: AllRed drawn. Renderer Red=%d Green=%d"), R, G);
+			}
+			else
+			{
+				TArray<FVector> Points;
+				Points.Add(Start);
+				Points.Add(Boundary);
+				Points.Add(End);
+				TArray<FBuhPathSegment> Segments;
+				Segments.Add(FBuhPathSegment{ 0, 1, EPathSegmentColor::Red });
+				Segments.Add(FBuhPathSegment{ 1, 2, EPathSegmentColor::Green });
+				Renderer->SetPath(Points, Segments);
+				int32 R = 0, G = 0;
+				Renderer->GetVisibleColorCounts(R, G);
+				UE_LOG(LogTemp, Warning, TEXT("DashDiag: Split drawn. Renderer Red=%d Green=%d"), R, G);
+			}
+			return;
+		}
+	}
+}
+
+int32 UBuhCombatSim::GetDashElapsedMovementInstants(const FBuhCombatState& S)
+{
+	if (S.Fighters.Num() < 1) return 0;
+	const FBuhFighterState& F = S.Fighters[0];
+	// Temporary diagnostic (graphical-PIE investigation): log the authoritative state
+	// and the computed elapsed value so the real EventTick branch is captured.
+	const int32 Result = (F.Action == 8 && F.Phase == 2) ? F.PhaseInstants : 0;
+	UE_LOG(LogTemp, Warning, TEXT("DashDiag GetDashElapsed: Action=%d Phase=%d PhaseInstants=%d -> Elapsed=%d"),
+		F.Action, F.Phase, F.PhaseInstants, Result);
+	return Result;
+}
+
+void UBuhCombatSim::LogCursorState(APlayerController* PC, FString Tag)
+{
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DashDiag CURSOR [%s]: no PlayerController"), *Tag);
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("DashDiag CURSOR [%s]: bShowMouseCursor=%d ShouldShowMouseCursor=%d InputMode=%s"),
+		*Tag, PC->bShowMouseCursor ? 1 : 0, PC->ShouldShowMouseCursor() ? 1 : 0, *PC->GetCurrentInputModeDebugString());
+}
+
+void UBuhCombatSim::ClearWalkPath(APlayerController* PC)
+{
+	UWorld* World = PC ? PC->GetWorld() : nullptr;
+	if (!World) return;
+	for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+	{
+		ABUHPathRenderer* Renderer = *It;
+		if (Renderer)
+		{
+			Renderer->ClearPath();
+			return;
+		}
+	}
 }
 
 bool UBuhCombatSim::GetGroundHitUnderCursor(APlayerController* PC, FVector2D ScreenPos, FVector& OutHitLocation)
@@ -2673,6 +3023,17 @@ float UBuhCombatSim::GetGroundHitY(APlayerController* PC, FVector2D ScreenPos)
 	FVector Hit;
 	if (GetGroundHitUnderCursor(PC, ScreenPos, Hit)) return Hit.Y;
 	return ScreenToGroundY(PC, ScreenPos);
+}
+
+void UBuhCombatSim::LogCombatState(const FBuhCombatState& S, const FString& Context)
+{
+	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] %s: Instant=%d Seed=%d"), *Context, S.Instant, S.Seed);
+	for (int32 i = 0; i < S.Fighters.Num(); ++i)
+	{
+		const FBuhFighterState& F = S.Fighters[i];
+		UE_LOG(LogTemp, Display, TEXT("[WalkTrace]   Fighter[%d]: X=%.1f Y=%.1f Action=%d Phase=%d PhaseInstants=%d Health=%d WalkTarget=%.1f WalkTargetY=%.1f bCommitted=%d PendingAction=%d"),
+			i, F.X, F.Y, F.Action, F.Phase, F.PhaseInstants, F.Health, F.WalkTarget, F.WalkTargetY, F.bCommitted ? 1 : 0, F.PendingAction);
+	}
 }
 
 

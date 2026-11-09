@@ -18,12 +18,14 @@ Prefer acting over prolonged internal deliberation. Inspect the relevant assets,
 - **After any failure, research online** (Unreal 5.8 docs, GitHub issues) before the next approach.
 - **If still stuck**, ask the user to pass the problem to ChatGPT. Sanitize for SFW if adult.
 - **`pkill` is unreliable** on this system. To free a port, use `lsof -ti:<port> | xargs kill -9`.
+- **Graphical PIE is always fresh.** The user launches a brand-new PIE session for every graphical test (full editor restart + fresh PIE). An "old/stale PIE" or "outdated Blueprint instance still running" is **NEVER** a valid explanation for a bug. If a graphical-PIE test shows wrong behavior, the cause is in the on-disk assets, the compiled C++, or the live graph — not a stale session. Do not offer "stale PIE" as a hypothesis.
 
 ## Verify Before Claiming
 Inspect before you claim. If you can check it cheaply, checking is mandatory.
 - Prefer: "I checked X and observed Y, therefore Z." Avoid: "This should work, so it's fixed."
 - If verification is not possible, label it as an inference and say what would need to be checked.
 - Never invent file contents, command output, PIE results, or project state. Never claim a move "works" because the Blueprint compiled — run PIE and inspect the result.
+- Never attribute a graphical-PIE failure to a "stale PIE" or "outdated Blueprint instance" — the user always starts a fresh PIE, so that explanation is invalid. Find the real cause in the assets, C++, or live graph.
 
 ## Check Existing Work
 Before creating or replacing anything, check if it already exists. Don't treat lack of memory as evidence the work hasn't been done. Prefer modifying the smallest necessary part over rebuilding. `todo.md` tracks phase state; check it before starting work.
@@ -93,7 +95,7 @@ python3 /home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/tm
 #   StopPIE, IsPIERunning, CaptureEditorImage, GetLogEntries (category:"")
 ```
 There is no separate test runner. Validation = compile the BP, run PIE, capture the game view, and inspect log entries + actor properties.
-- **XWayland launcher**: every *graphical* launch (desktop shortcut, the nohup command above, `run_graphical_visual_test.sh`) goes through `…/Binaries/Linux/UnrealEditor-xwayland`, a wrapper that sets `SDL_VIDEODRIVER=x11` + `QT_QPA_PLATFORM=xcb` and unsets `WAYLAND_DISPLAY`, then execs the real `UnrealEditor`. This keeps the editor off native Wayland, which otherwise freezes GNOME Shell on graceful close. The real ELF must stay named `UnrealEditor` (UE target-receipt validation rejects a renamed binary and re-launches in a loop). Headless `UnrealEditor-Cmd` launches are unaffected. Rollback: delete the wrapper and point launchers back at `UnrealEditor`.
+- **XWayland launcher**: every *graphical* launch (desktop shortcut, the nohup command above, `tests/run_graphical_visual_test.sh`) goes through `…/Binaries/Linux/UnrealEditor-xwayland`, a wrapper that sets `SDL_VIDEODRIVER=x11` + `QT_QPA_PLATFORM=xcb` and unsets `WAYLAND_DISPLAY`, then execs the real `UnrealEditor`. This keeps the editor off native Wayland, which otherwise freezes GNOME Shell on graceful close. The real ELF must stay named `UnrealEditor` (UE target-receipt validation rejects a renamed binary and re-launches in a loop). Headless `UnrealEditor-Cmd` launches are unaffected. Rollback: delete the wrapper and point launchers back at `UnrealEditor`.
 
 ## Project Structure
 ```
@@ -130,6 +132,8 @@ BeneathUncountedHeav/                 ← opencode cwd = project root
 5. **Save** with `AssetTools.save_assets` (package paths, `asset_paths`). Stop PIE before saving a BP.
 6. **If issues found**: go back to step 2.
 7. **Verify**: re-read this file in full. Confirm steps 2–6 completed. Update `todo.md` checkboxes.
+8. **Record the fix**: After verifying a fix worked, add an entry to `notes.md` §9 documenting the problem, cause, verified fix, and lesson learned. Do not skip this step — future sessions rely on `notes.md` to avoid re-diagnosing solved problems.
+9. **Clean notes.md**: Remove or update any out of date or incorrect entries. 
 
 Do NOT report "done" until all steps pass.
 

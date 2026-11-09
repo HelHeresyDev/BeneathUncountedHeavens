@@ -9,4 +9,5 @@ tmp_opencode/
 
 # IDE / editor
 .vs/
+.vscode/
 *.code-workspace

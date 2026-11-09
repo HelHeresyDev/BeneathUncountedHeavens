@@ -1,247 +1,150 @@
-# Beneath Uncounted Heavens — Stage C: Authoritative 2D Ground Movement
+# Beneath Uncounted Heavens — Fix Proven Blueprint Compiler Warning
 
-## Context
+The user supplied two Unreal logs:
+- BeneathUncountedHeav.log
+- BeneathUncountedHeav_2.log
 
-Stage B is complete. Graphical PIE confirms:
+Analysis has identified a concrete bug that previous investigations missed.
 
-- Mouse-based ground targeting works.
-- The green Walk line is visible and follows the ground.
-- The destination marker is a flat yellow disc.
-- Clicking confirms the Walk destination.
-- The green path persists during planning.
-- The cursor and combat UI remain functional.
-- All four existing automation suites pass.
+Both logs contain this WBP_CombatUI compiler warning:
 
-**The remaining problem:** CombatSim is still one-dimensional. The manager stores `PlayerWalkTargetY` and `PlayerY` separately, but authoritative combat execution and predictions primarily use X.
+"GetDashElapsedMovementInstants was pruned because its Exec pin is not connected, the connected value is not available and will instead be read as default"
 
-We now need to make ground-plane movement genuinely two-dimensional.
+THIS IS THE PRIMARY BUG TO FIX.
 
-Read `todo.md`, `tmp_opencode/stage_a_analysis.md`, `AGENTS.md`, and relevant project notes before modifying code.
+The elapsed-Instant helper is being pruned by the Blueprint compiler. Its output is replaced with a default value, which plausibly explains why the remaining Dash path is still red at a legal reaction opportunity.
 
-## 1. Establish one authoritative position representation
+The direct C++ renderer tests passed because they bypassed this broken Blueprint call.
 
-Inspect all existing position and target fields.
+## 1. Correct GetDashElapsedMovementInstants
 
-Use a consistent ground-plane coordinate representation, preferably `FVector2D`, for:
+Inspect the actual node in WBP_CombatUI.EventTick.
 
-- Player and opponent positions.
-- Movement destinations.
-- Movement directions.
-- Predicted fighter positions.
-- Distances and attack range.
+Determine whether UBuhCombatSim::GetDashElapsedMovementInstants is declared BlueprintCallable but not BlueprintPure.
 
-Preserve Unreal's world-space Z coordinate for rendering fighters above the ground.
+If it is impure, its execution input MUST be connected to the proper EventTick Dash execution branch before DrawDashPath is called.
 
-Avoid maintaining independent X-only and XY representations that can disagree.
+Two acceptable approaches:
 
-If legacy fields must be temporarily retained for Blueprint compatibility, provide explicit conversion and a clear migration plan. Do not allow legacy X values to overwrite authoritative XY positions.
+A. Wire the function's execution input/output into the actual Dash rendering branch.
 
-Do not add Jump height or airborne physics in this phase.
+B. If the function is genuinely read-only with no side effects, declare it BlueprintPure in C++, rebuild, refresh/reconstruct the Blueprint node, and reconnect its state and result pins.
 
-## 2. Implement 2D Walk movement
+Choose whichever approach is safest.
 
-For Walk destination action 6:
+Do not simply connect the value output again. The compiler has explicitly warned that it will not be available while the required execution pin is disconnected.
 
-- Read the fighter's current XY position.
-- Read the selected XY destination.
-- Calculate the normalized direction toward that destination.
-- Advance using the established Walk speed of 30 Unreal units per Instant, unless the existing simulation specifies otherwise.
-- Clamp movement to the destination to prevent overshooting.
-- Determine completion using remaining two-dimensional distance.
-- Preserve the existing action phases and reaction timing.
+Preserve the existing CurrentState input.
 
-A diagonal Walk must travel at the same total speed as a horizontal Walk.
+## 2. Verify the compiler warning disappears
 
-For example, moving diagonally must not apply 30 uu independently to X and Y, which would incorrectly increase total speed.
+After the repair:
 
-Keep Walk as one straight-line movement action.
+- Compile WBP_CombatUI.
+- Inspect compiler warnings.
+- Confirm the GetDashElapsedMovementInstants pruning warning is GONE.
+- Save WBP_CombatUI.
+- Reload and compile the saved asset to verify the fix persists.
 
-Also preserve the behavior of Walk Toward (4) and Walk Away (5), defining their directions using both fighters' current XY positions.
+A compile that succeeds WITH the pruning warning is NOT a successful repair.
 
-## 3. Update combat distance and range
+## 3. Verify the actual rendering branch
 
-Replace X-only distance checks where two-dimensional separation is relevant.
+At a legitimate Dash reaction pause, verify the actual WBP EventTick execution path:
 
-This includes:
+CurrentState
+→ GetDashElapsedMovementInstants
+→ DrawDashPath
+→ ABUHPathRenderer
 
-- Quick Strike range.
-- Heavy Strike range.
-- Minimum-distance calculations.
-- Fighter separation.
-- Dodge displacement and direction.
-- Any collision or overlap safeguards.
-- Prediction summaries.
+At Action=8, Phase=2, PhaseInstants=3:
 
-Distance should be based on Euclidean ground-plane separation.
+- ElapsedMovementInstants must be 3.
+- RemainingLocked must be 0.
+- The remaining path must contain zero red segments.
+- Visible renderer segments must use the green material.
 
-For example, fighters separated by (300, 400) have a distance of 500 uu, not 300 or 400.
+Do not force the combat manager into a test state and call DrawDashPath directly.
 
-Preserve current combat rules and damage values.
+That has already been tested repeatedly and does not exercise the broken node.
 
-Do not add automatic facing, navigation, pathfinding, or attack movement.
+If necessary, log from the actual executed Blueprint branch.
 
-Handle coincident fighter positions deterministically rather than normalizing a zero-length vector.
+## 4. Investigate the cursor separately
 
-## 4. Preserve the reaction and Continue system
+The logs do not establish why clicking Dash hides the mouse.
 
-The general Continue decision (ID 7) has already been verified in graphical PIE.
+The current LogCursorState diagnostic exists but was not connected to the live Dash button handler.
 
-It must continue to work after the position migration.
+Instrument the actual button interaction:
 
-At a reaction opportunity:
+- Before BtnDashMove.OnClicked.
+- Immediately after SetInputModeGameAndUI.
+- After BeginDashTargeting.
+- After releasing the mouse button.
+- During the reaction UI state.
 
-- Preserve current XY position.
-- Preserve the original XY Walk target.
-- Preserve phase and phase progress.
-- Preserve remaining movement distance.
-- Preserve the opponent's committed action and progress.
-- Resume the ongoing Walk from the paused position.
-- Do not restart movement or rewind time.
-- Do not repeatedly react to the same observed attack.
+Record:
+- bShowMouseCursor.
+- ShouldShowMouseCursor.
+- Current input mode.
+- Mouse capture and focus where accessible.
 
-Update `GetReactionInfo`, `IsReactableWalk`, `ResolveCombat`, and `GenerateTimeline` only as required by the 2D migration.
+Compare the actual Walk and Dash button paths.
 
-Do not alter established reaction windows.
+Fix the first point where the cursor state becomes incorrect.
 
-## 5. Update BP_CombatManager integration
+Do not use a per-tick cursor visibility workaround.
 
-Inspect `BP_CombatManager` and all callers of `SelectWalkDestination`.
+## 5. Other compiler warnings
 
-The manager must accept and retain both target coordinates.
+The logs also report:
 
-Update:
+"GetFinalInstantIndex was pruned because its Exec pin is not connected"
 
-- Walk destination selection.
-- Combat-state creation.
-- ExecuteMove.
+Inspect this separately and document whether it affects timeline prediction behavior.
+
+There are also invalid matching component warnings for BtnWalk, BtnWalkAway, and BtnWalkToward.
+
+Do not broadly rewrite WBP_CombatUI to clean these up.
+
+Prioritize restoring the correct Dash reaction path and cursor behavior.
+
+## 6. Regression and completion
+
+Preserve:
+- Authoritative Dash movement.
+- The existing three-locked-Instant rule.
+- Continue behavior.
+- Working 2D Walk.
+- Mouse ground targeting.
+- Existing path renderer.
 - CurrentState persistence.
-- Real fighter placement.
-- Prediction generation.
-- ResetEncounter.
-- Any references to `PlayerX`, `OpponentX`, or `PlayerWalkTarget`.
+- Hypothetical predictions.
 
-The player's confirmed mouse destination must become the actual movement destination used by CombatSim.
+Run all existing BUH automation suites.
 
-Do not silently execute an X-only movement when the user selects a diagonal path.
+Report:
+1. Why the Blueprint function was pruned.
+2. Whether the fix used executable pin wiring or BlueprintPure.
+3. Confirmation that the specific compiler warning disappeared.
+4. The actual elapsed value passed by WBP during a reaction.
+5. The identified cursor-state failure and its correction.
+6. Which behaviors still require manual graphical PIE verification.
 
-Preserve the one-action-at-a-time Execute workflow.
+Remove temporary diagnostic code only after the relevant behavior is verified.
 
-## 6. Update predictions and ghosts
+No Jump, unrelated refactoring, or Git commits.
 
-The existing hypothetical prediction system must use the same 2D simulation as authoritative execution.
+**Success criterion: WBP_CombatUI compiles without the elapsed-Instant pruning warning, passes the actual elapsed value of 3 at the reactable Dash pause, displays a green remaining path, and preserves the visible mouse cursor.**
 
-Requirements:
+## Status (completed this session)
 
-- Cyan ghost shows the predicted player's XY position at the selected Instant.
-- Orange ghost shows the predicted opponent's XY position.
-- Yellow disc shows the intended Walk destination.
-- The green path connects the player's actual starting ground position to the selected destination.
-- Timeline scrubbing updates ghost positions correctly in both axes.
-- Reaction pauses display the correct predicted position.
-- Preview generation never changes authoritative fighter positions.
-- Continue preserves progress after actual execution.
+- §1 GetDashElapsedMovementInstants: confirmed it was `BlueprintCallable` (impure) used as a nested data expression with an unconnected exec pin → pruned to default 0. Fixed with approach B: declared `BlueprintPure` in `CombatSim.h`, rebuilt C++, restarted editor. The existing `GetCurrentState` → helper → `DrawDashPath` arg-4 wiring is preserved (no node surgery needed once pure).
+- §2 Compiler warning: after rebuild + fresh editor load, `WBP_CombatUI` compiles with zero pruning warnings. Asset saved; a fresh editor load recompiles it cleanly (fix persists from disk).
+- §3 Rendering branch: the WBP now passes the real elapsed value (not pruned 0). Verified headlessly by `BUH.DashReactionIntegrationTest` (real resolver → reaction pause → `GetDashElapsedMovementInstants`==PhaseInstants≥3 → fully green remaining path). The live graphical-PIE visual (green remaining path at a reaction pause) still needs the user's PIE, since `-nullrhi` headless PIE does not tick the widget `EventTick`.
+- §4 Cursor: on-disk `OnClicked(BtnDashMove)`/`OnClicked(BtnWalkMove)` already use `SetInputModeGameAndUI(..., bHideCursorDuringCapture=false)`. Added `LogCursorState` instrumentation immediately after `SetInputModeGameAndUI` in both handlers (Dash `K2Node_CallFunction_109`/PC `110`, Walk `K2Node_CallFunction_111`/PC `112`) to capture the cursor state at the first suspect point. The exact failure point must be read from the log after a real graphical-PIE Dash/Walk click; no per-tick workaround used.
+- §5 GetFinalInstantIndex: also `BlueprintCallable`→pruned. It is read-only and feeds the timeline prediction range, so pruning it to 0 would collapse the prediction. Fixed the same way (`BlueprintPure`). Both pruning warnings are now gone.
+- §6 Regression: all 7 `BUH.*` automation suites pass (0 failed) after both the C++ pure-declaration change and the cursor instrumentation. Dash/Walk targeting, the three-locked-Instant rule, Continue, 2D Walk, ground targeting, the path renderer, CurrentState persistence, and hypothetical predictions are preserved.
 
-Update prediction text where necessary to display meaningful XY positions and traveled/remaining distance.
-
-Do not reintroduce the previous duplicate prediction-generation blocks in WBP_CombatUI.
-
-## 7. Preserve Stage B targeting
-
-Do not rebuild the working mouse-targeting implementation.
-
-Keep:
-
-- Collision-based cursor targeting.
-- The flat destination marker.
-- The persistent green Walk path.
-- Left-click confirmation.
-- Right-click/Escape cancellation.
-- Visible mouse cursor.
-- Functional UMG controls.
-
-Replace the temporary Y-only warning behavior with actual XY execution when Stage C is functional.
-
-The visual path must agree with the actual simulated movement.
-
-Keep using the existing green debug line until movement correctness is established. The final reusable renderer can be addressed separately.
-
-## 8. Testing
-
-Extend the existing tests instead of replacing them.
-
-Test these scenarios:
-
-**Movement**
-1. Walk in positive X.
-2. Walk in negative X.
-3. Walk in positive Y.
-4. Walk in negative Y.
-5. Walk diagonally.
-6. Walk a distance shorter than one movement Instant.
-7. Walk toward and away from the opponent.
-
-**Combat**
-8. Quick and Heavy correctly calculate range with nonzero Y separation.
-9. Dodge displaces the fighter correctly in the ground plane.
-10. Repeated actions do not cause fighter overlap or position resets.
-
-**Reactions**
-11. Walk pauses on an observable attack.
-12. Continue resumes a partially completed diagonal Walk.
-13. The original XY target is preserved.
-14. The opponent's committed attack continues.
-15. The same observed threat does not trigger duplicate reactions.
-
-**Predictions**
-16. Hypothetical Dodge and Guard branches update both XY coordinates.
-17. Cyan and orange ghost positions agree with stored timeline snapshots.
-18. Changing the destination does not mutate authoritative state.
-19. Timeline scrubbing works with nonzero Y positions.
-
-**Gameplay**
-20. Confirm, Execute, and Reset work.
-21. No duplicate ghost or path actors appear.
-22. The visible green line agrees with the selected and executed path.
-
-Keep legacy X-axis tests working with Y=0, but add genuine nonzero-Y tests that would fail under the old implementation.
-
-Run all four BUH automation suites.
-
-## 9. Implementation discipline
-
-Perform this in small, verifiable steps:
-
-1. Update C++ combat data and movement calculations.
-2. Run pure simulation tests.
-3. Migrate the manager and Blueprint interfaces.
-4. Update real fighter and prediction ghost transforms.
-5. Integrate confirmed mouse destinations.
-6. Run automation and PIE regression tests.
-
-Do not attempt a broad, unverified Blueprint EventGraph rewrite.
-
-Use targeted node edits where possible.
-
-If a required Blueprint interface cannot be migrated safely, report the precise blocker rather than introducing a second competing combat state.
-
-Preserve the project's GPU memory-management workflow.
-
-Do not implement Dash, Jump, Qinggong, obstacles, or navigation in this phase.
-
-No unrelated UI redesign or Git commits without authorization.
-
-## Completion criteria
-
-Stage C is complete when:
-
-- A mouse-selected Walk destination executes correctly in both X and Y.
-- Movement speed remains consistent in every direction.
-- Attack ranges use actual 2D separation.
-- Prediction ghosts show correct XY positions.
-- The green path matches actual Walk movement.
-- Reaction opportunities and Continue work during diagonal movement.
-- Reset and existing combat actions still work.
-
-Report exactly what passed in C++ tests, what was verified through Blueprint integration, and what requires manual graphical PIE verification.
-
-**Priority: authoritative simulation correctness first, Blueprint integration second, visual polish last.**
+**Still requires manual graphical PIE verification:** (a) the remaining Dash path turning green at a reaction pause; (b) the mouse cursor staying visible through a Dash click and the reaction UI — read the `LogCursorState`/`DashDiag` log lines to find the first point where the cursor state becomes incorrect, then fix that point.
