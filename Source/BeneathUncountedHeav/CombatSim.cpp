@@ -2236,6 +2236,13 @@ void UBuhCombatSim::SetPreviewDashTarget(float TargetX, float TargetY)
 float UBuhCombatSim::GExecDashTarget = -9999.f;
 float UBuhCombatSim::GExecDashTargetY = 0.f;
 
+bool UBuhCombatSim::GbDashAwaitingExecute = false;
+
+void UBuhCombatSim::SetDashAwaitingExecute(bool bAwaiting)
+{
+	GbDashAwaitingExecute = bAwaiting;
+}
+
 void UBuhCombatSim::SetExecDashTarget(float TargetX, float TargetY)
 {
 	GExecDashTarget = TargetX;
@@ -2953,11 +2960,11 @@ int32 UBuhCombatSim::GetDashElapsedMovementInstants(const FBuhCombatState& S)
 {
 	if (S.Fighters.Num() < 1) return 0;
 	const FBuhFighterState& F = S.Fighters[0];
-	// Temporary diagnostic (graphical-PIE investigation): log the authoritative state
-	// and the computed elapsed value so the real EventTick branch is captured.
-	const int32 Result = (F.Action == 8 && F.Phase == 2) ? F.PhaseInstants : 0;
-	UE_LOG(LogTemp, Warning, TEXT("DashDiag GetDashElapsed: Action=%d Phase=%d PhaseInstants=%d -> Elapsed=%d"),
-		F.Action, F.Phase, F.PhaseInstants, Result);
+	// A confirmed replacement Dash has not been executed yet, so its preview must start
+	// from its own commitment window instead of inheriting the old Dash's elapsed value.
+	const int32 Result = GbDashAwaitingExecute ? 0 : ((F.Action == 8 && F.Phase == 2) ? F.PhaseInstants : 0);
+	UE_LOG(LogTemp, Warning, TEXT("DashDiag GetDashElapsed: Awaiting=%d Action=%d Phase=%d PhaseInstants=%d -> Elapsed=%d"),
+		GbDashAwaitingExecute ? 1 : 0, F.Action, F.Phase, F.PhaseInstants, Result);
 	return Result;
 }
 

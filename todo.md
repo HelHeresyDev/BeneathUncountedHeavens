@@ -1,66 +1,115 @@
-# BUH — Fix competing Dash path renderers
+# Beneath Uncounted Heavens — Fix New Dash Turning Green After Confirmation
 
-The new graphical PIE screenshots show that the interrupted Dash path now correctly turns green. However, when the player selects a NEW Dash, its preview stays green instead of showing the usual red commitment section.
+I have reviewed the GitHub source, including CombatSim.cpp, PathRenderer.cpp, and notes.md.
 
-The latest graphical log proves the cause.
+The user has reproduced the following sequence in graphical PIE:
 
-At 2026-11-09 20:54:08.219, immediately after a new Dash click:
+1. An existing Dash is interrupted during its reactable phase.
+2. Its remaining path is green — CORRECT.
+3. The player chooses a NEW Dash.
+4. During mouse targeting, the new path has a red initial section — CORRECT.
+5. The player clicks the ground to confirm the new destination.
+6. The path immediately becomes green again, even though the new Dash has not been executed — WRONG.
 
-1. `DrawDashPath` receives `Elapsed=0`, `RemainingLocked=3` and writes `Colors=[R]`. CORRECT.
-2. `GetDashElapsed` then reads the OLD active Dash state: `Action=8 Phase=2 PhaseInstants=7 -> Elapsed=7`.
-3. Another `DrawDashPath` writes `Colors=[G]`, overwriting the new Dash preview. WRONG.
+**This is a confirmed-selection state bug, not a Dash timing or material bug.**
 
-This red-then-green sequence repeats every tick, including while the player moves the targeting cursor.
+## Root-cause hypothesis
 
-**Fix the two competing path writers. Do not change the working elapsed-Instant calculation.**
+The existing EventTick distinguishes targeting with `TargetingAction == 8`.
 
-## Required behavior
+But confirmation calls CancelTargeting, setting `TargetingAction = -1`.
 
-- A newly selected Dash always starts a fresh preview with 3 locked Instants: red first, green afterward.
-- An interrupted Dash that can be continued shows an entirely green remaining path.
-- Selecting a new Dash during a reaction displays the NEW Dash preview, not the existing Dash continuation preview.
-- Canceling the new Dash restores the previous Dash continuation preview, if applicable.
-- Committing a new Dash starts a genuinely new Dash action with a new commitment period. It must not inherit the previous Dash's elapsed Instants.
-- Continue resumes the existing Dash without restarting its commitment period.
+At that point:
+- The new Dash is selected and confirmed.
+- The old Dash is still in authoritative CurrentState.
+- The combat manager is still handling a reaction opportunity.
+- The execution-path renderer reads elapsed Instants from the OLD Dash.
 
-## Implementation
+Consequently, the old Dash's elapsed value turns the newly confirmed path green.
 
-Inspect all calls to `DrawDashPath`, including `WBP_CombatUI.EventTick`, Dash targeting updates, and reaction handling.
+Inspect the actual Blueprint graph and confirm this transition.
 
-Give the rendering system one authoritative owner per update.
+## Required fix
 
-Suggested priority:
+Distinguish these three states:
 
-1. If actively targeting a NEW Dash, render that new path with elapsed=0.
-2. Else, if showing an interruptible existing Dash, render its remaining path using the authoritative elapsed Instants.
-3. Else, render the appropriate other action path or clear it.
+**A. Targeting a new Dash**
+- Cursor selects a destination.
+- Render the new Dash with elapsed=0.
 
-Make these branches mutually exclusive. Avoid a second EventTick call overwriting a freshly drawn path. Preserve cursor-responsive target updates.
+**B. New Dash confirmed but awaiting Execute**
+- The cursor no longer changes the destination.
+- Preserve a pending, confirmed Dash decision.
+- Render its new commitment window with elapsed=0.
+- Do NOT read elapsed Instants from the old Dash.
+- Keep the original destination and preview visible.
 
-Keep preview state distinct from authoritative combat state until Execute. Do not mutate CurrentState just to change the preview color.
+**C. Existing Dash being continued**
+- No pending replacement action.
+- Read authoritative Dash progress from CurrentState.
+- Render only its remaining path using the actual elapsed Instants.
+- Once reactable, the remaining line is green.
 
-Add a regression test covering: interrupted Dash → select new Dash → red/green preview → cancel → original green continuation path → select new Dash → Execute → new commitment begins.
+Use the existing state variables if they are sufficient. Otherwise, introduce the smallest explicit pending-decision state needed to distinguish B from C.
 
-Verify through logging that exactly one effective path update occurs per UI refresh, and that the new Dash branch cannot be overwritten by the old reaction branch.
+Do not use `PlayerMove == 8` alone: both the old Dash and new Dash have action ID 8.
 
-## Cursor bug, also confirmed
+Do not use `TargetingAction == 8` alone: that becomes false once the new destination is confirmed.
 
-The graphical log records:
+## Lifecycle requirements
 
-`DashDiag CURSOR [DashAfterInput]: bShowMouseCursor=0 ShouldShowMouseCursor=0 InputMode=Game and UI`
+- Begin new Dash targeting: establish a pending replacement decision.
+- Confirm destination: preserve the pending decision and its new target.
+- Cancel before confirmation: restore the old action's continuation preview when applicable.
+- Cancel/back after confirmation: discard the pending replacement and restore the old preview when applicable.
+- Execute new Dash: commit a genuinely new Dash with its own startup and three locked movement Instants.
+- Continue old Dash: resume the original action without restarting its lock window.
+- Switch to Quick/Heavy/Guard/Dodge/Walk: clear or replace the pending Dash preview appropriately.
+- Reset: clear both pending and targeting state.
 
-This appears on Dash clicks, including the second click at 20:54:08.217.
+Never mutate the authoritative CurrentState merely to make the preview red.
 
-Identify why the actual player controller has both cursor flags false immediately after setting input mode. Correct that transition without relying on a per-tick visibility workaround. Verify that clicking Dash and targeting the ground keeps the cursor visible.
+## Make path rendering mutually exclusive
 
-## Verification
+Audit the actual EventTick branches and every caller of DrawDashPath.
 
-Compile and save affected assets, run existing BUH tests and the new regression test, and verify the actual graphical PIE path if available.
+Recommended effective priority:
 
-Report the exact competing Blueprint/C++ call sites removed or gated, plus the cursor correction.
+1. Active movement targeting preview.
+2. Confirmed new movement awaiting execution.
+3. Ongoing movement continuation visualization.
+4. No movement path.
 
-Do not add Jump, rewrite the combat system, or make unrelated UI changes. No Git commits.
+Only one branch should update the renderer per refresh.
 
-Remove the large yellow diagnostic version banner and excessive per-frame `DashDiag` logging once the behavior is confirmed.
+Ensure confirmation doesn't accidentally fall through to the previous Dash continuation branch.
 
-**Success: a continued Dash remains green; a newly selected Dash shows its initial red commitment section; neither overwrites the other.**
+Use targeted Blueprint node edits. Do not rewrite the entire EventGraph.
+
+## Regression verification
+
+Reproduce in an initialized PIE game world:
+
+- Existing Dash reaction → green remaining path.
+- Select new Dash → initial red section.
+- Confirm destination → initial red section remains.
+- Cancel confirmed Dash → old green continuation restored.
+- Select and confirm new Dash again → red section.
+- Execute new Dash → new action starts with its own locked window.
+- Continue old Dash instead → old action progress preserved.
+- Fresh encounter Dash → normal red/green preview.
+- Switching actions and Reset → no stale path.
+
+Inspect actual rendered segment colors after each UI transition, not just the CombatSim result.
+
+Run all existing BUH automation suites.
+
+Compile, save, and read back the affected Blueprint nodes.
+
+Keep working cursor/input behavior, XY targeting, and Dash simulation unchanged.
+
+Remove the large yellow diagnostic banner after graphical verification.
+
+Do not implement Jump, make unrelated UI changes, or create a Git commit without authorization.
+
+**Success: A newly selected Dash retains its initial red commitment section throughout targeting AND after confirmation, until the new action is executed. An interrupted Dash being continued still displays its green remaining path.**
