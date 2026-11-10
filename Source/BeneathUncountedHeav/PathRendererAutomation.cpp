@@ -681,3 +681,235 @@ bool FBuhDashGateRegressionTest::RunTest(const FString& Parameters)
 
 	return bAllPassed;
 }
+
+namespace
+{
+	// Mirrors the exact decision the WBP_CombatUI EventTick makes before calling
+	// DrawDashPath: while targeting, while a replacement Dash is confirmed but not
+	// yet executed, or when the selected move is not Dash, the effective elapsed is
+	// 0 (red). Otherwise it is the authoritative elapsed from CurrentState (green).
+	int32 EffectiveDashElapsed(int32 TargetingAction, int32 PlayerMove, bool bDashAwaitingExecute, const FBuhCombatState& State)
+	{
+		if (TargetingAction >= 0)
+		{
+			return 0;
+		}
+		if (PlayerMove != 8)
+		{
+			return 0;
+		}
+		if (bDashAwaitingExecute)
+		{
+			return 0;
+		}
+		return UBuhCombatSim::GetDashElapsedMovementInstants(State);
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhDashLifecycleRegressionTest, "BUH.DashLifecycleRegressionTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhDashLifecycleRegressionTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	Check(TEXT("Editor world available"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+
+	// The explicit pending-decision state must exist on the real BP_CombatManager
+	// asset. This proves the lifecycle is represented in instance state, not a
+	// global, without relying on headless ProcessEvent variable writes (which do
+	// not land in the editor world; see BUH.CombatManagerIntegrationTests).
+	const FString AssetPath = TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/BP_CombatManager.BP_CombatManager");
+	UBlueprint* CombatManagerBP = LoadObject<UBlueprint>(nullptr, *AssetPath);
+	Check(TEXT("BP_CombatManager asset loaded"), CombatManagerBP != nullptr);
+	if (CombatManagerBP && CombatManagerBP->GeneratedClass)
+	{
+		UClass* CombatManagerClass = CombatManagerBP->GeneratedClass;
+		Check(TEXT("bDashAwaitingExecute variable exists on BP_CombatManager"),
+			CombatManagerClass->FindPropertyByName(TEXT("bDashAwaitingExecute")) != nullptr);
+		Check(TEXT("IsDashAwaitingExecute function exists on BP_CombatManager"),
+			CombatManagerClass->FindFunctionByName(TEXT("IsDashAwaitingExecute")) != nullptr);
+	}
+	else
+	{
+		return bAllPassed;
+	}
+
+	APlayerController* PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	Check(TEXT("Player controller spawned"), PC != nullptr && PC->GetWorld() == World);
+	if (!PC)
+	{
+		return bAllPassed;
+	}
+
+	ABUHPathRenderer* Target = nullptr;
+	{
+		TActorIterator<ABUHPathRenderer> It(World);
+		if (It) Target = *It;
+	}
+	if (!Target)
+	{
+		Target = World->SpawnActor<ABUHPathRenderer>(FVector::ZeroVector, FRotator::ZeroRotator);
+		Target->PostInitializeComponents();
+		Target->DispatchBeginPlay();
+	}
+	Check(TEXT("A renderer exists for DrawDashPath to drive"), Target != nullptr);
+	if (!Target)
+	{
+		PC->Destroy();
+		return bAllPassed;
+	}
+
+	// --- Existing Dash reaction (green) ---
+	FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	S.Fighters[0].Action = 8;
+	S.Fighters[0].Phase = 2;
+	S.Fighters[0].PhaseInstants = 3;
+	S.Fighters[0].DashTarget = 220.f;
+	const FBuhCombatResult R = UBuhCombatSim::ResolveCombat(S, -1, 1, 200);
+	Check(TEXT("Existing Dash reached a reaction pause"), R.StoppedReason == 5 && R.bReactionOpportunity);
+	if (R.StoppedReason != 5 || !R.bReactionOpportunity)
+	{
+		UBuhCombatSim::ClearWalkPath(PC);
+		PC->Destroy();
+		return bAllPassed;
+	}
+
+	FBuhCombatState CurrentState = R.FinalState;
+	int32 TargetingAction = -1;
+	int32 PlayerMove = 8;
+	bool bDashAwaitingExecute = false;
+
+	const int32 OldElapsed = UBuhCombatSim::GetDashElapsedMovementInstants(CurrentState);
+	Check(TEXT("Old Dash elapsed is reactable (>=3)"), OldElapsed >= 3);
+	Check(TEXT("Effective elapsed for an existing Dash is the old progress"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == OldElapsed);
+
+	const FVector OldStart(static_cast<float>(CurrentState.Fighters[0].X), 0.f, 90.f);
+	const FVector OldEnd(static_cast<float>(CurrentState.Fighters[0].DashTarget), 0.f, 90.f);
+	UBuhCombatSim::DrawDashPath(PC, OldStart, OldEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+	Check(TEXT("Existing Dash continuation is visible"), Target->IsPathVisible());
+	Check(TEXT("Existing Dash continuation is entirely green"), Target->GetVisibleSegmentCount() == 1);
+	UStaticMeshComponent* OldPiece = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+	Check(TEXT("Existing Dash piece is green"), OldPiece && PieceColor(Target, OldPiece) == EPathSegmentColor::Green);
+	UBuhCombatSim::ClearWalkPath(PC);
+
+	// --- Begin replacement Dash targeting (red) ---
+	TargetingAction = 8;
+	bDashAwaitingExecute = false;
+	Check(TEXT("Effective elapsed is 0 while targeting"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == 0);
+
+	const float NewTargetX = static_cast<float>(CurrentState.Fighters[0].X) + 450.f;
+	const FVector NewStart = OldStart;
+	const FVector NewEnd(NewTargetX, 0.f, 90.f);
+	UBuhCombatSim::DrawDashPath(PC, NewStart, NewEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+	Check(TEXT("Targeting replacement Dash is visible"), Target->IsPathVisible());
+	Check(TEXT("Targeting replacement Dash has red and green sections"), Target->GetVisibleSegmentCount() == 2);
+	UStaticMeshComponent* NewPiece0 = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+	UStaticMeshComponent* NewPiece1 = Target->SegmentPool.Num() >= 2 ? Target->SegmentPool[1].Get() : nullptr;
+	Check(TEXT("Targeting replacement Dash first piece is red"), NewPiece0 && PieceColor(Target, NewPiece0) == EPathSegmentColor::Red);
+	Check(TEXT("Targeting replacement Dash second piece is green"), NewPiece1 && PieceColor(Target, NewPiece1) == EPathSegmentColor::Green);
+	UBuhCombatSim::ClearWalkPath(PC);
+
+	// --- Confirm replacement Dash destination (STILL RED) ---
+	TargetingAction = -1;
+	PlayerMove = 8;
+	bDashAwaitingExecute = true;
+	Check(TEXT("Effective elapsed is 0 after confirmation"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == 0);
+
+	UBuhCombatSim::DrawDashPath(PC, NewStart, NewEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+	Check(TEXT("Confirmed replacement Dash is still visible"), Target->IsPathVisible());
+	Check(TEXT("Confirmed replacement Dash still has red and green sections"), Target->GetVisibleSegmentCount() == 2);
+	UStaticMeshComponent* ConfPiece0 = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+	UStaticMeshComponent* ConfPiece1 = Target->SegmentPool.Num() >= 2 ? Target->SegmentPool[1].Get() : nullptr;
+	Check(TEXT("Confirmed replacement Dash first piece is still red"), ConfPiece0 && PieceColor(Target, ConfPiece0) == EPathSegmentColor::Red);
+	Check(TEXT("Confirmed replacement Dash second piece is green"), ConfPiece1 && PieceColor(Target, ConfPiece1) == EPathSegmentColor::Green);
+	UBuhCombatSim::ClearWalkPath(PC);
+
+	// --- UI refreshes must not clear the pending decision ---
+	for (int32 Refresh = 0; Refresh < 3; ++Refresh)
+	{
+		Check(TEXT("bDashAwaitingExecute survives UI refresh"), bDashAwaitingExecute);
+		UBuhCombatSim::DrawDashPath(PC, NewStart, NewEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+		UStaticMeshComponent* RefreshPiece0 = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+		Check(TEXT("Refreshed confirmed replacement Dash first piece is still red"), RefreshPiece0 && PieceColor(Target, RefreshPiece0) == EPathSegmentColor::Red);
+		UBuhCombatSim::ClearWalkPath(PC);
+	}
+
+	// --- Cancel restores the old green continuation ---
+	TargetingAction = -1;
+	bDashAwaitingExecute = false;
+	Check(TEXT("Effective elapsed returns to the old progress after cancel"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == OldElapsed);
+
+	UBuhCombatSim::DrawDashPath(PC, OldStart, OldEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+	Check(TEXT("Canceled replacement restores old Dash visibility"), Target->IsPathVisible());
+	Check(TEXT("Canceled replacement restores old Dash green path"), Target->GetVisibleSegmentCount() == 1);
+	UStaticMeshComponent* CancelPiece = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+	Check(TEXT("Canceled replacement old Dash piece is green"), CancelPiece && PieceColor(Target, CancelPiece) == EPathSegmentColor::Green);
+	UBuhCombatSim::ClearWalkPath(PC);
+
+	// --- Continue preserves the original Dash progress ---
+	PlayerMove = 8;
+	bDashAwaitingExecute = false;
+	Check(TEXT("Effective elapsed is the old progress after Continue"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == OldElapsed);
+
+	UBuhCombatSim::DrawDashPath(PC, OldStart, OldEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+	Check(TEXT("Continued Dash is visible"), Target->IsPathVisible());
+	Check(TEXT("Continued Dash remains entirely green"), Target->GetVisibleSegmentCount() == 1);
+	UStaticMeshComponent* ContinuePiece = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+	Check(TEXT("Continued Dash piece is green"), ContinuePiece && PieceColor(Target, ContinuePiece) == EPathSegmentColor::Green);
+	UBuhCombatSim::ClearWalkPath(PC);
+
+	// --- Short replacement Dash (<=270 uu) is entirely red ---
+	TargetingAction = 8;
+	bDashAwaitingExecute = false;
+	const float ShortTargetX = static_cast<float>(CurrentState.Fighters[0].X) + 200.f;
+	TargetingAction = -1;
+	PlayerMove = 8;
+	bDashAwaitingExecute = true;
+	Check(TEXT("Short replacement effective elapsed is 0"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == 0);
+
+	const FVector ShortEnd(ShortTargetX, 0.f, 90.f);
+	UBuhCombatSim::DrawDashPath(PC, NewStart, ShortEnd, EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState));
+	Check(TEXT("Short replacement Dash is visible"), Target->IsPathVisible());
+	Check(TEXT("Short replacement Dash is entirely red"), Target->GetVisibleSegmentCount() == 1);
+	UStaticMeshComponent* ShortPiece = Target->SegmentPool.Num() >= 1 ? Target->SegmentPool[0].Get() : nullptr;
+	Check(TEXT("Short replacement Dash piece is red"), ShortPiece && PieceColor(Target, ShortPiece) == EPathSegmentColor::Red);
+	UBuhCombatSim::ClearWalkPath(PC);
+	TargetingAction = -1;
+	bDashAwaitingExecute = false;
+
+	// --- Execute starts a new commitment period ---
+	TargetingAction = 8;
+	bDashAwaitingExecute = false;
+	TargetingAction = -1;
+	PlayerMove = 8;
+	bDashAwaitingExecute = true;
+	Check(TEXT("Replacement effective elapsed is 0 before Execute"),
+		EffectiveDashElapsed(TargetingAction, PlayerMove, bDashAwaitingExecute, CurrentState) == 0);
+
+	FBuhCombatState CommitState = UBuhCombatSim::WithPlayerDashTarget(CurrentState, NewTargetX, 0.f);
+	const FBuhCombatResult CommitResult = UBuhCombatSim::ResolveCombat(CommitState, 8, 1, 200);
+	bDashAwaitingExecute = false;
+	Check(TEXT("Executed replacement Dash is committed"), CommitResult.FinalState.Fighters.Num() >= 1 && CommitResult.FinalState.Fighters[0].Action == 8);
+	const int32 NewElapsed = UBuhCombatSim::GetDashElapsedMovementInstants(CommitResult.FinalState);
+	Check(TEXT("Executed replacement Dash does not inherit old elapsed Instants"), NewElapsed < 3);
+
+	UBuhCombatSim::ClearWalkPath(PC);
+	PC->Destroy();
+	return bAllPassed;
+}

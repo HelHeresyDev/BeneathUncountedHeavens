@@ -1,115 +1,138 @@
-# Beneath Uncounted Heavens — Fix New Dash Turning Green After Confirmation
+# Beneath Uncounted Heavens — Fix the Confirmed Dash Lifecycle, Not the Timing Helper
 
-I have reviewed the GitHub source, including CombatSim.cpp, PathRenderer.cpp, and notes.md.
+The user has tested commit `55b302c` in graphical PIE. The bug persists.
 
-The user has reproduced the following sequence in graphical PIE:
+**Observed behavior:** During an interrupted Dash, choosing a new Dash displays the proper red commitment section while moving the targeting cursor. Clicking the ground to confirm the new Dash turns the path green again, before Execute.
 
-1. An existing Dash is interrupted during its reactable phase.
-2. Its remaining path is green — CORRECT.
-3. The player chooses a NEW Dash.
-4. During mouse targeting, the new path has a red initial section — CORRECT.
-5. The player clicks the ground to confirm the new destination.
-6. The path immediately becomes green again, even though the new Dash has not been executed — WRONG.
+## What went wrong with the previous fix
 
-**This is a confirmed-selection state bug, not a Dash timing or material bug.**
+The latest commit introduced `UBuhCombatSim::GbDashAwaitingExecute` and modified `GetDashElapsedMovementInstants()` to return zero when the flag is true.
 
-## Root-cause hypothesis
+This approach is insufficient.
 
-The existing EventTick distinguishes targeting with `TargetingAction == 8`.
+`GetDashElapsedMovementInstants()` should remain a pure calculation based on the supplied authoritative combat state. It should not depend on global UI selection state.
 
-But confirmation calls CancelTargeting, setting `TargetingAction = -1`.
+The core problem is likely the Blueprint lifecycle that changes from targeting to confirmed selection.
 
-At that point:
-- The new Dash is selected and confirmed.
-- The old Dash is still in authoritative CurrentState.
-- The combat manager is still handling a reaction opportunity.
-- The execution-path renderer reads elapsed Instants from the OLD Dash.
+Do not add another global flag or alter the Dash movement rules.
 
-Consequently, the old Dash's elapsed value turns the newly confirmed path green.
+## 1. Inspect the exact Blueprint sequence
 
-Inspect the actual Blueprint graph and confirm this transition.
+Use MCP to read back the actual saved Blueprint graphs for:
 
-## Required fix
+- `BP_CombatManager.BeginDashTargeting`
+- `BP_CombatManager.SelectDashDestination`
+- `BP_CombatManager.CancelTargeting`
+- `BP_CombatManager` action confirmation and execution functions
+- `WBP_CombatUI.EventTick`
+- The left-click confirmation handler
+- `DrawDashPath` call sites
+- Back, Continue, and Execute handlers
 
-Distinguish these three states:
+Determine exactly when `GbDashAwaitingExecute` is set to true and false.
 
-**A. Targeting a new Dash**
-- Cursor selects a destination.
-- Render the new Dash with elapsed=0.
+At each transition, record:
 
-**B. New Dash confirmed but awaiting Execute**
-- The cursor no longer changes the destination.
-- Preserve a pending, confirmed Dash decision.
-- Render its new commitment window with elapsed=0.
-- Do NOT read elapsed Instants from the old Dash.
-- Keep the original destination and preview visible.
+`TargetingAction`, `PlayerMove`, `State`, `CurrentState.Action`, `CurrentState.PhaseInstants`, pending destination, pending decision status, and `GbDashAwaitingExecute`.
 
-**C. Existing Dash being continued**
-- No pending replacement action.
-- Read authoritative Dash progress from CurrentState.
-- Render only its remaining path using the actual elapsed Instants.
-- Once reactable, the remaining line is green.
+The crucial test is the state **immediately after clicking the ground but before Execute**, followed by the state after the next EventTick.
 
-Use the existing state variables if they are sufficient. Otherwise, introduce the smallest explicit pending-decision state needed to distinguish B from C.
+Find the specific operation that changes the renderer back to green.
 
-Do not use `PlayerMove == 8` alone: both the old Dash and new Dash have action ID 8.
+## 2. Represent pending movement decisions explicitly
 
-Do not use `TargetingAction == 8` alone: that becomes false once the new destination is confirmed.
+Prefer keeping pending UI decisions on the actual `BP_CombatManager` instance rather than in a global static variable.
 
-## Lifecycle requirements
+The system must distinguish:
 
-- Begin new Dash targeting: establish a pending replacement decision.
-- Confirm destination: preserve the pending decision and its new target.
-- Cancel before confirmation: restore the old action's continuation preview when applicable.
-- Cancel/back after confirmation: discard the pending replacement and restore the old preview when applicable.
-- Execute new Dash: commit a genuinely new Dash with its own startup and three locked movement Instants.
-- Continue old Dash: resume the original action without restarting its lock window.
-- Switch to Quick/Heavy/Guard/Dodge/Walk: clear or replace the pending Dash preview appropriately.
-- Reset: clear both pending and targeting state.
+| Situation | Expected Dash rendering |
+|---|---|
+| Existing Dash paused at reactable Instant | Remaining path green |
+| Targeting replacement Dash | Fresh red commitment section |
+| Replacement Dash confirmed, awaiting Execute | Fresh red commitment section |
+| Continue selected for existing Dash | Resume old Dash; no new red lock |
+| Replacement Dash executed | New commitment timing starts |
 
-Never mutate the authoritative CurrentState merely to make the preview red.
+The targeting state and the confirmed-but-unexecuted state must be distinct.
 
-## Make path rendering mutually exclusive
+When confirmation ends mouse targeting, do not clear the pending decision.
 
-Audit the actual EventTick branches and every caller of DrawDashPath.
+Do not treat `PlayerMove == 8` as sufficient to identify a new Dash, since the existing Dash may also have action ID 8.
 
-Recommended effective priority:
+Canceling a replacement should restore the existing continuation state without modifying authoritative combat progress.
 
-1. Active movement targeting preview.
-2. Confirmed new movement awaiting execution.
-3. Ongoing movement continuation visualization.
+## 3. Give the path renderer one owner
+
+Rework only the relevant rendering control flow, not the renderer geometry or simulation.
+
+The effective priority should be:
+
+1. New movement currently being targeted.
+2. New movement confirmed and awaiting Execute.
+3. Existing movement awaiting Continue.
 4. No movement path.
 
-Only one branch should update the renderer per refresh.
+These states must be mutually exclusive.
 
-Ensure confirmation doesn't accidentally fall through to the previous Dash continuation branch.
+For a new Dash, pass elapsed=0 to `DrawDashPath`.
 
-Use targeted Blueprint node edits. Do not rewrite the entire EventGraph.
+For an existing continuing Dash, pass the value from authoritative `GetDashElapsedMovementInstants(CurrentState)`.
 
-## Regression verification
+Restore `GetDashElapsedMovementInstants()` to a deterministic read-only function. Remove `GbDashAwaitingExecute` once no longer needed.
 
-Reproduce in an initialized PIE game world:
+Do not manipulate CurrentState to change path colors.
 
-- Existing Dash reaction → green remaining path.
-- Select new Dash → initial red section.
-- Confirm destination → initial red section remains.
-- Cancel confirmed Dash → old green continuation restored.
-- Select and confirm new Dash again → red section.
-- Execute new Dash → new action starts with its own locked window.
-- Continue old Dash instead → old action progress preserved.
-- Fresh encounter Dash → normal red/green preview.
-- Switching actions and Reset → no stale path.
+## 4. Add a test that actually fails on this bug
 
-Inspect actual rendered segment colors after each UI transition, not just the CombatSim result.
+The previous commit added no dedicated regression test for confirmed replacement Dash selection.
 
-Run all existing BUH automation suites.
+Create an integration test exercising the actual pending-decision transitions and renderer update path.
 
-Compile, save, and read back the affected Blueprint nodes.
+Test this sequence:
 
-Keep working cursor/input behavior, XY targeting, and Dash simulation unchanged.
+Existing Dash reaction (green) → Begin new Dash targeting (red) → Confirm ground destination (STILL RED) → one or more UI refreshes (STILL RED) → Cancel (old green continuation restored).
 
-Remove the large yellow diagnostic banner after graphical verification.
+Repeat using a short new Dash of no more than 270 uu, which should have an entirely red path, and a longer Dash, which should have both red and green sections.
 
-Do not implement Jump, make unrelated UI changes, or create a Git commit without authorization.
+Also verify that Execute starts a new commitment period and Continue preserves the original Dash progress.
 
-**Success: A newly selected Dash retains its initial red commitment section throughout targeting AND after confirmation, until the new action is executed. An interrupted Dash being continued still displays its green remaining path.**
+A test that merely invokes `DrawDashPath(..., 0)` is insufficient. That function already works.
+
+## 5. Provide readable evidence in GitHub
+
+Export the relevant saved Blueprint node connections to a text file, for example:
+
+`tests/blueprint_exports/dash_selection_flow.md`
+
+Include the event execution order, variable writes, branches, and DrawDashPath argument sources.
+
+Use actual MCP graph readback, not a manually reconstructed or hypothetical graph.
+
+This will let ChatGPT review the Blueprint behavior through GitHub instead of relying on descriptions of binary `.uasset` changes.
+
+## 6. Verify and push
+
+Compile and save changed Blueprints. Run all existing BUH automation suites and the new lifecycle regression test.
+
+If graphical PIE verification is not possible, state that clearly. Do not claim the visual bug is fixed from C++ unit tests alone.
+
+Update `notes.md` with the confirmed cause and `todo.md` with the latest status.
+
+**Commit and push the completed changes to `origin/master` on `HelHeresyDev/BeneathUncountedHeavens`.**
+
+Include the Blueprint export, tests, and updated source. Report the commit SHA and test results.
+
+Do not implement Jump or change Dash balance values.
+
+**Success criterion:** A new Dash retains its red initial commitment section after destination confirmation, while Continue correctly preserves the green remaining path of an existing Dash.
+
+## Status (completed 2026-11-10)
+
+- [x] §1 Inspected the exact Blueprint sequence via `read_graph_dsl` readback of `BeginDashTargeting`, `SelectDashDestination`, `CancelTargeting`, `ExecuteMove`, `ResetEncounter`, `EventTick`, `BeginPlay`, and the `WBP_CombatUI:EventGraph` Dash branches. The green-before-Execute cause is the after-confirm `DrawDashPath` reading the old authoritative `CurrentState` elapsed value while `PlayerMove==8` and `TargetingAction==-1`, with no record that a new destination was confirmed but not executed.
+- [x] §2 Pending movement decisions are represented explicitly on the `BP_CombatManager` instance: `bDashAwaitingExecute` + `IsDashAwaitingExecute` (BlueprintPure). Targeting (`BeginDashTargeting` → false), confirmed-awaiting-Execute (`SelectDashDestination` → true), cancel (`ClearDashAwaitingExecute` → false), execute (`ExecuteMove` → false), and reset (`ResetEncounter` → false) are all wired. `PlayerMove == 8` is no longer treated as "new Dash".
+- [x] §3 The path renderer has one owner per context. Active targeting and confirmed-awaiting-Execute both draw with elapsed `0` (red); an executed/continuing Dash draws with authoritative `GetDashElapsedMovementInstants(CurrentState)`. `GetDashElapsedMovementInstants` is restored to a pure calculation; `GbDashAwaitingExecute` is removed. `CurrentState` is never manipulated to change colors.
+- [x] §4 `BUH.DashLifecycleRegressionTest` exercises the real pending-decision transitions and renderer path: reaction-pause green → targeting red → confirm STILL RED → UI refreshes STILL RED → cancel restores old green; short (≤270 uu) and long replacement Dashes; Execute starts a new commitment period; Continue preserves the original progress.
+- [x] §5 `tests/blueprint_exports/dash_selection_flow.md` contains the actual MCP graph readback (event order, variable writes, branches, `DrawDashPath` argument sources).
+- [x] §6 Compiled and saved both Blueprints; rebuilt C++ clean. All 9 `BUH.*` automation suites pass via `AutomationTestToolset.RunTests` in a headless MCP editor (9 passed, 0 failed). Graphical PIE visual confirmation remains user-driven (headless `-nullrhi` cannot click UMG buttons or capture path color); the C++ lifecycle test + on-disk graph readback prove the rule and its wiring.
+- [x] `notes.md` §9.28 records the confirmed cause, fix, test, and the command-line trace-server flake workaround.
+- [x] Committed and pushed to `origin/master`.

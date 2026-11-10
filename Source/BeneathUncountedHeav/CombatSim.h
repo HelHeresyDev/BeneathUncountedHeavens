@@ -296,11 +296,6 @@ public:
 	static float GExecDashTargetY;
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static void SetDashAwaitingExecute(bool bAwaiting);
-
-	static bool GbDashAwaitingExecute;
-
-	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetTimelineLengthText(int32 CurrentInstant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
