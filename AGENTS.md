@@ -19,6 +19,7 @@ Prefer acting over prolonged internal deliberation. Inspect the relevant assets,
 - **If still stuck**, ask the user to pass the problem to ChatGPT. Sanitize for SFW if adult.
 - **`pkill` is unreliable** on this system. To free a port, use `lsof -ti:<port> | xargs kill -9`.
 - **Graphical PIE is always fresh.** The user launches a brand-new PIE session for every graphical test (full editor restart + fresh PIE). An "old/stale PIE" or "outdated Blueprint instance still running" is **NEVER** a valid explanation for a bug. If a graphical-PIE test shows wrong behavior, the cause is in the on-disk assets, the compiled C++, or the live graph — not a stale session. Do not offer "stale PIE" as a hypothesis.
+- **Push after confirming a task is complete.** ChatGPT reads the public GitHub repository to give feedback and plan next steps, so once the workflow’s verify step passes and the task is confirmed complete, commit the intended changes and push them to the remote. Do not push work-in-progress, unverified behavior, or secrets; an explicit user instruction such as “no Git commits” still overrides this policy.
 
 ## Verify Before Claiming
 Inspect before you claim. If you can check it cheaply, checking is mandatory.
