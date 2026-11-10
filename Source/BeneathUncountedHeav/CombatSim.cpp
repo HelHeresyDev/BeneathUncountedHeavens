@@ -368,11 +368,6 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 	float PreDodgeDist[2] = { 1e9f, 1e9f };
 	int32 PendingAttackStart[2] = { -1, -1 };
 
-	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] ResolveCombat IN playerDec=%d oppDec=%d P(x=%.1f y=%.1f act=%d ph=%d pi=%d wt=%.1f wty=%.1f) O(x=%.1f y=%.1f act=%d ph=%d pi=%d wt=%.1f wty=%.1f)"),
-		PlayerDecision, OpponentDecision,
-		InState.Fighters[0].X, InState.Fighters[0].Y, InState.Fighters[0].Action, InState.Fighters[0].Phase, InState.Fighters[0].PhaseInstants, InState.Fighters[0].WalkTarget, InState.Fighters[0].WalkTargetY,
-		InState.Fighters[1].X, InState.Fighters[1].Y, InState.Fighters[1].Action, InState.Fighters[1].Phase, InState.Fighters[1].PhaseInstants, InState.Fighters[1].WalkTarget, InState.Fighters[1].WalkTargetY);
-
 	// Commit decisions for ready fighters, and allow a reactable walking fighter
 	// to commit a reaction even while it is already busy.
 	for (int32 i = 0; i < 2; ++i)
@@ -401,9 +396,6 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			F.bCommitted = true;
 		}
 	}
-
-	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] ResolveCombat COMMIT P(act=%d ph=%d) O(act=%d ph=%d)"),
-		S.Fighters[0].Action, S.Fighters[0].Phase, S.Fighters[1].Action, S.Fighters[1].Phase);
 
 	bool bJustActive[2] = { false, false };
 
@@ -522,9 +514,6 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 
 	Result.StoppedReason = 4;
 	Result.FinalState = S;
-	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] ResolveCombat OUT P(x=%.1f y=%.1f act=%d ph=%d) O(x=%.1f y=%.1f act=%d ph=%d)"),
-		S.Fighters[0].X, S.Fighters[0].Y, S.Fighters[0].Action, S.Fighters[0].Phase,
-		S.Fighters[1].X, S.Fighters[1].Y, S.Fighters[1].Action, S.Fighters[1].Phase);
 	return Result;
 }
 
@@ -3027,13 +3016,8 @@ float UBuhCombatSim::GetGroundHitY(APlayerController* PC, FVector2D ScreenPos)
 
 void UBuhCombatSim::LogCombatState(const FBuhCombatState& S, const FString& Context)
 {
-	UE_LOG(LogTemp, Display, TEXT("[WalkTrace] %s: Instant=%d Seed=%d"), *Context, S.Instant, S.Seed);
-	for (int32 i = 0; i < S.Fighters.Num(); ++i)
-	{
-		const FBuhFighterState& F = S.Fighters[i];
-		UE_LOG(LogTemp, Display, TEXT("[WalkTrace]   Fighter[%d]: X=%.1f Y=%.1f Action=%d Phase=%d PhaseInstants=%d Health=%d WalkTarget=%.1f WalkTargetY=%.1f bCommitted=%d PendingAction=%d"),
-			i, F.X, F.Y, F.Action, F.Phase, F.PhaseInstants, F.Health, F.WalkTarget, F.WalkTargetY, F.bCommitted ? 1 : 0, F.PendingAction);
-	}
+	(void)S;
+	(void)Context;
 }
 
 

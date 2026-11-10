@@ -1,150 +1,66 @@
-# Beneath Uncounted Heavens — Fix Proven Blueprint Compiler Warning
+# BUH — Fix competing Dash path renderers
 
-The user supplied two Unreal logs:
-- BeneathUncountedHeav.log
-- BeneathUncountedHeav_2.log
+The new graphical PIE screenshots show that the interrupted Dash path now correctly turns green. However, when the player selects a NEW Dash, its preview stays green instead of showing the usual red commitment section.
 
-Analysis has identified a concrete bug that previous investigations missed.
+The latest graphical log proves the cause.
 
-Both logs contain this WBP_CombatUI compiler warning:
+At 2026-11-09 20:54:08.219, immediately after a new Dash click:
 
-"GetDashElapsedMovementInstants was pruned because its Exec pin is not connected, the connected value is not available and will instead be read as default"
+1. `DrawDashPath` receives `Elapsed=0`, `RemainingLocked=3` and writes `Colors=[R]`. CORRECT.
+2. `GetDashElapsed` then reads the OLD active Dash state: `Action=8 Phase=2 PhaseInstants=7 -> Elapsed=7`.
+3. Another `DrawDashPath` writes `Colors=[G]`, overwriting the new Dash preview. WRONG.
 
-THIS IS THE PRIMARY BUG TO FIX.
+This red-then-green sequence repeats every tick, including while the player moves the targeting cursor.
 
-The elapsed-Instant helper is being pruned by the Blueprint compiler. Its output is replaced with a default value, which plausibly explains why the remaining Dash path is still red at a legal reaction opportunity.
+**Fix the two competing path writers. Do not change the working elapsed-Instant calculation.**
 
-The direct C++ renderer tests passed because they bypassed this broken Blueprint call.
+## Required behavior
 
-## 1. Correct GetDashElapsedMovementInstants
+- A newly selected Dash always starts a fresh preview with 3 locked Instants: red first, green afterward.
+- An interrupted Dash that can be continued shows an entirely green remaining path.
+- Selecting a new Dash during a reaction displays the NEW Dash preview, not the existing Dash continuation preview.
+- Canceling the new Dash restores the previous Dash continuation preview, if applicable.
+- Committing a new Dash starts a genuinely new Dash action with a new commitment period. It must not inherit the previous Dash's elapsed Instants.
+- Continue resumes the existing Dash without restarting its commitment period.
 
-Inspect the actual node in WBP_CombatUI.EventTick.
+## Implementation
 
-Determine whether UBuhCombatSim::GetDashElapsedMovementInstants is declared BlueprintCallable but not BlueprintPure.
+Inspect all calls to `DrawDashPath`, including `WBP_CombatUI.EventTick`, Dash targeting updates, and reaction handling.
 
-If it is impure, its execution input MUST be connected to the proper EventTick Dash execution branch before DrawDashPath is called.
+Give the rendering system one authoritative owner per update.
 
-Two acceptable approaches:
+Suggested priority:
 
-A. Wire the function's execution input/output into the actual Dash rendering branch.
+1. If actively targeting a NEW Dash, render that new path with elapsed=0.
+2. Else, if showing an interruptible existing Dash, render its remaining path using the authoritative elapsed Instants.
+3. Else, render the appropriate other action path or clear it.
 
-B. If the function is genuinely read-only with no side effects, declare it BlueprintPure in C++, rebuild, refresh/reconstruct the Blueprint node, and reconnect its state and result pins.
+Make these branches mutually exclusive. Avoid a second EventTick call overwriting a freshly drawn path. Preserve cursor-responsive target updates.
 
-Choose whichever approach is safest.
+Keep preview state distinct from authoritative combat state until Execute. Do not mutate CurrentState just to change the preview color.
 
-Do not simply connect the value output again. The compiler has explicitly warned that it will not be available while the required execution pin is disconnected.
+Add a regression test covering: interrupted Dash → select new Dash → red/green preview → cancel → original green continuation path → select new Dash → Execute → new commitment begins.
 
-Preserve the existing CurrentState input.
+Verify through logging that exactly one effective path update occurs per UI refresh, and that the new Dash branch cannot be overwritten by the old reaction branch.
 
-## 2. Verify the compiler warning disappears
+## Cursor bug, also confirmed
 
-After the repair:
+The graphical log records:
 
-- Compile WBP_CombatUI.
-- Inspect compiler warnings.
-- Confirm the GetDashElapsedMovementInstants pruning warning is GONE.
-- Save WBP_CombatUI.
-- Reload and compile the saved asset to verify the fix persists.
+`DashDiag CURSOR [DashAfterInput]: bShowMouseCursor=0 ShouldShowMouseCursor=0 InputMode=Game and UI`
 
-A compile that succeeds WITH the pruning warning is NOT a successful repair.
+This appears on Dash clicks, including the second click at 20:54:08.217.
 
-## 3. Verify the actual rendering branch
+Identify why the actual player controller has both cursor flags false immediately after setting input mode. Correct that transition without relying on a per-tick visibility workaround. Verify that clicking Dash and targeting the ground keeps the cursor visible.
 
-At a legitimate Dash reaction pause, verify the actual WBP EventTick execution path:
+## Verification
 
-CurrentState
-→ GetDashElapsedMovementInstants
-→ DrawDashPath
-→ ABUHPathRenderer
+Compile and save affected assets, run existing BUH tests and the new regression test, and verify the actual graphical PIE path if available.
 
-At Action=8, Phase=2, PhaseInstants=3:
+Report the exact competing Blueprint/C++ call sites removed or gated, plus the cursor correction.
 
-- ElapsedMovementInstants must be 3.
-- RemainingLocked must be 0.
-- The remaining path must contain zero red segments.
-- Visible renderer segments must use the green material.
+Do not add Jump, rewrite the combat system, or make unrelated UI changes. No Git commits.
 
-Do not force the combat manager into a test state and call DrawDashPath directly.
+Remove the large yellow diagnostic version banner and excessive per-frame `DashDiag` logging once the behavior is confirmed.
 
-That has already been tested repeatedly and does not exercise the broken node.
-
-If necessary, log from the actual executed Blueprint branch.
-
-## 4. Investigate the cursor separately
-
-The logs do not establish why clicking Dash hides the mouse.
-
-The current LogCursorState diagnostic exists but was not connected to the live Dash button handler.
-
-Instrument the actual button interaction:
-
-- Before BtnDashMove.OnClicked.
-- Immediately after SetInputModeGameAndUI.
-- After BeginDashTargeting.
-- After releasing the mouse button.
-- During the reaction UI state.
-
-Record:
-- bShowMouseCursor.
-- ShouldShowMouseCursor.
-- Current input mode.
-- Mouse capture and focus where accessible.
-
-Compare the actual Walk and Dash button paths.
-
-Fix the first point where the cursor state becomes incorrect.
-
-Do not use a per-tick cursor visibility workaround.
-
-## 5. Other compiler warnings
-
-The logs also report:
-
-"GetFinalInstantIndex was pruned because its Exec pin is not connected"
-
-Inspect this separately and document whether it affects timeline prediction behavior.
-
-There are also invalid matching component warnings for BtnWalk, BtnWalkAway, and BtnWalkToward.
-
-Do not broadly rewrite WBP_CombatUI to clean these up.
-
-Prioritize restoring the correct Dash reaction path and cursor behavior.
-
-## 6. Regression and completion
-
-Preserve:
-- Authoritative Dash movement.
-- The existing three-locked-Instant rule.
-- Continue behavior.
-- Working 2D Walk.
-- Mouse ground targeting.
-- Existing path renderer.
-- CurrentState persistence.
-- Hypothetical predictions.
-
-Run all existing BUH automation suites.
-
-Report:
-1. Why the Blueprint function was pruned.
-2. Whether the fix used executable pin wiring or BlueprintPure.
-3. Confirmation that the specific compiler warning disappeared.
-4. The actual elapsed value passed by WBP during a reaction.
-5. The identified cursor-state failure and its correction.
-6. Which behaviors still require manual graphical PIE verification.
-
-Remove temporary diagnostic code only after the relevant behavior is verified.
-
-No Jump, unrelated refactoring, or Git commits.
-
-**Success criterion: WBP_CombatUI compiles without the elapsed-Instant pruning warning, passes the actual elapsed value of 3 at the reactable Dash pause, displays a green remaining path, and preserves the visible mouse cursor.**
-
-## Status (completed this session)
-
-- §1 GetDashElapsedMovementInstants: confirmed it was `BlueprintCallable` (impure) used as a nested data expression with an unconnected exec pin → pruned to default 0. Fixed with approach B: declared `BlueprintPure` in `CombatSim.h`, rebuilt C++, restarted editor. The existing `GetCurrentState` → helper → `DrawDashPath` arg-4 wiring is preserved (no node surgery needed once pure).
-- §2 Compiler warning: after rebuild + fresh editor load, `WBP_CombatUI` compiles with zero pruning warnings. Asset saved; a fresh editor load recompiles it cleanly (fix persists from disk).
-- §3 Rendering branch: the WBP now passes the real elapsed value (not pruned 0). Verified headlessly by `BUH.DashReactionIntegrationTest` (real resolver → reaction pause → `GetDashElapsedMovementInstants`==PhaseInstants≥3 → fully green remaining path). The live graphical-PIE visual (green remaining path at a reaction pause) still needs the user's PIE, since `-nullrhi` headless PIE does not tick the widget `EventTick`.
-- §4 Cursor: on-disk `OnClicked(BtnDashMove)`/`OnClicked(BtnWalkMove)` already use `SetInputModeGameAndUI(..., bHideCursorDuringCapture=false)`. Added `LogCursorState` instrumentation immediately after `SetInputModeGameAndUI` in both handlers (Dash `K2Node_CallFunction_109`/PC `110`, Walk `K2Node_CallFunction_111`/PC `112`) to capture the cursor state at the first suspect point. The exact failure point must be read from the log after a real graphical-PIE Dash/Walk click; no per-tick workaround used.
-- §5 GetFinalInstantIndex: also `BlueprintCallable`→pruned. It is read-only and feeds the timeline prediction range, so pruning it to 0 would collapse the prediction. Fixed the same way (`BlueprintPure`). Both pruning warnings are now gone.
-- §6 Regression: all 7 `BUH.*` automation suites pass (0 failed) after both the C++ pure-declaration change and the cursor instrumentation. Dash/Walk targeting, the three-locked-Instant rule, Continue, 2D Walk, ground targeting, the path renderer, CurrentState persistence, and hypothetical predictions are preserved.
-
-**Still requires manual graphical PIE verification:** (a) the remaining Dash path turning green at a reaction pause; (b) the mouse cursor staying visible through a Dash click and the reaction UI — read the `LogCursorState`/`DashDiag` log lines to find the first point where the cursor state becomes incorrect, then fix that point.
+**Success: a continued Dash remains green; a newly selected Dash shows its initial red commitment section; neither overwrites the other.**

@@ -9,6 +9,11 @@
 #include "GameFramework/PlayerController.h"
 #include "UObject/UnrealType.h"
 #include "UObject/Field.h"
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphNode.h"
+#include "EdGraph/EdGraphPin.h"
 
 // Renderer-only verification (no combat mechanics). Spawns a live
 // ABUHPathRenderer in the editor world and drives SetPath/SetLine/ClearPath
@@ -564,4 +569,115 @@ bool FBuhPieDashDiagTest::RunTest(const FString& Parameters)
 	}
 	AddInfo(TEXT("Set PIE CombatManager to a Dash reaction pause. The WBP EventTick will draw the Dash path next frame and log DashDiag."));
 	return true;
+}
+
+UEdGraphNode* FindGraphNodeByName(UEdGraph* Graph, const TCHAR* Name)
+{
+	if (!Graph)
+	{
+		return nullptr;
+	}
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (Node && Node->GetFName().ToString() == Name)
+		{
+			return Node;
+		}
+	}
+	return nullptr;
+}
+
+UEdGraphPin* FindGraphPin(UEdGraphNode* Node, const TCHAR* PinName, EEdGraphPinDirection Direction)
+{
+	if (!Node)
+	{
+		return nullptr;
+	}
+	for (UEdGraphPin* Pin : Node->Pins)
+	{
+		if (Pin && Pin->PinName.ToString() == PinName && Pin->Direction == Direction)
+		{
+			return Pin;
+		}
+	}
+	return nullptr;
+}
+
+bool IsPinLinkedToNode(UEdGraphPin* Pin, UEdGraphNode* TargetNode)
+{
+	if (!Pin || !TargetNode)
+	{
+		return false;
+	}
+	for (FEdGraphPinReference Ref : Pin->LinkedTo)
+	{
+		if (Ref.Get() && Ref.Get()->GetOwningNode() == TargetNode)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhDashGateRegressionTest, "BUH.DashGateRegressionTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhDashGateRegressionTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UBlueprint* BP = LoadObject<UBlueprint>(nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI"));
+	Check(TEXT("WBP_CombatUI loaded"), BP != nullptr);
+	if (!BP || !BP->GeneratedClass)
+	{
+		return bAllPassed;
+	}
+
+	UEdGraph* Graph = FindObject<UEdGraph>(BP, TEXT("EventGraph"));
+	Check(TEXT("EventGraph found"), Graph != nullptr);
+	if (!Graph)
+	{
+		return bAllPassed;
+	}
+
+	UEdGraphNode* CompareNode = FindGraphNodeByName(Graph, TEXT("K2Node_MacroInstance_24"));
+	Check(TEXT("CompareInt gate node exists"), CompareNode != nullptr);
+	Check(TEXT("Old IfThenElse_0 gate removed"), FindGraphNodeByName(Graph, TEXT("K2Node_IfThenElse_0")) == nullptr);
+
+	UEdGraphNode* BranchNode = FindGraphNodeByName(Graph, TEXT("K2Node_IfThenElse_23"));
+	Check(TEXT("Execution Branch node exists"), BranchNode != nullptr);
+
+	UEdGraphPin* LessPin = FindGraphPin(CompareNode, TEXT("<"), EGPD_Output);
+	Check(TEXT("CompareInt has < output pin"), LessPin != nullptr);
+	Check(TEXT("< output feeds execution Branch"), IsPinLinkedToNode(LessPin, BranchNode));
+
+	UEdGraphPin* BranchExec = FindGraphPin(BranchNode, TEXT("execute"), EGPD_Input);
+	Check(TEXT("Branch execute pin exists"), BranchExec != nullptr);
+	Check(TEXT("Branch execute comes from CompareInt <"), IsPinLinkedToNode(BranchExec, CompareNode));
+
+	UEdGraphNode* TargetingGet = FindGraphNodeByName(Graph, TEXT("K2Node_VariableGet_117"));
+	Check(TEXT("TargetingAction get node exists"), TargetingGet != nullptr);
+	UEdGraphPin* CompareInput = FindGraphPin(CompareNode, TEXT("Input"), EGPD_Input);
+	Check(TEXT("CompareInt Input comes from TargetingAction"), IsPinLinkedToNode(CompareInput, TargetingGet));
+
+	UEdGraphNode* ZeroLiteral = FindGraphNodeByName(Graph, TEXT("K2Node_CallFunction_230"));
+	Check(TEXT("Zero literal node exists"), ZeroLiteral != nullptr);
+	UEdGraphPin* CompareWith = FindGraphPin(CompareNode, TEXT("CompareWith"), EGPD_Input);
+	Check(TEXT("CompareInt CompareWith comes from zero literal"), IsPinLinkedToNode(CompareWith, ZeroLiteral));
+
+	UEdGraphNode* OldOperator = FindGraphNodeByName(Graph, TEXT("K2Node_PromotableOperator_38"));
+	Check(TEXT("Old Equal operator still exists for targeting branch"), OldOperator != nullptr);
+	UEdGraphPin* OldOut = FindGraphPin(OldOperator, TEXT("ReturnValue"), EGPD_Output);
+	Check(TEXT("Old Equal operator no longer feeds execution gate"), OldOut && !IsPinLinkedToNode(OldOut, BranchNode));
+
+	UEdGraphNode* DashDraw = FindGraphNodeByName(Graph, TEXT("K2Node_CallFunction_272"));
+	Check(TEXT("Execution DrawDashPath node exists"), DashDraw != nullptr);
+	UEdGraphPin* BranchThen = FindGraphPin(BranchNode, TEXT("then"), EGPD_Output);
+	Check(TEXT("Branch then feeds execution DrawDashPath"), IsPinLinkedToNode(BranchThen, DashDraw));
+
+	return bAllPassed;
 }
