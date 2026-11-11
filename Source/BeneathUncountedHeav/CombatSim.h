@@ -27,6 +27,11 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float WalkTargetY = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float DashTarget = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float DashTargetY = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float Height = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float JumpStartX = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float JumpStartY = 0.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float JumpTarget = -9999.f;
+	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") float JumpTargetY = 0.f;
 	UPROPERTY(BlueprintReadWrite, Category = "CombatSim") int32 ReactedThreatFighter = -1;
 };
 
@@ -79,6 +84,8 @@ struct BENEATHUNCOUNTEDHEAV_API FBuhTimelineSnapshot
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float OpponentX = 0.f;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float PlayerY = 0.f;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float OpponentY = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float PlayerHeight = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") float OpponentHeight = 0.f;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 PlayerFacing = 1;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 OpponentFacing = -1;
 	UPROPERTY(BlueprintReadOnly, Category = "CombatSim") int32 PlayerAction = -1;
@@ -134,6 +141,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState WithPlayerDashTargetFromPreview(const FBuhCombatState& InState);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState WithPlayerJumpTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState WithPlayerJumpTargetFromPreview(const FBuhCombatState& InState);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString RunAllTests();
@@ -284,16 +297,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetPreviewDashTarget(float TargetX, float TargetY = 0.f);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetPreviewJumpTarget(float TargetX, float TargetY = 0.f);
+
 	static float GPlayerWalkTarget;
 	static float GPlayerWalkTargetY;
 	static float GPlayerDashTarget;
 	static float GPlayerDashTargetY;
+	static float GPlayerJumpTarget;
+	static float GPlayerJumpTargetY;
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetExecDashTarget(float TargetX, float TargetY = 0.f);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetExecJumpTarget(float TargetX, float TargetY = 0.f);
+
 	static float GExecDashTarget;
 	static float GExecDashTargetY;
+	static float GExecJumpTarget;
+	static float GExecJumpTargetY;
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetTimelineLengthText(int32 CurrentInstant);
@@ -367,8 +390,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void DrawDashPath(APlayerController* PC, FVector Start, FVector End, int32 ElapsedMovementInstants = 0);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void DrawJumpPath(APlayerController* PC, FVector Start, FVector End, int32 ElapsedFlightInstants = 0);
+
 	UFUNCTION(BlueprintPure, Category = "CombatSim")
 	static int32 GetDashElapsedMovementInstants(const FBuhCombatState& S);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 GetJumpElapsedFlightInstants(const FBuhCombatState& S);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void LogCursorState(APlayerController* PC, FString Tag);

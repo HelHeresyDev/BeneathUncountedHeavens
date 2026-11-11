@@ -370,6 +370,26 @@ A proposed move definition contains:
 - **Jumping [DECIDED IN PRINCIPLE]:** takeoff begins with instants that prohibit reactions; later portions of the jump may allow a new action. **[PROPOSED]** Existing trajectory and momentum need not vanish when a legal midair reaction occurs. Exact airborne restrictions and timings are **[OPEN]**.
 - **Dodge, Qinggong, and other movement arts [PROPOSED]:** each receives its own displacement, commitment, recovery, and reaction properties; there is no universal “movement always cancellable” rule.
 
+#### 30.1.1 First-playable Jump prototype (implemented)
+
+The current tactical-duel prototype implements Jump as a real simulated 3D movement action, not merely a curved preview line. The provisional values are:
+
+- Action ID 9, startup 1 Instant, flight 8 Instants, recovery 3 Instants.
+- Maximum horizontal range 480 uu, maximum height 220 uu.
+- The first 3 flight Instants are reaction-locked (red); the remaining 5 flight Instants permit qualifying reactions (green).
+- The flight duration is always 8 Instants, even for short horizontal distances. A short Jump still rises, reaches its apex, descends, and lands.
+- A vertical jump in place (zero horizontal distance) is valid.
+- Jump performs no automatic attack or damage.
+
+The airborne trajectory is a true parabola: horizontal travel along a straight XY segment from takeoff to the selected landing point, with vertical height `4 * MaxHeight * t * (1 - t)` over the 8 flight Instants. The same deterministic calculation drives authoritative motion, previews, and timeline ghosts.
+
+Intentional prototype limitations:
+
+- No aerial invulnerability or new attack hit-detection mechanics; existing damage rules apply.
+- No Qinggong, double jumps, stamina, wall jumps, or aerial attacks.
+- Grounded fighter separation behavior is preserved; airborne collision with terrain or other fighters is not modeled.
+- The Jump path renderer reuses `ABUHPathRenderer` and colors segments by flight progress and reaction eligibility, not by rendered length.
+
 **[DECIDED — ONE ACTION AT A TIME]** A reaction **replaces, cancels, or legally transitions out of** the currently active action; it is not a free concurrent attack or movement slot. A decision pause does not rewind movement, remove accrued recovery, grant automatic defense, or guarantee the chosen response becomes effective before the threat lands. What remains of momentum or recovery after cancellation is determined by that ability's rules **[OPEN]**.
 
 **[DECIDED — OBSERVABILITY]** A reaction opportunity must arise from something the fighter can actually perceive, such as the opponent visibly preparing an attack, an incoming projectile, or a detectable Qi disturbance. The player must not be paused or shown secret information merely because enemy AI privately committed an attack. Perception, distance, concealment, technique recognition, and cultivation may alter when and how threats become observable; exact detection mechanics are **[PROPOSED / OPEN]**.

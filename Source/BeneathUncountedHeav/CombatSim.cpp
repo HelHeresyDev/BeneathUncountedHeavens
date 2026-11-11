@@ -34,8 +34,8 @@ namespace BuhCombat
 		int32 ReactionDelay;
 	};
 
-	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away, 6 Walk (destination), 7 Continue (dummy), 8 Dash
-	static const FMoveData MoveData[9] = {
+	// index = move id: 0 Quick, 1 Heavy, 2 Guard, 3 Dodge, 4 Walk Toward, 5 Walk Away, 6 Walk (destination), 7 Continue (dummy), 8 Dash, 9 Jump
+	static const FMoveData MoveData[10] = {
 		{ 6, 1, 8, 10, 300, 0, 9999 },
 		{ 13, 1, 8, 24, 400, 0, 9999 },
 		{ 0, 10, 0, 0, 9999, 0, 9999 },
@@ -45,12 +45,16 @@ namespace BuhCombat
 		{ 0, 9999, 0, 0, 9999, 30, 0 },
 		{ 0, 0, 0, 0, 9999, 0, 9999 },
 		{ 1, 8, 3, 0, 9999, 90, 9999 },
+		{ 1, 8, 3, 0, 9999, 0, 9999 },
 	};
 
 	static const int32 Approach = 30;
 	static const int32 MinSeparation = 100;
 	static const int32 AI_MOVE = 1;
 	static const int32 DodgeDistance = 300;
+	static const int32 JumpMaxRange = 480;
+	static const int32 JumpMaxHeight = 220;
+	static const int32 JumpFlightInstants = 8;
 
 	static const TCHAR* MoveName(int32 A)
 	{
@@ -65,6 +69,7 @@ namespace BuhCombat
 		case 6: return TEXT("Walk");
 		case 7: return TEXT("Continue");
 		case 8: return TEXT("Dash");
+		case 9: return TEXT("Jump");
 		default: return TEXT("Idle");
 		}
 	}
@@ -134,6 +139,23 @@ FBuhCombatState UBuhCombatSim::WithPlayerDashTargetFromPreview(const FBuhCombatS
 	return InState;
 }
 
+FBuhCombatState UBuhCombatSim::WithPlayerJumpTarget(const FBuhCombatState& InState, float TargetX, float TargetY)
+{
+	FBuhCombatState S = InState;
+	S.Fighters[0].JumpTarget = TargetX;
+	S.Fighters[0].JumpTargetY = TargetY;
+	return S;
+}
+
+FBuhCombatState UBuhCombatSim::WithPlayerJumpTargetFromPreview(const FBuhCombatState& InState)
+{
+	if (GPlayerJumpTarget >= -9998.f)
+	{
+		return WithPlayerJumpTarget(InState, GPlayerJumpTarget, GPlayerJumpTargetY);
+	}
+	return InState;
+}
+
 struct FBuhOutcome { int32 Fighter; int32 Type; int32 Damage; };
 
 static void EnforceMinSeparation(FBuhCombatState& S, const bool bMoved[2])
@@ -180,10 +202,19 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 	for (int32 i = 0; i < 2; ++i)
 	{
 		FBuhFighterState& F = S.Fighters[i];
-		if (F.Phase == 2 && BuhCombat::MoveData[F.Action].Movement > 0)
+		if (F.Phase == 2 && (BuhCombat::MoveData[F.Action].Movement > 0 || F.Action == 9))
 		{
 			if (PreDodgeDist[i] > 1e8f) PreDodgeDist[i] = FMath::Sqrt(FMath::Square(S.Fighters[1 - i].X - F.X) + FMath::Square(S.Fighters[1 - i].Y - F.Y));
-			if (F.Action == 6)
+			if (F.Action == 9)
+			{
+				const int32 Completed = F.PhaseInstants + 1;
+				const float T = static_cast<float>(Completed) / static_cast<float>(BuhCombat::JumpFlightInstants);
+				F.X = F.JumpStartX + T * (F.JumpTarget - F.JumpStartX);
+				F.Y = F.JumpStartY + T * (F.JumpTargetY - F.JumpStartY);
+				F.Height = 4.f * static_cast<float>(BuhCombat::JumpMaxHeight) * T * (1.f - T);
+				bMoved[i] = true;
+			}
+			else if (F.Action == 6)
 			{
 				const float RemX = F.WalkTarget - F.X;
 				const float RemY = F.WalkTargetY - F.Y;
@@ -277,6 +308,7 @@ static TArray<FBuhOutcome> StepCombatInstant(FBuhCombatState& S, float PreDodgeD
 			{
 				F.Phase = 0;
 				F.PhaseInstants = 0;
+				F.Height = 0.f;
 			}
 		}
 		if (PrevPhase == 0 && F.Phase == 1 && (F.Action == 0 || F.Action == 1))
@@ -324,9 +356,38 @@ static bool IsReactableDash(const FBuhFighterState& F)
 	return F.Action == 8 && F.Phase == 2 && F.PhaseInstants >= 3;
 }
 
+static bool IsReactableJump(const FBuhFighterState& F)
+{
+	return F.Action == 9 && F.Phase == 2 && F.PhaseInstants >= 3;
+}
+
 static bool IsReactableMovement(const FBuhFighterState& F)
 {
-	return IsReactableWalk(F) || IsReactableDash(F);
+	return IsReactableWalk(F) || IsReactableDash(F) || IsReactableJump(F);
+}
+
+static void PrepareJumpCommit(FBuhFighterState& F)
+{
+	F.JumpStartX = F.X;
+	F.JumpStartY = F.Y;
+	if (F.JumpTarget < -9998.f)
+	{
+		F.JumpTarget = F.X;
+		F.JumpTargetY = F.Y;
+	}
+	else
+	{
+		const float Dx = F.JumpTarget - F.X;
+		const float Dy = F.JumpTargetY - F.Y;
+		const float Dist = FMath::Sqrt(Dx * Dx + Dy * Dy);
+		if (Dist > static_cast<float>(BuhCombat::JumpMaxRange))
+		{
+			const float Scale = static_cast<float>(BuhCombat::JumpMaxRange) / Dist;
+			F.JumpTarget = F.X + Dx * Scale;
+			F.JumpTargetY = F.Y + Dy * Scale;
+		}
+	}
+	F.Height = 0.f;
 }
 
 static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 AttackStart[2], FBuhCombatEvent& OutEvent)
@@ -346,7 +407,7 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 		OutEvent.Detail = FString::Printf(TEXT("F%d sees F%d begin %s; reaction opportunity"),
 			Def.Team, S.Fighters[Threat].Team, BuhCombat::MoveName(S.Fighters[Threat].Action));
 		// Temporary diagnostic (graphical-PIE investigation): confirm Continue legality at the pause.
-		const bool bContinueLegal = (Def.Action == 4 || Def.Action == 5 || Def.Action == 6 || Def.Action == 8);
+		const bool bContinueLegal = (Def.Action == 4 || Def.Action == 5 || Def.Action == 6 || Def.Action == 8 || Def.Action == 9);
 		UE_LOG(LogTemp, Warning, TEXT("DashDiag REACTION PAUSE: defender F%d Action=%d Phase=%d PhaseInstants=%d ContinueLegal=%d"),
 			Def.Team, Def.Action, Def.Phase, Def.PhaseInstants, bContinueLegal ? 1 : 0);
 		return true;
@@ -373,7 +434,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 9) continue;
+		if (Decision < 0 || Decision >= 10) continue;
 		FBuhFighterState& F = S.Fighters[i];
 		if (Decision == 7)
 		{
@@ -386,6 +447,8 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			F.Phase = 1;
 			F.PhaseInstants = 0;
 			F.bCommitted = true;
+			F.Height = 0.f;
+			if (Decision == 9) PrepareJumpCommit(F);
 			if (Decision == 0 || Decision == 1) PendingAttackStart[i] = i;
 		}
 		else if (IsReactableMovement(F))
@@ -394,6 +457,8 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			F.Phase = 1;
 			F.PhaseInstants = 0;
 			F.bCommitted = true;
+			F.Height = 0.f;
+			if (Decision == 9) PrepareJumpCommit(F);
 		}
 	}
 
@@ -439,8 +504,9 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 			{
 				Def.Health -= O.Damage;
 				E.Detail = FString::Printf(TEXT("F%d %s hits F%d for %d"), Atk.Team, BuhCombat::MoveName(Atk.Action), Def.Team, O.Damage);
-				Def.Phase = 3;
-				Def.PhaseInstants = 0;
+			Def.Phase = 3;
+			Def.PhaseInstants = 0;
+			Def.Height = 0.f;
 				if (Def.Health <= 0) bKO = true;
 			}
 			else if (O.Type == 1)
@@ -538,6 +604,11 @@ namespace BuhCombatTest
 			if (FMath::Abs(a.WalkTargetY - b.WalkTargetY) > 0.01f) return false;
 			if (FMath::Abs(a.DashTarget - b.DashTarget) > 0.01f) return false;
 			if (FMath::Abs(a.DashTargetY - b.DashTargetY) > 0.01f) return false;
+			if (FMath::Abs(a.Height - b.Height) > 0.01f) return false;
+			if (FMath::Abs(a.JumpStartX - b.JumpStartX) > 0.01f) return false;
+			if (FMath::Abs(a.JumpStartY - b.JumpStartY) > 0.01f) return false;
+			if (FMath::Abs(a.JumpTarget - b.JumpTarget) > 0.01f) return false;
+			if (FMath::Abs(a.JumpTargetY - b.JumpTargetY) > 0.01f) return false;
 		}
 		return true;
 	}
@@ -1798,7 +1869,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 	for (int32 i = 0; i < 2; ++i)
 	{
 		const int32 Decision = (i == 0) ? PlayerDecision : OpponentDecision;
-		if (Decision < 0 || Decision >= 9) continue;
+		if (Decision < 0 || Decision >= 10) continue;
 		FBuhFighterState& F = S.Fighters[i];
 		if (Decision == 7)
 		{
@@ -1811,6 +1882,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			F.Phase = 1;
 			F.PhaseInstants = 0;
 			F.bCommitted = true;
+			F.Height = 0.f;
+			if (Decision == 9) PrepareJumpCommit(F);
 			if (Decision == 0 || Decision == 1) PendingAttackStart[i] = i;
 		}
 		else if (IsReactableMovement(F))
@@ -1819,6 +1892,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			F.Phase = 1;
 			F.PhaseInstants = 0;
 			F.bCommitted = true;
+			F.Height = 0.f;
+			if (Decision == 9) PrepareJumpCommit(F);
 		}
 	}
 
@@ -1880,8 +1955,9 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			{
 				Def.Health -= O.Damage;
 				E.Detail = FString::Printf(TEXT("F%d %s hits F%d for %d"), Atk.Team, BuhCombat::MoveName(Atk.Action), Def.Team, O.Damage);
-				Def.Phase = 3;
-				Def.PhaseInstants = 0;
+			Def.Phase = 3;
+			Def.PhaseInstants = 0;
+			Def.Height = 0.f;
 				if (Def.Health <= 0) bKO = true;
 			}
 			else if (O.Type == 1)
@@ -1936,6 +2012,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		Snap.OpponentX = S.Fighters[1].X;
 		Snap.PlayerY = S.Fighters[0].Y;
 		Snap.OpponentY = S.Fighters[1].Y;
+		Snap.PlayerHeight = S.Fighters[0].Height;
+		Snap.OpponentHeight = S.Fighters[1].Height;
 		Snap.PlayerFacing = S.Fighters[0].Facing;
 		Snap.OpponentFacing = S.Fighters[1].Facing;
 		Snap.PlayerAction = S.Fighters[0].Action;
@@ -2160,6 +2238,8 @@ void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
 	const float OpponentX = Snap.OpponentX;
 	const float PlayerY = Snap.PlayerY;
 	const float OpponentY = Snap.OpponentY;
+	const float PlayerHeight = Snap.PlayerHeight;
+	const float OpponentHeight = Snap.OpponentHeight;
 	const float PlayerYaw = FMath::RadiansToDegrees(FMath::Atan2(OpponentY - PlayerY, OpponentX - PlayerX));
 	const float OpponentYaw = FMath::RadiansToDegrees(FMath::Atan2(PlayerY - OpponentY, PlayerX - OpponentX));
 	for (TActorIterator<AActor> It(World); It; ++It)
@@ -2168,12 +2248,12 @@ void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
 		if (!Actor) continue;
 		if (Actor->Tags.Contains(TEXT("GhostPlayer")))
 		{
-			Actor->SetActorLocation(FVector(PlayerX, PlayerY, 90.0f));
+			Actor->SetActorLocation(FVector(PlayerX, PlayerY, 90.0f + PlayerHeight));
 			Actor->SetActorRotation(FRotator(0.0f, PlayerYaw, 0.0f));
 		}
 		else if (Actor->Tags.Contains(TEXT("GhostOpponent")))
 		{
-			Actor->SetActorLocation(FVector(OpponentX, OpponentY, 90.0f));
+			Actor->SetActorLocation(FVector(OpponentX, OpponentY, 90.0f + OpponentHeight));
 			Actor->SetActorRotation(FRotator(0.0f, OpponentYaw, 0.0f));
 		}
 	}
@@ -2209,9 +2289,10 @@ FString UBuhCombatSim::GetMoveNameText(int32 Move)
 
 FString UBuhCombatSim::GetMoveDurationText(int32 Move)
 {
-	if (Move < 0 || Move >= 9) return TEXT("Unknown");
+	if (Move < 0 || Move >= 10) return TEXT("Unknown");
 	if (Move == 6) return TEXT("Walks to destination marker");
 	if (Move == 8) return TEXT("Dashes to destination (90 uu/Instant, max 720 uu)");
+	if (Move == 9) return TEXT("Jumps to destination (max 480 uu, max 220 uu height)");
 	const BuhCombat::FMoveData& M = BuhCombat::MoveData[Move];
 	return FString::Printf(TEXT("Prep %d / Active %d / Recovery %d"), M.Startup, M.Active, M.Recovery);
 }
@@ -2220,6 +2301,8 @@ float UBuhCombatSim::GPlayerWalkTarget = -9999.f;
 float UBuhCombatSim::GPlayerWalkTargetY = 0.f;
 float UBuhCombatSim::GPlayerDashTarget = -9999.f;
 float UBuhCombatSim::GPlayerDashTargetY = 0.f;
+float UBuhCombatSim::GPlayerJumpTarget = -9999.f;
+float UBuhCombatSim::GPlayerJumpTargetY = 0.f;
 
 void UBuhCombatSim::SetPreviewWalkTarget(float TargetX, float TargetY)
 {
@@ -2233,13 +2316,27 @@ void UBuhCombatSim::SetPreviewDashTarget(float TargetX, float TargetY)
 	GPlayerDashTargetY = TargetY;
 }
 
+void UBuhCombatSim::SetPreviewJumpTarget(float TargetX, float TargetY)
+{
+	GPlayerJumpTarget = TargetX;
+	GPlayerJumpTargetY = TargetY;
+}
+
 float UBuhCombatSim::GExecDashTarget = -9999.f;
 float UBuhCombatSim::GExecDashTargetY = 0.f;
+float UBuhCombatSim::GExecJumpTarget = -9999.f;
+float UBuhCombatSim::GExecJumpTargetY = 0.f;
 
 void UBuhCombatSim::SetExecDashTarget(float TargetX, float TargetY)
 {
 	GExecDashTarget = TargetX;
 	GExecDashTargetY = TargetY;
+}
+
+void UBuhCombatSim::SetExecJumpTarget(float TargetX, float TargetY)
+{
+	GExecJumpTarget = TargetX;
+	GExecJumpTargetY = TargetY;
 }
 
 FString UBuhCombatSim::GetBranchSummaryText(int32 PlayerMove, int32 OpponentMove, int32 CurrentInstant)
@@ -2693,6 +2790,10 @@ FBuhCombatResult UBuhCombatSim::ExecuteMoveWithVars(
 	if (State.Fighters.Num() >= 2)
 	{
 		State = WithPlayerWalkTarget(State, WalkTarget, WalkTargetY);
+		if (PlayerMove == 9 && GExecJumpTarget >= -9998.f)
+		{
+			State = WithPlayerJumpTarget(State, GExecJumpTarget, GExecJumpTargetY);
+		}
 	}
 	return ResolveCombat(State, PlayerMove, OpponentMove, 200);
 }
@@ -2954,6 +3055,69 @@ int32 UBuhCombatSim::GetDashElapsedMovementInstants(const FBuhCombatState& S)
 	if (S.Fighters.Num() < 1) return 0;
 	const FBuhFighterState& F = S.Fighters[0];
 	return (F.Action == 8 && F.Phase == 2) ? F.PhaseInstants : 0;
+}
+
+int32 UBuhCombatSim::GetJumpElapsedFlightInstants(const FBuhCombatState& S)
+{
+	if (S.Fighters.Num() < 1) return 0;
+	const FBuhFighterState& F = S.Fighters[0];
+	return (F.Action == 9 && F.Phase == 2) ? F.PhaseInstants : 0;
+}
+
+void UBuhCombatSim::DrawJumpPath(APlayerController* PC, FVector Start, FVector End, int32 ElapsedFlightInstants)
+{
+	UWorld* World = PC ? PC->GetWorld() : nullptr;
+	if (!World) return;
+	const int32 Flight = BuhCombat::JumpFlightInstants;
+	ElapsedFlightInstants = FMath::Clamp(ElapsedFlightInstants, 0, Flight);
+	const int32 Remaining = Flight - ElapsedFlightInstants;
+	if (Remaining <= 0)
+	{
+		for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+		{
+			ABUHPathRenderer* Renderer = *It;
+			if (Renderer)
+			{
+				Renderer->ClearPath();
+				return;
+			}
+		}
+		return;
+	}
+	const float GroundZ = 90.f;
+	FVector StartGround = Start;
+	StartGround.Z = GroundZ;
+	FVector EndGround = End;
+	EndGround.Z = GroundZ;
+	TArray<FVector> Points;
+	for (int32 i = ElapsedFlightInstants; i <= Flight; ++i)
+	{
+		const float T = static_cast<float>(i) / static_cast<float>(Flight);
+		FVector P = FMath::Lerp(StartGround, EndGround, T);
+		P.Z = GroundZ + 4.f * static_cast<float>(BuhCombat::JumpMaxHeight) * T * (1.f - T);
+		Points.Add(P);
+	}
+	TArray<FBuhPathSegment> Segments;
+	for (int32 Seg = 0; Seg < Remaining; ++Seg)
+	{
+		const int32 Instant = ElapsedFlightInstants + Seg;
+		const EPathSegmentColor Color = (Instant < 3) ? EPathSegmentColor::Red : EPathSegmentColor::Green;
+		Segments.Add(FBuhPathSegment{ Seg, Seg + 1, Color });
+	}
+	for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+	{
+		ABUHPathRenderer* Renderer = *It;
+		if (Renderer)
+		{
+			Renderer->SetPath(Points, Segments);
+			return;
+		}
+	}
+	const FVector Current = Points[0];
+	const int32 RemainingLocked = FMath::Max(0, 3 - ElapsedFlightInstants);
+	const bool bAllRed = (RemainingLocked >= Remaining);
+	const FColor LineColor = bAllRed ? FColor::Red : FColor::Green;
+	DrawDebugLine(World, Current, Points.Last(), LineColor, false, 5.f, 0, 10.f);
 }
 
 void UBuhCombatSim::LogCursorState(APlayerController* PC, FString Tag)

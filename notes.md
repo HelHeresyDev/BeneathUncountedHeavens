@@ -710,3 +710,30 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Environment gotcha (test harness, not game code):** Command-line `UnrealEditor-Cmd -ExecCmds=Automation RunTests ...;Quit` runs are flaky on this machine. The forked `UnrealTraceServer` sometimes terminates with "no sponsors or connections active" and sends `signal 15` to the editor before the test starts, killing the run with no `Test Started` line. `-trace=default~`, `-trace=`, and `-NoTrace` did not stop the fork. The reliable path is to launch a headless MCP editor (`-ModelContextProtocolStartServer`) and run the same tests through `AutomationTestToolset.RunTests`, which does not fork the trace server. Also: a second headless editor left running from an MCP session can interfere with a separate command-line automation run; kill it first (`kill -9 $(cat /tmp/mcp_editor_pid.txt)`).
 
 **Lesson:** (1) When a confirmed-but-unexecuted decision must render differently from an executed one, record the pending decision on the **owning actor instance** (`BP_CombatManager.bDashAwaitingExecute`) and read it through a `BlueprintPure` accessor — do not push UI selection state into a global resolver flag, and do not treat `PlayerMove == 8` as "new Dash" because an existing Dash also has action 8. (2) The renderer's elapsed argument must be `SelectInt(0, authoritative_elapsed, is_awaiting_execute)` at the after-confirm call site: `0` while awaiting, authoritative value otherwise. (3) A lifecycle regression test that cannot drive Blueprint variables headless should assert the on-disk asset exposes the flag/accessor and then mirror the exact UI rule in C++ against the real renderer — that still catches the bug without relying on unreliable `ProcessEvent` variable writes. (4) For flaky command-line automation on this box, run tests through the MCP `AutomationTestToolset` instead of `-ExecCmds`.
+
+### 9.29 Jump implemented as the third playable movement action (RESOLVED)
+
+**Problem:** The tactical-duel prototype had Walk and Dash as playable movement actions, but Jump was only a curved preview line with no real simulation, reaction window, committed parabola, or UI button.
+
+**Cause:** `FBuhFighterState` had no Jump fields, `UBuhCombatSim` had no Jump movement/reaction/commit logic, `BP_CombatManager` had no Jump lifecycle functions, and `WBP_CombatUI` had no Jump button or targeting branch.
+
+**Fix (C++):**
+- Extended `FBuhFighterState` with `JumpTarget`, `JumpTargetY`, `JumpHeight`, and Jump snapshot fields without breaking serialization.
+- Added Jump `MoveData[9] = { 1, 8, 3, 0, 9999, 0, 9999 }` (startup 1, flight 8, recovery 3).
+- Added `PrepareJumpCommit`, Jump movement in `StepCombatInstant`, Jump commit in `ResolveCombat` and `GenerateTimeline`, snapshot height fills, and `MoveGhostsToInstant` using `Z = 90.0f + Height`.
+- Added `DrawJumpPath` and `GetJumpElapsedFlightInstants` (declared `BlueprintPure`).
+- Added `BUH.JumpSimulationTests` and `BUH.JumpPathColorTests` to `PathRendererAutomation.cpp`.
+
+**Fix (Blueprint):**
+- Added `JumpAwaitingExecute` bool, `BeginJumpTargeting`, `SelectJumpDestination`, `ClearJumpAwaitingExecute`, and `IsJumpAwaitingExecute` to `BP_CombatManager`.
+- Added `BtnJumpMove` (Button) and `TxtJumpMove` (TextBlock) to `WBP_CombatUI`'s Move submenu via `UMGToolSet.AddWidget`, bound `OnClicked(BtnJumpMove)` via `UMGToolSet.BindToEventProperty`, and set text/color via `ObjectTools.set_properties`.
+- Rewrote `WBP_CombatUI:EventTick` to add the Jump targeting preview (`TargetingAction == 9` → `DrawJumpPath`), confirmation (`SelectJumpDestination`), cancel (`ClearJumpAwaitingExecute`), and confirmed-Jump execution branch (`PlayerMove == 9` → `DrawJumpPath` with `SelectInt(0, GetJumpElapsedFlightInstants, IsJumpAwaitingExecute)`).
+- Updated `DashGateRegressionTest` to check the new `IsDashAwaitingExecute` gate structure instead of the old CompareInt node names, because the full EventTick rewrite replaced that structure.
+
+**Verified:**
+- C++ rebuilt clean (`RunUBT.sh -project="..." BeneathUncountedHeavEditor Development Linux`, Result: Succeeded).
+- All 12 `BUH.*` automation suites pass, including `BUH.JumpSimulationTests`, `BUH.JumpPathColorTests`, and the updated `BUH.DashGateRegressionTest`.
+- `BP_CombatManager` and `WBP_CombatUI` compiled clean and saved.
+- Blueprint export: `tests/blueprint_exports/jump_selection_flow.md` contains the actual `read_graph_dsl` readback of every Jump graph and the EventTick Jump branches.
+
+**Lesson:** (1) A movement action that is only a preview line is not a real action — it needs authoritative simulation, reaction legality, commit/clamp logic, snapshots, ghosts, and a path renderer. (2) The same `SelectInt(0, authoritative_elapsed, is_awaiting_execute)` rule that fixed Dash also applies to Jump: the confirmed-but-unexecuted path draws fully red, and the executed path shows the real red/green split. (3) When a full EventTick rewrite replaces old node names, regression tests that check those names must be updated to check the new structure, not deleted. (4) `write_graph_dsl` can still fail on `StateMachine|GetState` / `CustomizableObjectInstance|GetCurrentState` nodes in an event graph; the reliable path is targeted node-level edits or a full rewrite that avoids those type IDs.
