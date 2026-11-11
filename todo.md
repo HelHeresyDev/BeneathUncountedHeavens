@@ -335,4 +335,4 @@ No Qinggong, double jumps, stamina, wall jumping, aerial attacks, or broader com
 - **Automated tests:** Complete. `BUH.JumpSimulationTests` and `BUH.JumpPathColorTests` added. All 12 `BUH.*` suites pass, including the updated `BUH.DashGateRegressionTest`.
 - **Documentation:** Complete. `designbible.md` §30.1.1 records the Jump rules and prototype limitations. `notes.md` §9.29 records the technical findings. `tests/blueprint_exports/jump_selection_flow.md` exports the actual Blueprint readback.
 - **Graphical PIE verification:** Pending. Headless `-nullrhi` PIE cannot click UMG buttons or capture the 3D arc. The user must perform the §11 graphical checks in a fresh graphical PIE session.
-- **Commit and push:** Pending. Will commit and push to `origin/master` under `HelHeresyDev/BeneathUncountedHeavens` after the above is confirmed.
+- **Commit and push:** Complete. Committed as `22b9baa` and pushed to `origin/master` under `HelHeresyDev/BeneathUncountedHeavens`.
