@@ -393,6 +393,47 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void DrawJumpPath(APlayerController* PC, FVector Start, FVector End, int32 ElapsedFlightInstants = 0);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void DrawJumpPathFromState(APlayerController* PC, const FBuhCombatState& S, int32 ElapsedFlightInstants = 0);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetFinalPlayerHeight(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetFinalOpponentHeight(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetFinalPlayerWorldZ(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetFinalOpponentWorldZ(const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetSnapshotPlayerHeight(int32 Index);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetSnapshotOpponentHeight(int32 Index);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void BeginJumpPlayback(APlayerController* PC, AActor* PlayerFighter, AActor* OpponentFighter, const FBuhCombatState& PreState, int32 PlayerDecision, int32 OpponentDecision, const FBuhCombatResult& Result);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static bool TickJumpPlayback(float DeltaSeconds);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void StopJumpPlayback();
+
+	static TArray<FBuhTimelineSnapshot> GJumpPlaybackTimeline;
+	static TWeakObjectPtr<AActor> GJumpPlaybackPlayer;
+	static TWeakObjectPtr<AActor> GJumpPlaybackOpponent;
+	static TWeakObjectPtr<APlayerController> GJumpPlaybackPC;
+	static FBuhCombatState GJumpPlaybackPreState;
+	static int32 GJumpPlaybackPlayerDecision;
+	static int32 GJumpPlaybackOpponentDecision;
+	static int32 GJumpPlaybackIndex;
+	static float GJumpPlaybackAccumulator;
+	static bool GJumpPlaybackActive;
+
 	UFUNCTION(BlueprintPure, Category = "CombatSim")
 	static int32 GetDashElapsedMovementInstants(const FBuhCombatState& S);
 

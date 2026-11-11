@@ -198,8 +198,8 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 - C++ compilation is done via UBT (`BeneathUncountedHeavEditor` Linux Development). The module is `BeneathUncountedHeav`.
 - LSP false positives persist on automation/combat source files; do not treat them as real errors.
 - The running headless editor does NOT pick up new C++ code until the editor is restarted. After a UBT build, kill and relaunch the headless editor.
-- `CombatSim.h/.cpp` implements the deterministic resolver. `CombatSimAutomation.cpp` contains `FBuhCombatSimTest`, `FBuhCombatFlowTest`, `FBuhWalkPreviewTest`. `CombatManagerIntegrationAutomation.cpp` contains `FBuhCombatManagerIntegrationTest`.
-- All four automation tests pass: `BUH.WalkPreviewTests`, `BUH.CombatSimTests`, `BUH.CombatFlowTests`, `BUH.CombatManagerIntegrationTests`.
+- `CombatSim.h/.cpp` implements the deterministic resolver and the Jump playback system. `CombatSimAutomation.cpp` contains `FBuhCombatSimTest`, `FBuhCombatFlowTest`, and `FBuhWalkPreviewTest`. `CombatManagerIntegrationAutomation.cpp` contains `FBuhCombatManagerIntegrationTest`. `PathRendererAutomation.cpp` contains `BUH.PathRendererTests`, `BUH.DashPathColorTests`, `BUH.DashReactionIntegrationTest`, `BUH.DashGateRegressionTest`, `BUH.DashLifecycleRegressionTest`, `BUH.JumpSimulationTests`, `BUH.JumpPathColorTests`, `BUH.JumpPlaybackIntegrationTests`, and `BUH.PieDashDiagTest`.
+- All 13 `BUH.*` automation suites pass.
 
 ---
 
@@ -759,6 +759,38 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 - PIE log inspection shows no errors and the WBP constructs successfully.
 - Corrected Blueprint graphs exported to `tests/blueprint_exports/jump_selection_flow.md`.
 
-**Still requires manual graphical PIE confirmation:** the fighter actually traveling along the parabola to the chosen landing point, and the mouse cursor remaining visible during Jump targeting. Headless `-nullrhi` PIE cannot click UMG buttons or capture the path.
+**Status (updated by §9.31):** the destination-execution half is now proven by `BUH.JumpPlaybackIntegrationTests`, which drives the real `BeginJumpPlayback`/`TickJumpPlayback` path and confirms the fighter travels to the chosen landing point. The mouse-cursor visibility during Jump targeting still requires manual graphical PIE confirmation because headless `-nullrhi` PIE cannot click UMG buttons or capture the cursor.
 
 **Lesson:** (1) A `BlueprintCallable` UFUNCTION that only calls `ResolveCombat` is not a complete execution helper — if the Blueprint needs to pass live variables (walk target, jump target), it must call the `ExecuteMoveWithVars` overload that reads them. (2) Every targeting button handler that switches to GameAndUI input mode must explicitly call `SetShowMouseCursor true`; the input-mode call alone does not guarantee the cursor is visible. (3) Stale exec targets must be cleared after every execution so a later Walk/Dash/Jump does not accidentally reuse an old destination.
+
+### 9.31 Airborne Jump movement and interrupted-Jump path persistence (RESOLVED)
+
+**Problem:** Jump execution moved the fighter horizontally to the landing point but never changed its Z coordinate, so the fighter did not visibly travel through the air. An interrupted Jump also lost its committed parabola: the path disappeared at the reaction pause and Continue did not restore it. The old integration test for an interrupted Jump used a fresh grounded state, so it never actually exercised an airborne reaction pause.
+
+**Cause:**
+- `ExecuteMove` teleported the player actor directly to `FinalState.PlayerX` / `FinalState.PlayerY` at `Z=90` for every action, including Jump, and used the raw `FinalState.OpponentX` for the opponent instead of the authoritative world-Z helper.
+- `GenerateTimeline` built reaction-pause and KO snapshots without `PlayerHeight` / `OpponentHeight`, so any consumer of a snapshot read height `0` even when the fighter was airborne.
+- `TickJumpPlayback` called `DrawJumpPathFromState` on the stored pre-execution state. For a Jump that state still has `Action=-1`, so the path drawer immediately cleared the path instead of reconstructing the parabola.
+- The interrupted-Jump regression test started from a fresh grounded state and expected a reaction pause, but `CheckReactionPause` only triggers when an attack starts and the defender is already reactable. A fresh Jump is not reactable until `PhaseInstants>=3`, while the opponent Heavy Strike starts at instant 0, so no pause occurs.
+
+**Fix (C++):**
+- `GenerateTimeline` now fills `PlayerHeight` and `OpponentHeight` on reaction-pause and KO snapshots.
+- `TickJumpPlayback` builds a corrected `DrawState` copy of the pre-execution state, overriding the player's `Action=9`, `Phase=2`, `PhaseInstants`, `X`, `Y`, and `Height`, and passes that to `DrawJumpPathFromState`. The parabola is reconstructed from the original `JumpStartX/Y` and `JumpTarget/JumpTargetY`, so the path persists through a reaction pause and is regenerated on Continue.
+- `BUH.JumpPlaybackIntegrationTests` now drives an airborne interrupted-Jump prestate: `MakeStateWithPhases(-500, 500, 100, 100, 0, 2, 3, 0, 0)` with `Action=9`, `JumpStartX=-500`, `JumpTarget=-20`, `X=-320`, `Height=206.25`, then `ResolveCombat(InterruptPre, 7, 1, 200)` and `BeginJumpPlayback(..., 7, 1, ...)`. It asserts the fighter is visibly airborne at the reaction pause, that the path is reconstructed after the pause, and that Continue resumes the parabola.
+- Test actors now have a registered `USceneComponent` root so `SetActorLocation` / `GetActorLocation` work.
+
+**Fix (Blueprint):**
+- Added a `PreExecutionState` struct variable of type `BuhCombatState` to `BP_CombatManager`.
+- Rewrote `ExecuteMove` to bind `PreExecutionState`, apply `WithPlayerJumpTargetFromPreview` when `PlayerMove == 9`, call `ExecuteMoveWithVars` with `PreExecutionState`, skip the player `SetActorLocation` for Jump/airborne states, use `GetFinalOpponentWorldZ` for the opponent, and call `BeginJumpPlayback` when the player committed a Jump.
+- Wired `WBP_CombatUI.EventTick` to call `TickJumpPlayback` with the tick delta and branch on its result.
+
+**Verified:**
+- C++ rebuilt clean (`RunUBT.sh BeneathUncountedHeavEditor Linux Development`, Result: Succeeded).
+- `BUH.JumpPlaybackIntegrationTests` passes, proving the fighter travels along the parabola, stays airborne at a reaction pause, and resumes the path after Continue.
+- All 13 `BUH.*` automation suites pass via `AutomationTestToolset.RunTests` with the explicit test names.
+- `BP_CombatManager` and `WBP_CombatUI` compiled clean and saved.
+- Corrected `ExecuteMove` and `EventTick` graphs exported to `tests/blueprint_exports/jump_selection_flow.md`.
+
+**Environment gotcha:** `RunTestsByFilter` with the broad `"BUH."` filter closed the MCP socket on this machine. The reliable path is `AutomationTestToolset.RunTests` with the explicit array of 13 `BUH.*` test names.
+
+**Lesson:** (1) A movement action that teleports the actor to its final position is not a visible movement — it needs a deterministic per-Instant playback that applies the authoritative height every tick. (2) Snapshots must carry every field a consumer needs; a reaction-pause snapshot without `PlayerHeight` silently reports a grounded fighter. (3) When a path drawer receives a state that no longer represents the active movement (e.g. a pre-execution state with `Action=-1`), build a corrected state that restores the movement fields before drawing. (4) A reaction-pause regression test must start from a state where the defender is already reactable; a fresh Jump is not reactable until `PhaseInstants>=3`, so a fresh-state test will never trigger the pause. (5) `RunTestsByFilter` with a broad prefix can close the MCP socket; run the explicit test-name array instead.

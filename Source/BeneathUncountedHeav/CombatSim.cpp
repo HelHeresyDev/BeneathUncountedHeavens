@@ -1770,6 +1770,26 @@ float UBuhCombatSim::GetFinalOpponentY(const FBuhCombatResult& Result)
 	return Result.FinalState.Fighters[1].Y;
 }
 
+float UBuhCombatSim::GetFinalPlayerHeight(const FBuhCombatResult& Result)
+{
+	return (Result.FinalState.Fighters.Num() > 0) ? Result.FinalState.Fighters[0].Height : 0.f;
+}
+
+float UBuhCombatSim::GetFinalOpponentHeight(const FBuhCombatResult& Result)
+{
+	return (Result.FinalState.Fighters.Num() > 1) ? Result.FinalState.Fighters[1].Height : 0.f;
+}
+
+float UBuhCombatSim::GetFinalPlayerWorldZ(const FBuhCombatResult& Result)
+{
+	return 90.f + GetFinalPlayerHeight(Result);
+}
+
+float UBuhCombatSim::GetFinalOpponentWorldZ(const FBuhCombatResult& Result)
+{
+	return 90.f + GetFinalOpponentHeight(Result);
+}
+
 int32 UBuhCombatSim::GetFinalPlayerHealth(const FBuhCombatResult& Result)
 {
 	return Result.FinalState.Fighters[0].Health;
@@ -1918,6 +1938,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.OpponentY = S.Fighters[1].Y;
 			Snap.PlayerFacing = S.Fighters[0].Facing;
 			Snap.OpponentFacing = S.Fighters[1].Facing;
+			Snap.PlayerHeight = S.Fighters[0].Height;
+			Snap.OpponentHeight = S.Fighters[1].Height;
 			Snap.PlayerAction = S.Fighters[0].Action;
 			Snap.OpponentAction = S.Fighters[1].Action;
 			Snap.PlayerPhase = S.Fighters[0].Phase;
@@ -1987,6 +2009,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.OpponentY = S.Fighters[1].Y;
 			Snap.PlayerFacing = S.Fighters[0].Facing;
 			Snap.OpponentFacing = S.Fighters[1].Facing;
+			Snap.PlayerHeight = S.Fighters[0].Height;
+			Snap.OpponentHeight = S.Fighters[1].Height;
 			Snap.PlayerAction = S.Fighters[0].Action;
 			Snap.OpponentAction = S.Fighters[1].Action;
 			Snap.PlayerPhase = S.Fighters[0].Phase;
@@ -2101,6 +2125,18 @@ float UBuhCombatSim::GetSnapshotPlayerY(int32 Index)
 float UBuhCombatSim::GetSnapshotOpponentY(int32 Index)
 {
 	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].OpponentY;
+	return 0.f;
+}
+
+float UBuhCombatSim::GetSnapshotPlayerHeight(int32 Index)
+{
+	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].PlayerHeight;
+	return 0.f;
+}
+
+float UBuhCombatSim::GetSnapshotOpponentHeight(int32 Index)
+{
+	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].OpponentHeight;
 	return 0.f;
 }
 
@@ -2326,6 +2362,17 @@ float UBuhCombatSim::GExecDashTarget = -9999.f;
 float UBuhCombatSim::GExecDashTargetY = 0.f;
 float UBuhCombatSim::GExecJumpTarget = -9999.f;
 float UBuhCombatSim::GExecJumpTargetY = 0.f;
+
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GJumpPlaybackTimeline;
+TWeakObjectPtr<AActor> UBuhCombatSim::GJumpPlaybackPlayer;
+TWeakObjectPtr<AActor> UBuhCombatSim::GJumpPlaybackOpponent;
+TWeakObjectPtr<APlayerController> UBuhCombatSim::GJumpPlaybackPC;
+FBuhCombatState UBuhCombatSim::GJumpPlaybackPreState;
+int32 UBuhCombatSim::GJumpPlaybackPlayerDecision = -1;
+int32 UBuhCombatSim::GJumpPlaybackOpponentDecision = -1;
+int32 UBuhCombatSim::GJumpPlaybackIndex = 0;
+float UBuhCombatSim::GJumpPlaybackAccumulator = 0.f;
+bool UBuhCombatSim::GJumpPlaybackActive = false;
 
 void UBuhCombatSim::SetExecDashTarget(float TargetX, float TargetY)
 {
@@ -3120,6 +3167,75 @@ void UBuhCombatSim::DrawJumpPath(APlayerController* PC, FVector Start, FVector E
 	DrawDebugLine(World, Current, Points.Last(), LineColor, false, 5.f, 0, 10.f);
 }
 
+void UBuhCombatSim::DrawJumpPathFromState(APlayerController* PC, const FBuhCombatState& S, int32 ElapsedFlightInstants)
+{
+	UWorld* World = PC ? PC->GetWorld() : nullptr;
+	if (!World || S.Fighters.Num() < 1) return;
+	const FBuhFighterState& F = S.Fighters[0];
+	const int32 Flight = BuhCombat::JumpFlightInstants;
+	if (F.Action != 9 || F.Phase != 2)
+	{
+		for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+		{
+			ABUHPathRenderer* Renderer = *It;
+			if (Renderer)
+			{
+				Renderer->ClearPath();
+				return;
+			}
+		}
+		return;
+	}
+	ElapsedFlightInstants = FMath::Clamp(ElapsedFlightInstants, 0, Flight);
+	const int32 Remaining = Flight - ElapsedFlightInstants;
+	if (Remaining <= 0)
+	{
+		for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+		{
+			ABUHPathRenderer* Renderer = *It;
+			if (Renderer)
+			{
+				Renderer->ClearPath();
+				return;
+			}
+		}
+		return;
+	}
+	const float GroundZ = 90.f;
+	const FVector StartGround(F.JumpStartX, F.JumpStartY, GroundZ);
+	const FVector EndGround(F.JumpTarget, F.JumpTargetY, GroundZ);
+	TArray<FVector> Points;
+	for (int32 i = ElapsedFlightInstants; i <= Flight; ++i)
+	{
+		const float T = static_cast<float>(i) / static_cast<float>(Flight);
+		FVector P = FMath::Lerp(StartGround, EndGround, T);
+		P.Z = GroundZ + 4.f * static_cast<float>(BuhCombat::JumpMaxHeight) * T * (1.f - T);
+		if (i == ElapsedFlightInstants)
+		{
+			P = FVector(F.X, F.Y, GroundZ + F.Height);
+		}
+		Points.Add(P);
+	}
+	TArray<FBuhPathSegment> Segments;
+	for (int32 Seg = 0; Seg < Remaining; ++Seg)
+	{
+		const int32 Instant = ElapsedFlightInstants + Seg;
+		const EPathSegmentColor Color = (Instant < 3) ? EPathSegmentColor::Red : EPathSegmentColor::Green;
+		Segments.Add(FBuhPathSegment{ Seg, Seg + 1, Color });
+	}
+	for (TActorIterator<ABUHPathRenderer> It(World); It; ++It)
+	{
+		ABUHPathRenderer* Renderer = *It;
+		if (Renderer)
+		{
+			Renderer->SetPath(Points, Segments);
+			UE_LOG(LogTemp, Warning, TEXT("JumpPlayback PATH: elapsed=%d remaining=%d firstZ=%.1f lastZ=%.1f"), ElapsedFlightInstants, Remaining, Points[0].Z, Points.Last().Z);
+			return;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpPlayback PATH: no renderer, elapsed=%d remaining=%d"), ElapsedFlightInstants, Remaining);
+}
+
 void UBuhCombatSim::LogCursorState(APlayerController* PC, FString Tag)
 {
 	if (!PC)
@@ -3177,6 +3293,118 @@ void UBuhCombatSim::LogCombatState(const FBuhCombatState& S, const FString& Cont
 {
 	(void)S;
 	(void)Context;
+}
+
+void UBuhCombatSim::BeginJumpPlayback(APlayerController* PC, AActor* PlayerFighter, AActor* OpponentFighter, const FBuhCombatState& PreState, int32 PlayerDecision, int32 OpponentDecision, const FBuhCombatResult& Result)
+{
+	StopJumpPlayback();
+	if (!PC || !PlayerFighter || PreState.Fighters.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("JumpPlayback BEGIN: invalid args PC=%d fighter=%d fighters=%d"), PC ? 1 : 0, PlayerFighter ? 1 : 0, PreState.Fighters.Num());
+		return;
+	}
+	const bool bInitialJump = (PlayerDecision == 9);
+	const bool bAirborneJump = (PreState.Fighters[0].Action == 9 && PreState.Fighters[0].Phase == 2);
+	if (!bInitialJump && !bAirborneJump)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("JumpPlayback BEGIN: not a Jump decision/state decision=%d action=%d phase=%d"), PlayerDecision, PreState.Fighters[0].Action, PreState.Fighters[0].Phase);
+		return;
+	}
+	GJumpPlaybackTimeline = GenerateTimeline(PreState, PlayerDecision, OpponentDecision, 200, false, false);
+	if (GJumpPlaybackTimeline.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("JumpPlayback BEGIN: empty timeline"));
+		return;
+	}
+	GJumpPlaybackPC = PC;
+	GJumpPlaybackPlayer = PlayerFighter;
+	GJumpPlaybackOpponent = OpponentFighter;
+	GJumpPlaybackPreState = PreState;
+	GJumpPlaybackPlayerDecision = PlayerDecision;
+	GJumpPlaybackOpponentDecision = OpponentDecision;
+	GJumpPlaybackIndex = 0;
+	GJumpPlaybackAccumulator = 0.f;
+	GJumpPlaybackActive = true;
+	UE_LOG(LogTemp, Warning, TEXT("JumpPlayback BEGIN: decision=%d opponent=%d snapshots=%d preAction=%d prePhase=%d prePI=%d preHeight=%.1f finalHeight=%.1f"),
+		PlayerDecision, OpponentDecision, GJumpPlaybackTimeline.Num(), PreState.Fighters[0].Action, PreState.Fighters[0].Phase, PreState.Fighters[0].PhaseInstants, PreState.Fighters[0].Height, Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Height : 0.f);
+}
+
+bool UBuhCombatSim::TickJumpPlayback(float DeltaSeconds)
+{
+	if (!GJumpPlaybackActive || GJumpPlaybackIndex >= GJumpPlaybackTimeline.Num())
+	{
+		return false;
+	}
+	GJumpPlaybackAccumulator += FMath::Max(0.f, DeltaSeconds);
+	bool bApplied = false;
+	bool bStoppedAtReaction = false;
+	while (GJumpPlaybackAccumulator >= 0.05f && GJumpPlaybackIndex < GJumpPlaybackTimeline.Num())
+	{
+		GJumpPlaybackAccumulator -= 0.05f;
+		const FBuhTimelineSnapshot& Snap = GJumpPlaybackTimeline[GJumpPlaybackIndex];
+		if (AActor* P = GJumpPlaybackPlayer.Get())
+		{
+			P->SetActorLocation(FVector(Snap.PlayerX, Snap.PlayerY, 90.f + Snap.PlayerHeight), false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		if (AActor* O = GJumpPlaybackOpponent.Get())
+		{
+			O->SetActorLocation(FVector(Snap.OpponentX, Snap.OpponentY, 90.f + Snap.OpponentHeight), false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		const bool bPlayerJump = (Snap.PlayerAction == 9 && Snap.PlayerPhase == 2);
+		if (APlayerController* PC = GJumpPlaybackPC.Get())
+		{
+			if (bPlayerJump)
+			{
+				FBuhCombatState DrawState = GJumpPlaybackPreState;
+				if (DrawState.Fighters.Num() >= 1)
+				{
+					DrawState.Fighters[0].Action = 9;
+					DrawState.Fighters[0].Phase = 2;
+					DrawState.Fighters[0].PhaseInstants = Snap.PlayerPhaseInstants;
+					DrawState.Fighters[0].X = Snap.PlayerX;
+					DrawState.Fighters[0].Y = Snap.PlayerY;
+					DrawState.Fighters[0].Height = Snap.PlayerHeight;
+				}
+				DrawJumpPathFromState(PC, DrawState, Snap.PlayerPhaseInstants);
+			}
+			else
+			{
+				ClearWalkPath(PC);
+			}
+		}
+		UE_LOG(LogTemp, Warning, TEXT("JumpPlayback TICK: inst=%d playerX=%.1f playerZ=%.1f opponentX=%.1f opponentZ=%.1f reaction=%d actorPZ=%.1f actorOZ=%.1f"),
+			Snap.Instant, Snap.PlayerX, 90.f + Snap.PlayerHeight, Snap.OpponentX, 90.f + Snap.OpponentHeight, Snap.bReactionOpportunity ? 1 : 0,
+			GJumpPlaybackPlayer.IsValid() ? GJumpPlaybackPlayer->GetActorLocation().Z : -1.f,
+			GJumpPlaybackOpponent.IsValid() ? GJumpPlaybackOpponent->GetActorLocation().Z : -1.f);
+		++GJumpPlaybackIndex;
+		bApplied = true;
+		if (Snap.bReactionOpportunity)
+		{
+			bStoppedAtReaction = true;
+			break;
+		}
+	}
+	if (GJumpPlaybackIndex >= GJumpPlaybackTimeline.Num() || bStoppedAtReaction)
+	{
+		GJumpPlaybackActive = false;
+		if (!bStoppedAtReaction && GJumpPlaybackPC.IsValid())
+		{
+			ClearWalkPath(GJumpPlaybackPC.Get());
+		}
+		UE_LOG(LogTemp, Warning, TEXT("JumpPlayback STOP: index=%d count=%d reaction=%d"), GJumpPlaybackIndex, GJumpPlaybackTimeline.Num(), bStoppedAtReaction ? 1 : 0);
+	}
+	return bApplied;
+}
+
+void UBuhCombatSim::StopJumpPlayback()
+{
+	GJumpPlaybackActive = false;
+	GJumpPlaybackTimeline.Empty();
+	GJumpPlaybackPlayer = nullptr;
+	GJumpPlaybackOpponent = nullptr;
+	GJumpPlaybackPC = nullptr;
+	GJumpPlaybackIndex = 0;
+	GJumpPlaybackAccumulator = 0.f;
 }
 
 

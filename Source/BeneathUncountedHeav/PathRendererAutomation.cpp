@@ -2,11 +2,14 @@
 #include "CombatSim.h"
 #include "Misc/AutomationTest.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SceneComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
 #include "Editor.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 #include "UObject/UnrealType.h"
 #include "UObject/Field.h"
 #include "Engine/Blueprint.h"
@@ -1125,6 +1128,164 @@ bool FBuhJumpPathColorTest::RunTest(const FString& Parameters)
 	UBuhCombatSim::DrawJumpPath(PC, Start, End, 8);
 	Check(TEXT("Completed Jump path clears"), !Target->IsPathVisible() && Target->GetVisibleSegmentCount() == 0);
 
+	PC->Destroy();
+	return bAllPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpPlaybackIntegrationTest, "BUH.JumpPlaybackIntegrationTests",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpPlaybackIntegrationTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	Check(TEXT("Editor world available"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+
+	APlayerController* PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	Check(TEXT("Player controller spawned"), PC != nullptr && PC->GetWorld() == World);
+	if (!PC)
+	{
+		return bAllPassed;
+	}
+
+	ABUHPathRenderer* Target = nullptr;
+	{
+		TActorIterator<ABUHPathRenderer> It(World);
+		if (It) Target = *It;
+	}
+	if (!Target)
+	{
+		Target = World->SpawnActor<ABUHPathRenderer>(FVector::ZeroVector, FRotator::ZeroRotator);
+		Target->PostInitializeComponents();
+		Target->DispatchBeginPlay();
+	}
+	Check(TEXT("A renderer exists for Jump playback"), Target != nullptr);
+	if (!Target)
+	{
+		PC->Destroy();
+		return bAllPassed;
+	}
+
+	AActor* Player = World->SpawnActor<AActor>(FVector::ZeroVector, FRotator::ZeroRotator);
+	AActor* Opponent = World->SpawnActor<AActor>(FVector::ZeroVector, FRotator::ZeroRotator);
+	if (Player)
+	{
+		USceneComponent* Root = NewObject<USceneComponent>(Player);
+		Player->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Player->SetActorLocation(FVector(-500.f, 0.f, 90.f));
+	}
+	if (Opponent)
+	{
+		USceneComponent* Root = NewObject<USceneComponent>(Opponent);
+		Opponent->SetRootComponent(Root);
+		Root->RegisterComponent();
+		Opponent->SetActorLocation(FVector(500.f, 0.f, 90.f));
+	}
+	Check(TEXT("Fighter actors spawned"), Player != nullptr && Opponent != nullptr);
+	if (!Player || !Opponent)
+	{
+		PC->Destroy();
+		return bAllPassed;
+	}
+
+	UBuhCombatSim::StopJumpPlayback();
+
+	FBuhCombatState CompletedPre = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	CompletedPre = UBuhCombatSim::WithPlayerJumpTarget(CompletedPre, -20.f, 0.f);
+	const FBuhCombatResult CompletedResult = UBuhCombatSim::ResolveCombat(CompletedPre, 9, -1, 200);
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, CompletedPre, 9, -1, CompletedResult);
+	float MaxZ = 0.f;
+	for (int32 i = 0; i < 50; ++i)
+	{
+		if (!UBuhCombatSim::TickJumpPlayback(0.05f)) break;
+		MaxZ = FMath::Max(MaxZ, Player->GetActorLocation().Z);
+	}
+	Check(TEXT("Completed Jump playback stops"), !UBuhCombatSim::TickJumpPlayback(0.05f));
+	Check(TEXT("Completed Jump lands on the ground"), FMath::Abs(Player->GetActorLocation().Z - 90.f) < 1.f);
+	Check(TEXT("Completed Jump reaches the destination"), FMath::Abs(Player->GetActorLocation().X - (-20.f)) < 1.f);
+	Check(TEXT("Completed Jump apex is 220 uu above ground"), FMath::Abs(MaxZ - (90.f + 220.f)) < 1.f);
+	Check(TEXT("Completed Jump clears the path"), !Target->IsPathVisible() && Target->GetVisibleSegmentCount() == 0);
+	Check(TEXT("Completed Jump leaves the opponent grounded"), FMath::Abs(Opponent->GetActorLocation().Z - 90.f) < 1.f);
+
+	FBuhCombatState InterruptPre = UBuhCombatSim::MakeStateWithPhases(-500, 500, 100, 100, 0, 2, 3, 0, 0);
+	InterruptPre.Fighters[0].Action = 9;
+	InterruptPre.Fighters[0].JumpStartX = -500.f;
+	InterruptPre.Fighters[0].JumpStartY = 0.f;
+	InterruptPre.Fighters[0].JumpTarget = -20.f;
+	InterruptPre.Fighters[0].JumpTargetY = 0.f;
+	InterruptPre.Fighters[0].X = -320.f;
+	InterruptPre.Fighters[0].Y = 0.f;
+	InterruptPre.Fighters[0].Height = 206.25f;
+	const FBuhCombatResult InterruptResult = UBuhCombatSim::ResolveCombat(InterruptPre, 7, 1, 200);
+	Check(TEXT("Airborne Jump vs Heavy pauses at a reaction opportunity"), InterruptResult.bReactionOpportunity);
+	Check(TEXT("Airborne Jump is still airborne at the reaction pause"), InterruptResult.FinalState.Fighters.Num() >= 1 && InterruptResult.FinalState.Fighters[0].Action == 9 && InterruptResult.FinalState.Fighters[0].Phase == 2 && InterruptResult.FinalState.Fighters[0].PhaseInstants == 3);
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, InterruptPre, 7, 1, InterruptResult);
+	for (int32 i = 0; i < 50; ++i)
+	{
+		if (!UBuhCombatSim::TickJumpPlayback(0.05f)) break;
+	}
+	Check(TEXT("Interrupted Jump playback stops at the reaction"), !UBuhCombatSim::TickJumpPlayback(0.05f));
+	Check(TEXT("Interrupted Jump actor is visibly airborne"), Player->GetActorLocation().Z > 200.f);
+	Check(TEXT("Interrupted Jump path is visible"), Target->IsPathVisible());
+	Check(TEXT("Interrupted Jump path has five remaining segments"), Target->GetVisibleSegmentCount() == 5);
+	bool bInterruptedAllGreen = true;
+	for (int32 i = 0; i < Target->SegmentPool.Num(); ++i)
+	{
+		if (PieceColor(Target, Target->SegmentPool[i].Get()) != EPathSegmentColor::Green) bInterruptedAllGreen = false;
+	}
+	Check(TEXT("Interrupted Jump path is entirely green"), bInterruptedAllGreen);
+
+	const FBuhCombatState ContinuePre = InterruptResult.FinalState;
+	const FBuhCombatResult ContinueResult = UBuhCombatSim::ResolveCombat(ContinuePre, 7, 1, 200);
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, ContinuePre, 7, 1, ContinueResult);
+	for (int32 i = 0; i < 50; ++i)
+	{
+		if (!UBuhCombatSim::TickJumpPlayback(0.05f)) break;
+	}
+	Check(TEXT("Continue Jump playback stops"), !UBuhCombatSim::TickJumpPlayback(0.05f));
+	Check(TEXT("Continue Jump lands on the ground"), FMath::Abs(Player->GetActorLocation().Z - 90.f) < 1.f);
+	Check(TEXT("Continue Jump reaches the original destination"), FMath::Abs(Player->GetActorLocation().X - (-20.f)) < 1.f);
+	Check(TEXT("Continue Jump clears the path"), !Target->IsPathVisible() && Target->GetVisibleSegmentCount() == 0);
+
+	FBuhCombatState AfterApexState = UBuhCombatSim::MakeStateWithPhases(-500, 500, 100, 100, 0, 2, 5, 0, 0);
+	AfterApexState.Fighters[0].Action = 9;
+	AfterApexState.Fighters[0].JumpStartX = -500.f;
+	AfterApexState.Fighters[0].JumpStartY = 0.f;
+	AfterApexState.Fighters[0].JumpTarget = -20.f;
+	AfterApexState.Fighters[0].JumpTargetY = 0.f;
+	AfterApexState.Fighters[0].X = -200.f;
+	AfterApexState.Fighters[0].Y = 0.f;
+	AfterApexState.Fighters[0].Height = 206.25f;
+	UBuhCombatSim::DrawJumpPathFromState(PC, AfterApexState, 5);
+	Check(TEXT("After-apex Jump path is visible"), Target->IsPathVisible());
+	Check(TEXT("After-apex Jump path has three remaining segments"), Target->GetVisibleSegmentCount() == 3);
+	bool bAfterApexDescends = true, bAfterApexGreen = true;
+	for (int32 i = 0; i < Target->SegmentPool.Num(); ++i)
+	{
+		UStaticMeshComponent* Piece = Target->SegmentPool[i].Get();
+		if (Piece && Piece->GetComponentLocation().Z > 300.f) bAfterApexDescends = false;
+		if (PieceColor(Target, Piece) != EPathSegmentColor::Green) bAfterApexGreen = false;
+	}
+	Check(TEXT("After-apex Jump path does not create a second apex"), bAfterApexDescends);
+	Check(TEXT("After-apex Jump path is entirely green"), bAfterApexGreen);
+	UBuhCombatSim::ClearWalkPath(PC);
+
+	FBuhCombatState GroundState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	UBuhCombatSim::DrawJumpPathFromState(PC, GroundState, 0);
+	Check(TEXT("Non-Jump state clears the path"), !Target->IsPathVisible() && Target->GetVisibleSegmentCount() == 0);
+
+	Player->Destroy();
+	Opponent->Destroy();
 	PC->Destroy();
 	return bAllPassed;
 }
