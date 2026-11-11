@@ -737,3 +737,28 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 - Blueprint export: `tests/blueprint_exports/jump_selection_flow.md` contains the actual `read_graph_dsl` readback of every Jump graph and the EventTick Jump branches.
 
 **Lesson:** (1) A movement action that is only a preview line is not a real action — it needs authoritative simulation, reaction legality, commit/clamp logic, snapshots, ghosts, and a path renderer. (2) The same `SelectInt(0, authoritative_elapsed, is_awaiting_execute)` rule that fixed Dash also applies to Jump: the confirmed-but-unexecuted path draws fully red, and the executed path shows the real red/green split. (3) When a full EventTick rewrite replaces old node names, regression tests that check those names must be updated to check the new structure, not deleted. (4) `write_graph_dsl` can still fail on `StateMachine|GetState` / `CustomizableObjectInstance|GetCurrentState` nodes in an event graph; the reliable path is targeted node-level edits or a full rewrite that avoids those type IDs.
+
+### 9.30 Jump destination not applied during execution + Jump cursor disappeared (RESOLVED)
+
+**Problem 1 (Jump destination ignored):** Clicking Jump, clicking a ground destination, then Execute caused the fighter to stay in place instead of traveling to the chosen landing point. The preview parabola and the committed red parabola rendered correctly, but the simulation never applied the destination.
+
+**Root cause (confirmed from live graph readback, not assumed):** `BP_CombatManager.ExecuteMove` called `CombatSim|ExecuteMove`, a `BlueprintCallable` UFUNCTION whose body only called `ResolveCombat` and never read the `GExecJumpTarget` / `GExecJumpTargetY` globals that `SelectJumpDestination` writes. The fully implemented `CombatSim|ExecuteMoveWithVars` helper, which already applied the Jump destination when `PlayerMove == 9`, was never called from the Blueprint.
+
+**Fix (Blueprint):** `BP_CombatManager.ExecuteMove` now calls `CombatSim|ExecuteMoveWithVars` with the live `PlayerWalkTarget` / `PlayerWalkTargetY` values and the current `PlayerY`. After execution it clears the stale exec targets with `CombatSim|SetExecDashTarget -9999 0` and `CombatSim|SetExecJumpTarget -9999 0`, and clears `JumpAwaitingExecute`.
+
+**Problem 2 (cursor disappeared during Jump targeting):** Clicking the Jump button switched input mode to GameAndUI but the mouse cursor vanished, so the player could not see where they were clicking to set the destination.
+
+**Root cause:** `OnClicked(BtnJumpMove)` called `SetInputModeGameAndUI` but never called `SetShowMouseCursor true`. The Walk and Dash handlers had the same pattern but had been fixed earlier; the Jump handler was written without the explicit cursor-show call.
+
+**Fix (Blueprint):** `OnClicked(BtnJumpMove)` now explicitly calls `(|SetbShowMouseCursor true _returnvalue)` immediately after `SetInputModeGameAndUI`, then logs cursor state via `CombatSim|LogCursorState`.
+
+**Verified:**
+- C++ rebuilt clean (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded).
+- All 12 `BUH.*` automation suites pass, including `BUH.JumpSimulationTests` and `BUH.CombatManagerIntegrationTests`.
+- `BP_CombatManager` and `WBP_CombatUI` compiled clean and saved.
+- PIE log inspection shows no errors and the WBP constructs successfully.
+- Corrected Blueprint graphs exported to `tests/blueprint_exports/jump_selection_flow.md`.
+
+**Still requires manual graphical PIE confirmation:** the fighter actually traveling along the parabola to the chosen landing point, and the mouse cursor remaining visible during Jump targeting. Headless `-nullrhi` PIE cannot click UMG buttons or capture the path.
+
+**Lesson:** (1) A `BlueprintCallable` UFUNCTION that only calls `ResolveCombat` is not a complete execution helper — if the Blueprint needs to pass live variables (walk target, jump target), it must call the `ExecuteMoveWithVars` overload that reads them. (2) Every targeting button handler that switches to GameAndUI input mode must explicitly call `SetShowMouseCursor true`; the input-mode call alone does not guarantee the cursor is visible. (3) Stale exec targets must be cleared after every execution so a later Walk/Dash/Jump does not accidentally reuse an old destination.

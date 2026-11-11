@@ -1847,8 +1847,8 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	{
 		Info.ThreatRemainingPrep = FMath::Max(0, BuhCombat::MoveData[Threat.Action].Startup - Threat.PhaseInstants);
 	}
-	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue (if the player was walking or dashing).
-	if (Info.PlayerCurrentAction == 4 || Info.PlayerCurrentAction == 5 || Info.PlayerCurrentAction == 6 || Info.PlayerCurrentAction == 8)
+	// Legal reactions: Quick, Heavy, Guard, Dodge, and Continue (if the player was moving).
+	if (Info.PlayerCurrentAction == 4 || Info.PlayerCurrentAction == 5 || Info.PlayerCurrentAction == 6 || Info.PlayerCurrentAction == 8 || Info.PlayerCurrentAction == 9)
 	{
 		Info.LegalActions = { 0, 1, 2, 3, 7 };
 	}
