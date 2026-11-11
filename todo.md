@@ -1,219 +1,188 @@
-# Beneath Uncounted Heavens — Fix Airborne Jump Movement and Interrupted Path
+# Beneath Uncounted Heavens — Fix Jump Falling to Ground at Reaction Pause
 
-The user tested the latest pushed Jump implementation (`48dd02b`) in graphical PIE.
+The user tested the latest implementation (`c31d7f7`) in graphical PIE.
 
-## Confirmed failures
+**The fighter now visibly jumps through the air. That part works.**
 
-1. The blue fighter moves horizontally after executing Jump but never visibly leaves the ground.
-2. When Jump is interrupted, the remaining parabolic path does not reliably persist.
-3. The reaction screen displays Continue, but the fighter appears grounded even when Jump should still be airborne.
+But when combat pauses for an interruption/reaction opportunity, the fighter falls or snaps back to the ground instead of freezing at its current airborne position.
 
-The Jump targeting preview already renders a parabola. Do not redesign the targeting system.
+This violates the core frozen-time combat mechanic.
 
-I inspected the current GitHub source and Blueprint export and found specific problems.
+## Current debugging state (as of this update)
 
-## 1. Fix the real fighter's Z coordinate
+### What is verified working
+- C++ `BeginJumpPlayback` / `TickJumpPlayback` / `StopJumpPlayback` are correct. A tight-loop automation test (`BUH.JumpGroundedReactionTest`) drives them directly in PIE and the fighter holds `Z=296.25` (90+206.25) through the reaction pause and 5 post-reaction ticks. No fall.
+- `ResolveCombat` and `GenerateTimeline` agree on the reaction boundary: `reaction=1`, `reactionInstant=4`, `finalHeight=206.25`.
+- `BP_CombatManager:EventTick` IS ticking in PIE. It now runs `TickJumpPlayback`, `LogFighterZ`, `HandleTargetingTick`, and the Instant/phase countdowns.
+- `HandleTargetingTick` (new C++ UFUNCTION) detects left-mouse clicks when input mode is GameAndUI and calls `SetPreviewJumpTarget`/`SetExecJumpTarget`.
 
-In the exported `BP_CombatManager.ExecuteMove`, the real fighter is positioned using:
+### What is broken
+- **WBP_CombatUI EventTick is NOT ticking.** The `UI` variable on BP_CombatManager is `None` every PIE session. The `CastToWBP_CombatUI` in `BeginPlay` fails, so the widget is never stored, never gets its EventTick running, and the Jump/Execute buttons are dead.
+- The WBP asset was restored from git (`c31d7f7`) and `tickFrequency` was set to `Auto` and saved, but the EventTick still does not fire. The root cause of the failed cast is unknown.
+- Because the WBP EventTick is dead, `TargetingAction` is never set by the UI, `SelectJumpDestination` is never called, and `ExecuteMove` is never triggered by the Execute button.
+- `ActorTools` has no `call_function` method, so Blueprint functions cannot be invoked via MCP.
+- The full WBP EventTick DSL restoration fails on a `StateMachine|GetState` pin-type error when keyboard shortcuts are included.
 
-`MakeVector(FinalPlayerX, FinalPlayerY, 90)`
+### Workarounds attempted
+- Set `TargetingAction=9`, `PlayerMove=9`, `JumpAwaitingExecute=true` manually via `ObjectTools.set_properties`. Jump target defaults to (0,0).
+- Changed `BeginPlay` input mode from `SetInputModeUIOnly` to `SetInputModeGameAndUI` so the player controller receives mouse input.
+- With these manual settings, the user reported "Jumped and fell" — but logs show `PZ=90.00 active=0` throughout, meaning `BeginJumpPlayback` was never actually called (no `ExecuteMove` trigger).
 
-This ignores `FBuhFighterState.Height`.
+### What ChatGPT needs to figure out
+1. Why `CastToWBP_CombatUI` fails in `BP_CombatManager:BeginPlay`, leaving `UI=None`.
+2. How to get the WBP EventTick ticking (or move all UI input handling to BP_CombatManager EventTick / C++).
+3. The actual per-frame writer that drops the fighter to Z=90 after the reaction pause in the real game flow (the tight-loop test proves C++ playback is clean, so the writer is external to the playback path).
 
-The simulation already calculates Jump height, but the real fighter never receives that vertical position.
+## Expected behavior
 
-Fix the actor transform application so that:
+When Jump is interrupted at a legal reaction opportunity:
 
-`WorldZ = GroundZ + AuthoritativeHeight`
+- The fighter stops at the precise simulated XY position and height.
+- The fighter remains suspended in midair indefinitely while the player considers the next decision.
+- The remaining Jump parabola is displayed.
+- Continue resumes the original Jump from that same position and flight progress.
+- There is no additional falling or visual interpolation during the pause.
 
-Use the proper height from the resolved authoritative state.
+Do not implement gravity during the planning state. Time is frozen.
 
-The opponent should also use authoritative height when appropriate.
+## 1. Investigate the actual live transition
 
-Verify:
-- Grounded fighter: Height=0.
-- During Jump: Height is positive.
-- At Jump apex: Height reaches 220 uu.
-- At landing: Height returns to zero.
-- At a midair reaction pause: fighter remains visibly airborne.
+Inspect the latest GitHub source and saved Blueprint graphs:
 
-Avoid adding another independent height calculation to the Blueprint.
+- `UBuhCombatSim::ResolveCombat`
+- `UBuhCombatSim::GenerateTimeline`
+- `UBuhCombatSim::BeginJumpPlayback`
+- `UBuhCombatSim::TickJumpPlayback`
+- `UBuhCombatSim::StopJumpPlayback`
+- `BP_CombatManager.ExecuteMove`
+- `BP_CombatManager.EventTick`
+- `WBP_CombatUI.EventTick`
 
-## 2. Make the Jump visibly travel through the air
+Focus on the transition from visual playback to reaction planning.
 
-Important: `ResolveCombat` currently processes multiple Instants synchronously.
+At the exact frame where the reaction menu becomes available, log:
 
-Simply applying FinalState after execution may only display the final landing position. That would still make Jump look like a teleport.
+- Authoritative CurrentState player Action, Phase, PhaseInstants, XY, Height.
+- Result.FinalState player XY and Height.
+- Last playback snapshot XY and Height.
+- Real fighter actor XYZ immediately before playback stops.
+- Real fighter actor XYZ immediately after playback stops.
+- Real fighter actor XYZ on the following five graphical ticks.
+- Whether playback remains active.
+- Every function that writes the player's actor location during these ticks.
 
-Implement a minimal, deterministic visual playback of the actual resolved movement Instants.
+Find the FIRST operation that causes the actor's Z coordinate to decrease unexpectedly.
 
-Prefer recording authoritative per-Instant snapshots as combat resolves.
+## 2. Check for simulation/playback divergence
 
-During playback:
-- Show the real fighter moving along the saved XY trajectory.
-- Apply saved Jump height at each Instant.
-- Display the ascent, apex, and descent.
-- Stop playback at the actual decision or reaction boundary.
-- At a reaction pause, leave the fighter at that authoritative position.
-- At completed landing, restore exact ground-relative height.
+The current `BeginJumpPlayback()` independently calls `GenerateTimeline(PreState, PlayerDecision, OpponentDecision, ...)`.
 
-This is visual playback, not another combat simulation.
+It does not directly play the same ordered snapshots used by the authoritative ResolveCombat result.
 
-Keep authoritative combat outcomes unchanged.
+Compare:
+- The actual resolver's reaction boundary.
+- The playback timeline's reaction boundary.
+- The final playback snapshot.
+- The actual FinalState.
 
-Do not introduce physics-based jumping, animation montages, skeletal animation, or cinematic camera work.
+They must agree on the fighter's XY, Height, phase, and elapsed flight Instants.
 
-Make the simplest playback implementation that reliably shows the cylinder following its simulated parabola.
+If the playback timeline continues to landing after the authoritative resolver has stopped for a reaction, fix that divergence.
 
-Keep the existing one-action-at-a-time decision system. Do not allow a new decision during unresolved visual playback.
+Prefer recording or deriving the visual snapshots from the same deterministic resolution sequence that produced FinalState. Avoid two independently diverging combat outcomes.
 
-## 3. Reconstruct the interrupted parabola correctly
+Do not modify Jump's balance values to hide the issue.
 
-There is a second specific code issue in `UBuhCombatSim::DrawJumpPath()`.
+## 3. Make the reaction boundary authoritative
 
-The function currently takes the current actor location as Start, resets its Z to 90, and interpolates toward End using the original flight-time fractions.
+When playback reaches the actual reaction pause:
 
-This is incorrect for an interrupted Jump.
+1. Stop advancing visual playback.
+2. Apply the exact authoritative reaction-state transform to the real fighter.
+3. Preserve its positive airborne Height.
+4. Preserve the original Jump takeoff and landing points.
+5. Preserve elapsed flight Instants.
+6. Render the remaining parabolic trajectory.
+7. Enter frozen planning state.
 
-An interrupted Jump must follow its ORIGINAL parabola, not a new parabola between the current position and landing point.
+While waiting for the player's reaction decision, no other Tick, UI refresh, timeline update, actor transform, or movement handler should move the real fighter toward the floor.
 
-Use authoritative state:
+Do not use `SetActorLocation(..., Z=90)` at a midair reaction pause.
 
-- JumpStartX/Y.
-- JumpTargetX/Y.
-- Flight Instants completed.
-- Current fighter XY.
-- Current Height.
-- Original flight duration of 8 Instants.
+Do not rely on the last displayed playback snapshot if it disagrees with authoritative CurrentState.
 
-At an interruption, construct the remaining points using the original trajectory for `t = elapsed/8` through `t = 1`.
+Do not force the actor's Z on every frame as a workaround. Fix the writer or incorrect state transition that causes the drop.
 
-The first point must coincide with the actual airborne fighter location.
+## 4. Check every actor-location writer
 
-Do not reset the parabola's origin to the current fighter location.
+The previous code contained direct Blueprint actor placement and now also uses C++ playback.
 
-The remaining trajectory should not produce a second apex.
+Audit possible conflicting writers:
+- BP_CombatManager's final transform application.
+- BP_CombatManager.EventTick.
+- WBP_CombatUI.EventTick.
+- Playback completion and cleanup.
+- Reaction UI refresh.
+- Actor movement/components.
+- Any remaining reset-to-ground logic.
 
-## 4. Preserve the path during reaction
+`StopJumpPlayback()` should disable playback without resetting a fighter's height.
 
-Inspect the exact execution sequence in `BP_CombatManager.ExecuteMove`.
+Check the actual saved execution wiring rather than inferring behavior from a function name.
 
-The current exported graph calls `CombatSim.ClearWalkPath` after resolving combat.
+## 5. Preserve Continue
 
-Check whether that clearing call removes the Jump path after the combat state has entered Reaction.
+During the pause:
+- The fighter remains frozen midair.
+- The path begins at the airborne location.
+- The remaining reactable trajectory is green.
 
-At a legitimate Jump reaction opportunity:
-- Preserve or regenerate the remaining Jump path.
-- Use CurrentState rather than the pending landing marker.
-- Render green for the remaining reactable flight Instants.
-- Keep the fighter at its authoritative airborne position.
-- Leave the original landing destination unchanged.
+After Continue:
+- Playback resumes the same Jump.
+- The fighter moves from its saved airborne position.
+- The trajectory does not restart at takeoff.
+- The fighter does not teleport back upward after falling.
+- Landing restores its normal ground height.
 
-The path should remain visible until the player selects Continue or a replacement action.
+## 6. Add a genuinely end-to-end regression test
 
-When Continue is selected:
-- Resume the existing Jump trajectory.
-- Preserve elapsed flight progress.
-- Do not restart the three locked Instants.
-- Do not generate a second arc.
-- Do not teleport to the landing point.
+The existing JumpPlaybackIntegrationTest starts its reaction test from a manually constructed airborne state.
 
-When the Jump finishes, clear the path.
+That test is useful but insufficient.
 
-When a replacement action is selected, clear the abandoned Jump path and show the replacement's proper preview.
+Add a new integration case that:
 
-Preserve the previously fixed Dash lifecycle.
+1. Starts from an ordinary grounded encounter.
+2. Selects and commits a real Jump.
+3. Produces a qualifying observable opponent threat after the Jump becomes reactable.
+4. Advances to the genuine reaction boundary.
+5. Runs the same playback path used by the game.
+6. Confirms the authoritative fighter is airborne.
+7. Confirms the real actor Z equals 90 + authoritative Height.
+8. Advances several more UI/game ticks without issuing a decision.
+9. Confirms the actor's XY and Z do not change at all.
+10. Selects Continue and confirms the fighter completes the original parabola.
 
-## 5. Diagnose with actual runtime values
+Use the actual PIE-world actor and manager where possible.
 
-At the first legitimate Jump interruption, log:
+A test that only constructs a fighter already in midair must not count as passing this new requirement.
 
-- Player action.
-- Player phase.
-- PhaseInstants.
-- JumpStart XY.
-- JumpTarget XY.
-- Current fighter XY.
-- Current authoritative Height.
-- Real actor world XYZ.
-- Remaining flight Instants.
-- Renderer path visibility and segment count.
-- Last caller that cleared or updated the renderer.
+Keep all existing Walk/Dash/Jump regression suites.
 
-Do not assume a simulation unit test proves the real fighter is airborne.
+## 7. Verification and GitHub
 
-If Height is positive but ActorZ remains 90, fix actor transform application.
+Rebuild the changed C++ code.
 
-If Height is zero during an expected midair interruption, inspect the resolver and phase progression.
+Compile and save the affected Blueprints.
 
-If CurrentState is correct but the path disappears, inspect renderer clearing and redraw ownership.
+Export their actual saved graph readback into `tests/blueprint_exports/jump_selection_flow.md`.
 
-## 6. Tests
-
-Add focused integration tests verifying:
-
-1. Jump's authoritative Height is greater than zero during flight.
-2. Real actor Z reflects Height at a midair interruption.
-3. Flight playback visits ascent, apex, descent, and landing.
-4. Horizontal movement follows the chosen XY direction.
-5. An interrupted Jump retains its exact original takeoff and landing coordinates.
-6. Remaining path begins at the actual midair position.
-7. Remaining path does not create a second apex.
-8. Remaining reactable segments are green.
-9. Continue preserves flight progress.
-10. A completed Jump clears the path.
-11. Walk and Dash remain unchanged.
-
-Run all existing BUH automation suites.
-
-## 7. Correct documentation
-
-The current `todo.md` opening incorrectly describes Jump as free, instantaneous, and uninterruptible, contradicting the actual implemented rules.
-
-Restore the correct rules:
-- Startup: 1 Instant.
-- Flight: 8 Instants.
-- Recovery: 3 Instants.
-- First 3 flight Instants locked.
-- Remaining 5 flight Instants reactable.
-
-Keep design documentation consistent with the implemented combat rules.
-
-## 8. Commit and push
-
-Compile and save modified Blueprints.
-
-Update the actual saved Blueprint graph export under `tests/blueprint_exports/`.
-
-Update `notes.md` and `todo.md`.
+Update `notes.md` and `todo.md` with the confirmed cause and evidence.
 
 After automated verification, commit and push to `origin/master` on `HelHeresyDev/BeneathUncountedHeavens`.
 
-Report the commit SHA, tests, and any remaining graphical PIE checks.
+Report the commit SHA and test results. Distinguish automated checks from user-confirmed graphical PIE behavior.
 
-Do not implement Qinggong or aerial combat during this fix.
+No Qinggong, aerial attacks, new movement mechanics, or unrelated refactoring.
 
-**Success criteria:** Executing Jump visibly lifts and moves the blue cylinder through its parabola. An interruption freezes it in midair and preserves the correct remaining green trajectory. Continue finishes the same Jump, and landing restores the normal ground height.
-
-## Completion status (2026-11-10)
-
-Jump rules as implemented:
-- Startup: 1 Instant.
-- Flight: 8 Instants.
-- Recovery: 3 Instants.
-- First 3 flight Instants locked.
-- Remaining 5 flight Instants reactable.
-
-Completed:
-- `ExecuteMove` now uses `PreExecutionState`, `WithPlayerJumpTargetFromPreview`, and `ExecuteMoveWithVars`; it skips the player teleport for Jump/airborne states and uses `GetFinalOpponentWorldZ` for the opponent.
-- `BeginJumpPlayback` / `TickJumpPlayback` / `StopJumpPlayback` drive a deterministic per-Instant playback that applies `WorldZ = 90 + Height` every tick and redraws the remaining parabola from the original `JumpStartX/Y` and `JumpTarget/JumpTargetY`.
-- `GenerateTimeline` reaction-pause and KO snapshots now carry `PlayerHeight` / `OpponentHeight`.
-- `TickJumpPlayback` builds a corrected `DrawState` so the interrupted parabola is reconstructed instead of cleared.
-- `BUH.JumpPlaybackIntegrationTests` covers completed Jump, airborne interrupted Jump, Continue from airborne, after-apex path reconstruction, and non-Jump path clearing.
-- `BP_CombatManager` and `WBP_CombatUI` compiled clean and saved; `WBP_CombatUI.EventTick` calls `TickJumpPlayback` every tick.
-- All 13 `BUH.*` automation suites pass via `AutomationTestToolset.RunTests` with the explicit test names.
-- `tests/blueprint_exports/jump_selection_flow.md`, `notes.md` §9.31, and this `todo.md` updated with the verified evidence.
-
-Remaining graphical-PIE checks (user-driven, headless `-nullrhi` cannot click UMG buttons or capture the path):
-- The blue cylinder visibly lifts and follows the parabola in a real rendered viewport.
-- The mouse cursor remains visible during Jump targeting.
+**Success criterion: At a Jump reaction opportunity, the fighter freezes at its exact airborne location and stays there until the player acts. Continue resumes from that exact position without a fall, reset, or second jump.**

@@ -423,6 +423,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void StopJumpPlayback();
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void LogFighterZ(AActor* PlayerFighter, AActor* OpponentFighter, FString Tag);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void HandleTargetingTick(APlayerController* PC, AActor* PlayerFighter, int32 TargetingAction);
+
 	static TArray<FBuhTimelineSnapshot> GJumpPlaybackTimeline;
 	static TWeakObjectPtr<AActor> GJumpPlaybackPlayer;
 	static TWeakObjectPtr<AActor> GJumpPlaybackOpponent;

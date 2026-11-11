@@ -3407,4 +3407,31 @@ void UBuhCombatSim::StopJumpPlayback()
 	GJumpPlaybackAccumulator = 0.f;
 }
 
+void UBuhCombatSim::LogFighterZ(AActor* PlayerFighter, AActor* OpponentFighter, FString Tag)
+{
+	const float PZ = PlayerFighter ? PlayerFighter->GetActorLocation().Z : -1.f;
+	const float OZ = OpponentFighter ? OpponentFighter->GetActorLocation().Z : -1.f;
+	UE_LOG(LogTemp, Warning, TEXT("FighterZ %s: PZ=%.2f OZ=%.2f active=%d"), *Tag, PZ, OZ, GJumpPlaybackActive ? 1 : 0);
+}
+
+void UBuhCombatSim::HandleTargetingTick(APlayerController* PC, AActor* PlayerFighter, int32 TargetingAction)
+{
+	if (!PC || TargetingAction < 0) return;
+	if (PC->WasInputKeyJustPressed(EKeys::LeftMouseButton))
+	{
+		float MX = 0.f, MY = 0.f;
+		PC->GetMousePosition(MX, MY);
+		const FVector2D MousePos(MX, MY);
+		const float HX = GetGroundHitX(PC, MousePos);
+		const float HY = GetGroundHitY(PC, MousePos);
+		if (TargetingAction == 9)
+		{
+			SetPreviewJumpTarget(HX, HY);
+			SetExecJumpTarget(HX, HY);
+		}
+		UE_LOG(LogTemp, Warning, TEXT("TargetingClick: action=%d hx=%.1f hy=%.1f fighter=%s"),
+			TargetingAction, HX, HY, PlayerFighter ? *PlayerFighter->GetName() : TEXT("null"));
+	}
+}
+
 
