@@ -814,3 +814,26 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 - The MCP asset registry issue for `WBP_CombatUI` needs investigation — possibly a corrupted asset header, a redirector, or a registry cache bug.
 
 **Lesson:** (1) Always use the original `CreateWidget` result for `AddToViewport`, not the cast result — a failed cast silently drops the widget from the viewport. (2) The MCP asset registry can lose track of assets that exist on disk; `exists` / `save_assets` / `get_asset_class` may all fail while `find_assets` / `load_asset` / `compile_blueprint` still work. Restarting the editor may fix some assets but not others. (3) A "working" observation from a prior session is not evidence of current behavior — always verify with fresh PIE logs.
+
+### 9.33 WBP cast eliminated via SetWidgetManager; reaction-pause freeze fixed by manager-driven TickJumpPlayback (VERIFIED)
+
+**Problem:** (1) `CastToWBP_CombatUI` still failed, so the WBP `manager` property stayed `None` and the UI could not reach `ExecuteMove`. (2) A Jump interrupted by an opponent reaction appeared to "fall" / snap to ground Z=90 instead of freezing at the airborne height.
+
+**Cause:**
+- The WBP `manager` property could not be set through the Blueprint cast (which failed) or through a Blueprint `SetManager` function (not a C++ `UFUNCTION`). Reflective writes that compiled crashed: `UUserWidget::SetProperty` (no such member), `FProperty::SetPropertyValue_InContainer` (no such member). The only reflective write that both compiles and runs without a `Signal 11` crash is `FObjectProperty::SetObjectPropertyValue(ContainerPtrToValuePtr<UObject*>(Widget), ManagerObj)`.
+- The "fall" was not a physics bug. `TickJumpPlayback` was never being called in the real flow — the WBP EventTick was not reliably driving it — so the actor stayed at ground Z=90 while the playback statics believed it was airborne. The fighter never actually moved along the parabola.
+
+**Fix applied:**
+- Added `UBuhCombatSim::SetWidgetManager(UUserWidget* Widget, UObject* Manager)` that finds the WBP `Manager` property, checks it is an `FObjectProperty`, and calls `ObjProp->SetObjectPropertyValue(ObjProp->ContainerPtrToValuePtr<UObject*>(Widget), ManagerObj)`. `BP_CombatManager:EventBeginPlay` now calls `CombatSim|SetWidgetManager _returnvalue_1 _self` and drops the `CastToWBP_CombatUI` entirely; `CreateWidget`'s result is used directly for `SetUI`, `SetWidgetManager`, `AddToViewport`, and `SetInputModeGameAndUI`.
+- Added `UBuhCombatSim::TriggerReactionJump(AActor* Context)` (diagnosis scaffolding) and a `BUH.TriggerReactionJump` console command that finds the `PlayerFighter` tagged actor and passes it as context, so the world is obtained from `Context->GetWorld()` (not `GEngine`, which returns null from Blueprint BeginPlay). It builds the reaction prestate (opponent mid-Heavy `Phase=3 Action=1`, player grounded), resolves with `PlayerMove=9, OpponentMove=1`, and calls the real `BeginJumpPlayback`.
+- Moved per-frame `TickJumpPlayback` into `BP_CombatManager:EventTick` (`CombatSim|TickJumpPlayback DeltaSeconds`), which fires reliably. `TickJumpPlayback` no-ops safely when no playback is active.
+
+**Verified (mcp_author33.log, real PIE flow):**
+- `SetWidgetManager: Manager prop type=ObjectProperty name=Manager`, `PropertyClass=.../BP_CombatManager.BP_CombatManager_C`, `DONE (SetObjectPropertyValue)`; `WBP_CombatUI CONSTRUCTED`; no `Signal 11`.
+- `TriggerReactionJump RESOLVE: reaction=1 ... finalHeight=206.25`; `BeginJumpPlayback called active=1`.
+- Timeline ascends: inst=0 Z=90, inst=1 Z=186.2, inst=2 Z=255.0, inst=3 Z=296.2.
+- At inst=4 the reaction triggers (`reaction=1`), freezing the fighter at `playerZ=296.2` (= 90 + 206.25), XY frozen at -320; `JumpPlayback STOP: index=5 count=5 reaction=1`; the fighter then holds `PZ=296.25 active=0` every subsequent frame. No fall, no snap to ground.
+
+**Still open:** Headless PIE cannot click the WBP buttons (Slate snapshot shows no widget buttons under `-nullrhi`), so the full UI-driven Jump (click Jump → click destination → click Execute) needs a graphical PIE run to confirm a real button click reaches `ExecuteMove` and starts playback. The C++ playback path and the manager-driven tick are verified.
+
+**Lesson:** (1) To set a Blueprint object-reference property from C++ without a crash, use `FObjectProperty::SetObjectPropertyValue` on the `ContainerPtrToValuePtr` slot — `UUserWidget::SetProperty` and `FProperty::SetPropertyValue_InContainer` do not exist and crash. (2) `GEngine->GetWorldFromContextObject(GEngine, ...)` returns null when called from Blueprint BeginPlay; pass the actor as an `AActor* Context` and use `Context->GetWorld()`. (3) A "falling" fighter that never moved was a missing playback driver, not a physics error — drive `TickJumpPlayback` from a tick that actually fires (the manager EventTick), and confirm with `JumpPlayback TICK` logs before blaming gravity. (4) `finalHeight` in the resolve log is height above ground; the actor Z is `90 + Height`.

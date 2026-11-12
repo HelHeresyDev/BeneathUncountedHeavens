@@ -5,6 +5,7 @@
 #include "CombatSim.generated.h"
 
 class UWidget;
+class UUserWidget;
 
 USTRUCT(BlueprintType)
 struct BENEATHUNCOUNTEDHEAV_API FBuhFighterState
@@ -429,6 +430,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void HandleTargetingTick(APlayerController* PC, AActor* PlayerFighter, int32 TargetingAction);
 
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void TriggerReactionJump(AActor* Context);
+
 	static TArray<FBuhTimelineSnapshot> GJumpPlaybackTimeline;
 	static TWeakObjectPtr<AActor> GJumpPlaybackPlayer;
 	static TWeakObjectPtr<AActor> GJumpPlaybackOpponent;
@@ -463,5 +467,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void LogCombatState(const FBuhCombatState& S, const FString& Context);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void DiagnoseWidgetCast(APlayerController* PC);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetWidgetManager(UUserWidget* Widget, AActor* Manager);
 
 };

@@ -2951,6 +2951,23 @@ static FAutoConsoleCommand GSetBlueMatCmd(
 		}
 	}));
 
+static FAutoConsoleCommand GTriggerReactionJumpCmd(
+	TEXT("BUH.TriggerReactionJump"),
+	TEXT("Trigger a grounded Jump vs a mid-Heavy opponent to reach a reaction pause"),
+	FConsoleCommandDelegate::CreateStatic([]()
+	{
+		UWorld* World = GEngine->GetWorldFromContextObject(GEngine, EGetWorldErrorMode::LogAndReturnNull);
+		AActor* Context = nullptr;
+		if (World)
+		{
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (It->Tags.Contains(TEXT("PlayerFighter"))) { Context = *It; break; }
+			}
+		}
+		UBuhCombatSim::TriggerReactionJump(Context);
+	}));
+
 FVector UBuhCombatSim::ScreenToGround(APlayerController* PC, FVector2D ScreenPos)
 {
 	if (!PC) return FVector::ZeroVector;
@@ -3429,8 +3446,156 @@ void UBuhCombatSim::HandleTargetingTick(APlayerController* PC, AActor* PlayerFig
 			SetPreviewJumpTarget(HX, HY);
 			SetExecJumpTarget(HX, HY);
 		}
-		UE_LOG(LogTemp, Warning, TEXT("TargetingClick: action=%d hx=%.1f hy=%.1f fighter=%s"),
-			TargetingAction, HX, HY, PlayerFighter ? *PlayerFighter->GetName() : TEXT("null"));
+	UE_LOG(LogTemp, Warning, TEXT("TargetingClick: action=%d hx=%.1f hy=%.1f fighter=%s"),
+		TargetingAction, HX, HY, PlayerFighter ? *PlayerFighter->GetName() : TEXT("null"));
+	}
+}
+
+void UBuhCombatSim::TriggerReactionJump(AActor* Context)
+{
+	UWorld* World = Context ? Context->GetWorld() : nullptr;
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerReactionJump: no world"));
+		return;
+	}
+	AActor* Player = nullptr;
+	AActor* Opponent = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->Tags.Contains(TEXT("PlayerFighter"))) Player = *It;
+		else if (It->Tags.Contains(TEXT("OpponentFighter"))) Opponent = *It;
+	}
+	if (!Player || !Opponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerReactionJump: missing fighters P=%d O=%d"), Player ? 1 : 0, Opponent ? 1 : 0);
+		return;
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	FBuhCombatState PreState = MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 3, 4);
+	PreState.Fighters[1].Action = 1;
+	PreState = WithPlayerJumpTarget(PreState, -20.f, 0.f);
+	const FBuhCombatResult Result = ResolveCombat(PreState, 9, 1, 200);
+	UE_LOG(LogTemp, Warning, TEXT("TriggerReactionJump RESOLVE: reaction=%d stoppedReason=%d reactionInstant=%d finalAction=%d finalPhase=%d finalPI=%d finalHeight=%.2f"),
+		Result.bReactionOpportunity ? 1 : 0, Result.StoppedReason, Result.ReactionInstant,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Action : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Phase : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].PhaseInstants : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Height : -1.f);
+	BeginJumpPlayback(PC, Player, Opponent, PreState, 9, 1, Result);
+	UE_LOG(LogTemp, Warning, TEXT("TriggerReactionJump: BeginJumpPlayback called active=%d"), GJumpPlaybackActive ? 1 : 0);
+}
+
+void UBuhCombatSim::DiagnoseWidgetCast(APlayerController* PC)
+{
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: PC is null"));
+		return;
+	}
+
+	const FString ClassPath = TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI.WBP_CombatUI_C");
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: loading class %s"), *ClassPath);
+
+	UClass* LoadedClass = LoadObject<UClass>(nullptr, *ClassPath);
+	if (!LoadedClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: LoadObject FAILED for %s"), *ClassPath);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: LoadedClass=%s (0x%p)"), *LoadedClass->GetPathName(), LoadedClass);
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: LoadedClass->SuperClass=%s"), *LoadedClass->GetSuperClass()->GetPathName());
+
+	UWidgetBlueprint* WB = Cast<UWidgetBlueprint>(LoadedClass);
+	if (WB)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: WidgetBlueprint asset path=%s"), *WB->GetPathName());
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: WidgetBlueprint GeneratedClass=%s"), *WB->GeneratedClass->GetPathName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: NOT a UWidgetBlueprint, it's a plain UClass"));
+	}
+
+	UUserWidget* Widget = CreateWidget<UUserWidget>(PC, LoadedClass);
+	if (!Widget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: CreateWidget returned NULL"));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: Widget instance=%s (0x%p)"), *Widget->GetName(), Widget);
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: Widget->GetClass()=%s"), *Widget->GetClass()->GetPathName());
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: Widget->GetClass()->GetSuperClass()=%s"), *Widget->GetClass()->GetSuperClass()->GetPathName());
+
+	const bool bIsDerived = Widget->GetClass()->IsChildOf(LoadedClass);
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: IsChildOf(LoadedClass)=%s"), bIsDerived ? TEXT("true") : TEXT("false"));
+
+	UUserWidget* CastResult = Cast<UUserWidget>(Widget);
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: Cast<UUserWidget> = %s"), CastResult ? TEXT("valid") : TEXT("null"));
+
+	UObject* AssetRef = LoadObject<UObject>(nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI"));
+	if (AssetRef)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: WBP asset loaded, class=%s"), *AssetRef->GetClass()->GetPathName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: WBP asset LoadObject FAILED"));
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("DiagnoseWidgetCast: DONE"));
+}
+
+void UBuhCombatSim::SetWidgetManager(UUserWidget* Widget, AActor* Manager)
+{
+	if (!Widget || !Manager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: null arg Widget=%p Manager=%p"), (void*)Widget, (void*)Manager);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: Widget=%s class=%s"), *Widget->GetName(), *Widget->GetClass()->GetPathName());
+
+	UClass* WBPClass = LoadObject<UClass>(nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI.WBP_CombatUI_C"));
+	if (!WBPClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: WBP_CombatUI_C class not found"));
+		return;
+	}
+
+	if (!Widget->GetClass()->IsChildOf(WBPClass))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: widget class %s is NOT a child of %s"), *Widget->GetClass()->GetPathName(), *WBPClass->GetPathName());
+		return;
+	}
+
+	FProperty* ManagerProp = WBPClass->FindPropertyByName(FName(TEXT("Manager")));
+	if (!ManagerProp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: Manager property not found on %s"), *WBPClass->GetPathName());
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: Manager prop type=%s name=%s"),
+		*ManagerProp->GetClass()->GetName(), *ManagerProp->GetName());
+
+	if (ManagerProp->IsA<FObjectProperty>())
+	{
+		FObjectProperty* ObjProp = CastField<FObjectProperty>(ManagerProp);
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: FObjectProperty PropertyClass=%s"), *ObjProp->PropertyClass->GetPathName());
+		UObject* ManagerObj = Manager;
+		ObjProp->SetObjectPropertyValue(ObjProp->ContainerPtrToValuePtr<UObject*>(Widget), ManagerObj);
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: DONE (SetObjectPropertyValue)"));
+	}
+	else if (ManagerProp->IsA<FStructProperty>())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: Manager is a FStructProperty, not FObjectProperty"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetWidgetManager: Manager is neither FObjectProperty nor FStructProperty"));
 	}
 }
 
