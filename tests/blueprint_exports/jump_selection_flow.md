@@ -103,7 +103,13 @@ authoritative saved graph states for the Jump movement action.
 
 ## WBP_CombatUI — EventTick (Jump-relevant sections)
 
-The full EventTick body after the airborne-Jump playback rewrite:
+The full EventTick body after the playback-ownership fix. The WBP no longer calls
+`TickJumpPlayback` (the manager EventTick is the sole playback driver), and every
+movement-path draw is gated on `State == 0` (`_returnvalue_1`) so the WBP never
+overwrites the C++ playback's authoritative remaining path during execution or a
+reaction pause. The manager `State`/`CurrentState` getters use the `Class|` prefix
+(`StateMachine|GetState` is ambiguous and `Variables|BPCombatManager|GetState` does
+not exist).
 
 ```
 (event UserInterface|EventTick (MyGeometry InDeltaTime)
@@ -111,12 +117,10 @@ The full EventTick body after the airborne-Jump playback rewrite:
   (bind _returnvalue (Behavior|GetValue _timelineslider))
   (bind _bzero (Variables|Default|GetBZero))
   (bind _manager (Variables|Default|GetManager))
-  (bind _state (StateMachine|GetState _manager))
+  (bind _state (Class|BPCombatManager|GetState _manager))
   (bind _returnvalue_1 (== _state _bzero))
   (bind _targetingaction (Class|BPCombatManager|GetTargetingAction _manager))
-  (bind _returnvalue_4 (CombatSim|TickJumpPlayback (Game|GetPlayerController 0) InDeltaTime))
-  (IfThenElse_86 _returnvalue_4)
-  (if (>= _targetingaction 0)
+  (if (and _returnvalue_1 (>= _targetingaction 0))
     (bind _returnvalue_2 (CombatSim|GetGroundHitX (Game|GetPlayerController 0)))
     (bind _returnvalue_3 (CombatSim|GetGroundHitY (Game|GetPlayerController 0)))
     (bind _outactors (Actor|GetAllActorsWithTag "DestPlayer"))
@@ -145,19 +149,19 @@ The full EventTick body after the airborne-Jump playback rewrite:
       (bind _outactors_1 (Actor|GetAllActorsWithTag "DestPlayer"))
       (Rendering|SetActorHiddenInGame (Utilities|Array|Get(acopy) _outactors_1) true)
       (CombatSim|ClearWalkPath (Game|GetPlayerController 0))))
-  (if (== (Class|BPCombatManager|GetPlayerMove _manager) 6)
+  (if (and _returnvalue_1 (== (Class|BPCombatManager|GetPlayerMove _manager) 6))
     (bind _outactors (Actor|GetAllActorsWithTag "DestPlayer"))
     (CombatSim|DrawGroundLine (Game|GetPlayerController 0) (Transformation|GetActorLocation (Class|BPCombatManager|GetPlayerFighter _manager)) (Transformation|GetActorLocation (Utilities|Array|Get(acopy) _outactors)) 5.0 0.1))
   (bind _returnvalue_2 (Class|BPCombatManager|IsJumpAwaitingExecute _manager))
-  (if (== (Class|BPCombatManager|GetPlayerMove _manager) 9)
+  (if (and _returnvalue_1 (== (Class|BPCombatManager|GetPlayerMove _manager) 9))
     (bind _outactors (Actor|GetAllActorsWithTag "DestPlayer"))
     (Class|BPCombatManager|IsJumpAwaitingExecute _manager)
-    (CombatSim|DrawJumpPath (Game|GetPlayerController 0) (Transformation|GetActorLocation (Class|BPCombatManager|GetPlayerFighter _manager)) (Transformation|GetActorLocation (Utilities|Array|Get(acopy) _outactors)) (Math|Integer|SelectInt 0 (CombatSim|GetJumpElapsedFlightInstants (CustomizableObjectInstance|GetCurrentState _manager)) _returnvalue_2)))
+    (CombatSim|DrawJumpPath (Game|GetPlayerController 0) (Transformation|GetActorLocation (Class|BPCombatManager|GetPlayerFighter _manager)) (Transformation|GetActorLocation (Utilities|Array|Get(acopy) _outactors)) (Math|Integer|SelectInt 0 (CombatSim|GetJumpElapsedFlightInstants (Class|BPCombatManager|GetCurrentState _manager)) _returnvalue_2)))
   (bind _returnvalue_3 (Class|BPCombatManager|IsDashAwaitingExecute _manager))
-  (if (== (Class|BPCombatManager|GetPlayerMove _manager) 8)
+  (if (and _returnvalue_1 (== (Class|BPCombatManager|GetPlayerMove _manager) 8))
     (bind _outactors (Actor|GetAllActorsWithTag "DestPlayer"))
     (Class|BPCombatManager|IsDashAwaitingExecute _manager)
-    (CombatSim|DrawDashPath (Game|GetPlayerController 0) (Transformation|GetActorLocation (Class|BPCombatManager|GetPlayerFighter _manager)) (Transformation|GetActorLocation (Utilities|Array|Get(acopy) _outactors)) (Math|Integer|SelectInt 0 (CombatSim|GetDashElapsedMovementInstants (CustomizableObjectInstance|GetCurrentState _manager)) _returnvalue_3)))
+    (CombatSim|DrawDashPath (Game|GetPlayerController 0) (Transformation|GetActorLocation (Class|BPCombatManager|GetPlayerFighter _manager)) (Transformation|GetActorLocation (Utilities|Array|Get(acopy) _outactors)) (Math|Integer|SelectInt 0 (CombatSim|GetDashElapsedMovementInstants (Class|BPCombatManager|GetCurrentState _manager)) _returnvalue_3)))
   (if (and _returnvalue_1 (== (Class|BPCombatManager|GetPlayerPhase _manager) 0))
     (if (Game|Player|WasInputKeyJustPressed (Game|GetPlayerController 0) "One")
       (Class|BPCombatManager|SelectQuick _manager))
@@ -179,24 +183,34 @@ The full EventTick body after the airborne-Jump playback rewrite:
 
 ### Jump-specific behavior in EventTick
 
-- **Playback tick**: every tick calls `CombatSim|TickJumpPlayback` with the tick
-  delta. While a Jump playback is active it advances the deterministic
-  timeline, moves the fighter to the authoritative `WorldZ = 90 + Height`,
-  redraws the remaining parabola, and stops at a reaction pause.
-- **Targeting preview**: while `TargetingAction == 9`, `DrawJumpPath` renders the
-  prospective parabola from the player fighter to the cursor landing point.
+- **No playback tick**: the WBP no longer calls `CombatSim|TickJumpPlayback`.
+  `BP_CombatManager.EventTick` is the sole playback driver (one
+  `TickJumpPlayback(DeltaSeconds)` per frame). While a Jump playback is active it
+  advances the deterministic timeline, moves the fighter to the authoritative
+  `WorldZ = 90 + Height`, redraws the remaining parabola via
+  `DrawJumpPathFromState`, and stops at a reaction pause.
+- **Exclusive path rendering**: every WBP movement-path draw is gated on
+  `State == 0` (Planning). While playback owns the path (State 1/Resolving) or a
+  reaction is pending (State 3/Reaction), the WBP draws no movement path, so it
+  cannot overwrite the C++ playback's authoritative remaining trajectory with
+  stale `DestPlayer`/targeting coordinates.
+- **Targeting preview**: while `State == 0` and `TargetingAction == 9`,
+  `DrawJumpPath` renders the prospective parabola from the player fighter to the
+  cursor landing point.
 - **Confirmation**: left-click while `TargetingAction == 9` calls
   `SelectJumpDestination`, which sets `PlayerMove = 9` and
-  `JumpAwaitingExecute = true`.
+  `JumpAwaitingExecute = true`. This is the single authoritative
+  targeting-confirmation path (the manager's `HandleTargetingTick` debug handler
+  was removed).
 - **Cancel**: right-click/Escape calls `CancelTargeting`,
   `ClearDashAwaitingExecute`, and `ClearJumpAwaitingExecute`.
-- **Confirmed Jump path**: while `PlayerMove == 9`, `DrawJumpPath` renders the
-  committed parabola. The elapsed flight instants argument is
-  `SelectInt(0, GetJumpElapsedFlightInstants, IsJumpAwaitingExecute)`, so the
-  path stays fully red (elapsed 0) until Execute, then shows the real red/green
-  split during flight.
-- **Confirmed Dash path**: same pattern with `PlayerMove == 8` and
-  `SelectInt(0, GetDashElapsedMovementInstants, IsDashAwaitingExecute)`.
+- **Confirmed Jump path**: while `State == 0` and `PlayerMove == 9`,
+  `DrawJumpPath` renders the committed parabola. The elapsed flight instants
+  argument is `SelectInt(0, GetJumpElapsedFlightInstants, IsJumpAwaitingExecute)`,
+  so the path stays fully red (elapsed 0) until Execute, then shows the real
+  red/green split during flight.
+- **Confirmed Dash path**: same pattern with `State == 0` and `PlayerMove == 8`
+  and `SelectInt(0, GetDashElapsedMovementInstants, IsDashAwaitingExecute)`.
 
 ### OnClicked(BtnJumpMove) (corrected cursor)
 ```

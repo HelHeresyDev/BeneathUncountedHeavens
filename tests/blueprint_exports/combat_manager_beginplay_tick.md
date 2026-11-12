@@ -43,18 +43,24 @@ Key object-pin connections:
 - `CreateWidget` ReturnValue → `SetUI` value, `SetWidgetManager` widget arg, `AddToViewport` widget, and `SetInputModeGameAndUI` widget.
 - `SetWidgetManager` second arg → `self` (the current `BP_CombatManager` instance), so the widget's `Manager` property points at the exact live manager.
 
-## BP_CombatManager — EventTick (drives Jump playback)
+## BP_CombatManager — EventTick (sole Jump playback driver)
 
-Per-frame `TickJumpPlayback` is driven by the manager tick, not the WBP tick.
-`TickJumpPlayback` no-ops safely when no playback is active
+Per-frame `TickJumpPlayback` is driven ONLY by the manager tick. The WBP EventTick
+no longer calls `TickJumpPlayback` (it was a duplicate that advanced the same static
+timeline twice per frame once the widget was running again). `TickJumpPlayback`
+no-ops safely when no playback is active
 (`if (!GJumpPlaybackActive || index >= timeline.Num()) return false;`), so calling
 it every frame is safe.
+
+The C++ debug-input workaround `HandleTargetingTick` is also gone: the WBP EventTick
+mouse-confirmation (`WasInputKeyJustPressed LeftMouseButton` → `SelectJumpDestination`
+/ `SelectDashDestination` / `SelectWalkDestination`) is the single authoritative
+targeting-confirmation path, so the same ground click is no longer processed twice.
 
 ```
 (event EventTick (DeltaSeconds)
   (CombatSim|TickJumpPlayback DeltaSeconds)
   (CombatSim|LogFighterZ (Variables|Default|GetPlayerFighter) (Variables|Default|GetOpponentFighter) "tick")
-  (CombatSim|HandleTargetingTick (Game|GetPlayerController 0) (Variables|Default|GetPlayerFighter) (Variables|Default|GetTargetingAction))
   (Variables|Default|SetInstantAccumulator (+ (Variables|Default|GetInstantAccumulator) DeltaSeconds))
   (if (>= (Variables|Default|GetInstantAccumulator) 0.05)
     (Variables|Default|SetInstantAccumulator (- (Variables|Default|GetInstantAccumulator) 0.05))
