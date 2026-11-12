@@ -1399,3 +1399,145 @@ bool FBuhJumpGroundedReactionTest::RunTest(const FString& Parameters)
 	if (!World->GetFirstPlayerController()) PC->Destroy();
 	return bAllPassed;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpTargetHandoffTest, "BUH.JumpTargetHandoffTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpTargetHandoffTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GWorld;
+	if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
+	Check(TEXT("World available (PIE preferred)"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpTargetHandoff WORLD: PIE=%d"), GWorld ? 1 : 0);
+
+	const int32 PlayerX = 500, OpponentX = -500;
+	const float TargetX = -20.f, TargetY = 120.f;
+
+	UBuhCombatSim::SetPreviewJumpTarget(TargetX, TargetY);
+	UBuhCombatSim::SetExecJumpTarget(TargetX, TargetY);
+	Check(TEXT("Pending preview target is valid"), UBuhCombatSim::GPlayerJumpTarget >= -9998.f);
+	Check(TEXT("Pending execution target is valid"), UBuhCombatSim::GExecJumpTarget >= -9998.f);
+
+	FBuhCombatState Original = UBuhCombatSim::MakeStateWithPhases(PlayerX, OpponentX, 100, 100, 0, 0, 0, 3, 4);
+	Original.Fighters[1].Action = 1;
+	Check(TEXT("Original state has no Jump target (-9999)"), Original.Fighters[0].JumpTarget < -9998.f);
+
+	FBuhCombatState PreExecution = UBuhCombatSim::WithPlayerJumpTargetFromPreview(Original);
+	Check(TEXT("Playback prestate contains the selected target"),
+		FMath::Abs(PreExecution.Fighters[0].JumpTarget - TargetX) < 0.01f &&
+		FMath::Abs(PreExecution.Fighters[0].JumpTargetY - TargetY) < 0.01f);
+	Check(TEXT("Playback prestate target is not -9999"), PreExecution.Fighters[0].JumpTarget >= -9998.f);
+
+	const FBuhCombatResult Result = UBuhCombatSim::ExecuteMoveWithVars(true, Original, PlayerX, OpponentX, 100, 100, 0, 9, 1, -9999.f, 0.f, 0.f, 0.f);
+	const float FinalPlayerX = Result.FinalState.Fighters[0].X;
+	const float FinalPlayerY = Result.FinalState.Fighters[0].Y;
+	const float FinalHeight = Result.FinalState.Fighters[0].Height;
+	UE_LOG(LogTemp, Warning, TEXT("JumpTargetHandoff RESOLVE: reaction=%d finalX=%.1f finalY=%.1f finalHeight=%.2f"),
+		Result.bReactionOpportunity ? 1 : 0, FinalPlayerX, FinalPlayerY, FinalHeight);
+	Check(TEXT("Resolve reaches a reaction pause"), Result.bReactionOpportunity);
+	if (!Result.bReactionOpportunity)
+	{
+		return bAllPassed;
+	}
+
+	const TArray<FBuhTimelineSnapshot> Timeline = UBuhCombatSim::GenerateTimeline(PreExecution, 9, 1, 200, false, false);
+	Check(TEXT("Playback timeline is non-empty"), Timeline.Num() > 0);
+	if (Timeline.Num() == 0)
+	{
+		return bAllPassed;
+	}
+
+	const FBuhTimelineSnapshot& First = Timeline[0];
+	bool bMovedXY = false;
+	float LandingX = First.PlayerX, LandingY = First.PlayerY;
+	int32 ReactionInstant = -1;
+	float ReactionHeight = 0.f;
+	for (const FBuhTimelineSnapshot& S : Timeline)
+	{
+		if (FMath::Abs(S.PlayerX - First.PlayerX) > 1.f || FMath::Abs(S.PlayerY - First.PlayerY) > 1.f)
+		{
+			bMovedXY = true;
+		}
+		LandingX = S.PlayerX;
+		LandingY = S.PlayerY;
+		if (S.bReactionOpportunity && ReactionInstant < 0)
+		{
+			ReactionInstant = S.Instant;
+			ReactionHeight = S.PlayerHeight;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpTargetHandoff TIMELINE: count=%d takeoffX=%.1f takeoffY=%.1f landingX=%.1f landingY=%.1f reaction=%d reactionInstant=%d reactionHeight=%.2f"),
+		Timeline.Num(), First.PlayerX, First.PlayerY, LandingX, LandingY, ReactionInstant >= 0 ? 1 : 0, ReactionInstant, ReactionHeight);
+	Check(TEXT("Playback fighter actually changes XY during flight"), bMovedXY);
+	Check(TEXT("Playback landing matches the resolver's final XY"),
+		FMath::Abs(LandingX - FinalPlayerX) < 1.f && FMath::Abs(LandingY - FinalPlayerY) < 1.f);
+	Check(TEXT("Playback reproduces the reaction at the authoritative height"),
+		ReactionInstant >= 0 && FMath::Abs(ReactionHeight - FinalHeight) < 0.01f);
+
+	const TArray<FBuhTimelineSnapshot> WrongTimeline = UBuhCombatSim::GenerateTimeline(Original, 9, 1, 200, false, false);
+	bool bWrongMovedXY = false;
+	for (const FBuhTimelineSnapshot& S : WrongTimeline)
+	{
+		if (FMath::Abs(S.PlayerX - WrongTimeline[0].PlayerX) > 1.f || FMath::Abs(S.PlayerY - WrongTimeline[0].PlayerY) > 1.f)
+		{
+			bWrongMovedXY = true;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpTargetHandoff CONTROL: original-state timeline movedXY=%d (expected 0 = Jump in place)"), bWrongMovedXY ? 1 : 0);
+	Check(TEXT("Original-state (unfixed) playback would Jump in place"), !bWrongMovedXY);
+
+	AActor* Player = nullptr;
+	AActor* Opponent = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->Tags.Contains(TEXT("PlayerFighter"))) Player = *It;
+		else if (It->Tags.Contains(TEXT("OpponentFighter"))) Opponent = *It;
+	}
+	if (!Player || !Opponent)
+	{
+		Player = World->SpawnActor<AActor>(FVector(PlayerX, 0, 90), FRotator::ZeroRotator);
+		Opponent = World->SpawnActor<AActor>(FVector(OpponentX, 0, 90), FRotator::ZeroRotator);
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC) PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	Check(TEXT("Fighter actors and PC available"), PC != nullptr && Player != nullptr && Opponent != nullptr);
+	if (!PC || !Player || !Opponent)
+	{
+		return bAllPassed;
+	}
+
+	Player->SetActorLocation(FVector(PlayerX, 0, 90), false, nullptr, ETeleportType::TeleportPhysics);
+	Opponent->SetActorLocation(FVector(OpponentX, 0, 90), false, nullptr, ETeleportType::TeleportPhysics);
+
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, PreExecution, 9, 1, Result);
+	int32 Ticks = 0;
+	FVector LastPos;
+	while (UBuhCombatSim::TickJumpPlayback(0.05f) && Ticks < 400)
+	{
+		LastPos = Player->GetActorLocation();
+		++Ticks;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpTargetHandoff ACTOR: ticks=%d lastX=%.1f lastY=%.1f lastZ=%.2f"), Ticks, LastPos.X, LastPos.Y, LastPos.Z);
+	Check(TEXT("Fighter actor moved in XY during flight"), FMath::Abs(LastPos.X - PlayerX) > 1.f || FMath::Abs(LastPos.Y - 0.f) > 1.f);
+	Check(TEXT("Fighter actor freezes at the authoritative reaction height"),
+		FMath::Abs(LastPos.Z - (90.f + FinalHeight)) < 0.01f);
+
+	UBuhCombatSim::StopJumpPlayback();
+
+	UBuhCombatSim::SetPreviewJumpTarget(-9999.f, 0.f);
+	UBuhCombatSim::SetExecJumpTarget(-9999.f, 0.f);
+	if (!Player->Tags.Contains(TEXT("PlayerFighter"))) Player->Destroy();
+	if (!Opponent->Tags.Contains(TEXT("OpponentFighter"))) Opponent->Destroy();
+	if (!World->GetFirstPlayerController()) PC->Destroy();
+	return bAllPassed;
+}
