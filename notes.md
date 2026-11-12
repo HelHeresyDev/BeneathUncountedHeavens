@@ -794,3 +794,23 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Environment gotcha:** `RunTestsByFilter` with the broad `"BUH."` filter closed the MCP socket on this machine. The reliable path is `AutomationTestToolset.RunTests` with the explicit array of 13 `BUH.*` test names.
 
 **Lesson:** (1) A movement action that teleports the actor to its final position is not a visible movement — it needs a deterministic per-Instant playback that applies the authoritative height every tick. (2) Snapshots must carry every field a consumer needs; a reaction-pause snapshot without `PlayerHeight` silently reports a grounded fighter. (3) When a path drawer receives a state that no longer represents the active movement (e.g. a pre-execution state with `Action=-1`), build a corrected state that restores the movement fields before drawing. (4) A reaction-pause regression test must start from a state where the defender is already reactable; a fresh Jump is not reactable until `PhaseInstants>=3`, so a fresh-state test will never trigger the pause. (5) `RunTestsByFilter` with a broad prefix can close the MCP socket; run the explicit test-name array instead.
+
+### 9.32 WBP AddToViewport used failed cast result; MCP asset registry out of sync (PARTIAL — cast still fails)
+
+**Problem:** After a `write_graph_dsl` call accidentally wiped the WBP EventTick body, the WBP was restored from git but its EventTick never fired in PIE. `BP_CombatManager.UI` was `None`, the WBP `manager` variable was never set, and the Execute button / keyboard shortcuts could not trigger `ExecuteMove`. Neither headless nor graphical PIE logs showed any `BeginJumpPlayback` — the Jump never started.
+
+**Cause:**
+- `BP_CombatManager:EventBeginPlay` called `AddToViewport` on `_aswbp_combat_ui` (the `CastToWBP_CombatUI` result) instead of `_returnvalue_1` (the `CreateWidget` result). When the cast failed, `AddToViewport None` was a no-op — the widget was constructed but never added to the viewport, so its EventTick never ran.
+- `CastToWBP_CombatUI` fails because the MCP asset registry does not track `WBP_CombatUI`. `AssetTools.exists` returns `false` for the asset even though the file exists on disk (4.1 MB). `save_assets` and `get_asset_class` also fail. Restarting the editor fixed `BP_CombatManager` but not `WBP_CombatUI`.
+- The "working Jump animation" referenced in the prior todo was from a session before the WBP EventTick was wiped; it is not a current-state observation.
+
+**Fix applied:**
+- Changed `AddToViewport` to use `_returnvalue_1` (original `CreateWidget` result) so the widget is in the viewport and its EventTick fires even when the cast fails.
+- Changed `SetInputModeUIOnly` to `SetInputModeGameAndUI` so the player can interact with the game world while the UI is active.
+- Updated `tests/blueprint_exports/jump_selection_flow.md` to match the live `ExecuteMove` graph (the export was stale).
+
+**Still open:**
+- `CastToWBP_CombatUI` still returns `None`, so `SetManager` stores `None` on the WBP and the WBP buttons / keyboard shortcuts cannot call `ExecuteMove`. The `BP_CombatManager:EventTick` still calls `HandleTargetingTick` with correct arguments, so Jump targeting works through the C++ path, but `ExecuteMove` is unreachable from the UI.
+- The MCP asset registry issue for `WBP_CombatUI` needs investigation — possibly a corrupted asset header, a redirector, or a registry cache bug.
+
+**Lesson:** (1) Always use the original `CreateWidget` result for `AddToViewport`, not the cast result — a failed cast silently drops the widget from the viewport. (2) The MCP asset registry can lose track of assets that exist on disk; `exists` / `save_assets` / `get_asset_class` may all fail while `find_assets` / `load_asset` / `compile_blueprint` still work. Restarting the editor may fix some assets but not others. (3) A "working" observation from a prior session is not evidence of current behavior — always verify with fresh PIE logs.
