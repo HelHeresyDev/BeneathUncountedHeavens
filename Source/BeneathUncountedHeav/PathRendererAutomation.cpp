@@ -1289,3 +1289,113 @@ bool FBuhJumpPlaybackIntegrationTest::RunTest(const FString& Parameters)
 	PC->Destroy();
 	return bAllPassed;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpGroundedReactionTest, "BUH.JumpGroundedReactionTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpGroundedReactionTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GWorld;
+	if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
+	Check(TEXT("World available (PIE preferred)"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpGroundedReaction WORLD: PIE=%d"), GWorld ? 1 : 0);
+
+	FBuhCombatState PreState = UBuhCombatSim::MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 3, 4);
+	PreState.Fighters[1].Action = 1;
+	PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, -20.f, 0.f);
+
+	const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, 1, 200);
+	UE_LOG(LogTemp, Warning, TEXT("JumpGroundedReaction RESOLVE: reaction=%d stoppedReason=%d finalAction=%d finalPhase=%d finalPI=%d finalHeight=%.2f"),
+		Result.bReactionOpportunity ? 1 : 0, Result.StoppedReason,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Action : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Phase : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].PhaseInstants : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Height : -1.f);
+	Check(TEXT("Grounded Jump reaches a reaction pause"), Result.bReactionOpportunity);
+	Check(TEXT("Authoritative reaction state is airborne"), Result.FinalState.Fighters.Num() > 0 && Result.FinalState.Fighters[0].Height > 50.f);
+	if (!Result.bReactionOpportunity)
+	{
+		return bAllPassed;
+	}
+
+	const TArray<FBuhTimelineSnapshot> Timeline = UBuhCombatSim::GenerateTimeline(PreState, 9, 1, 200, false, false);
+	bool bTimelineReaction = false;
+	float TimelineReactionHeight = 0.f;
+	int32 TimelineReactionInstant = -1;
+	for (const FBuhTimelineSnapshot& S : Timeline)
+	{
+		if (S.bReactionOpportunity)
+		{
+			bTimelineReaction = true;
+			TimelineReactionHeight = S.PlayerHeight;
+			TimelineReactionInstant = S.Instant;
+			break;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpGroundedReaction TIMELINE: count=%d reaction=%d reactionInstant=%d reactionHeight=%.2f"),
+		Timeline.Num(), bTimelineReaction ? 1 : 0, TimelineReactionInstant, TimelineReactionHeight);
+	Check(TEXT("Playback timeline reproduces the reaction"), bTimelineReaction);
+	Check(TEXT("Playback reaction snapshot is airborne"), TimelineReactionHeight > 50.f);
+	Check(TEXT("Authoritative and playback reaction heights match"),
+		FMath::Abs(Result.FinalState.Fighters[0].Height - TimelineReactionHeight) < 0.01f);
+
+	AActor* Player = nullptr;
+	AActor* Opponent = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->Tags.Contains(TEXT("PlayerFighter"))) Player = *It;
+		else if (It->Tags.Contains(TEXT("OpponentFighter"))) Opponent = *It;
+	}
+	if (!Player || !Opponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("JumpGroundedReaction ACTOR: using spawned fallbacks (no tagged fighters in world)"));
+		Player = World->SpawnActor<AActor>(FVector(-500, 0, 90), FRotator::ZeroRotator);
+		Opponent = World->SpawnActor<AActor>(FVector(500, 0, 90), FRotator::ZeroRotator);
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC) PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	Check(TEXT("Fighter actors and PC available"), PC != nullptr && Player != nullptr && Opponent != nullptr);
+	if (!PC || !Player || !Opponent)
+	{
+		return bAllPassed;
+	}
+
+	Player->SetActorLocation(FVector(-500, 0, 90), false, nullptr, ETeleportType::TeleportPhysics);
+	Opponent->SetActorLocation(FVector(500, 0, 90), false, nullptr, ETeleportType::TeleportPhysics);
+
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, PreState, 9, 1, Result);
+	int32 Ticks = 0;
+	float LastZ = -1.f;
+	while (UBuhCombatSim::TickJumpPlayback(0.05f) && Ticks < 400)
+	{
+		LastZ = Player->GetActorLocation().Z;
+		UBuhCombatSim::LogFighterZ(Player, Opponent, FString::Printf(TEXT("tick%d"), Ticks));
+		++Ticks;
+	}
+	for (int32 I = 0; I < 5; ++I)
+	{
+		UBuhCombatSim::LogFighterZ(Player, Opponent, FString::Printf(TEXT("post%d"), I));
+	}
+	LastZ = Player->GetActorLocation().Z;
+	UE_LOG(LogTemp, Warning, TEXT("JumpGroundedReaction ACTOR: ticks=%d lastZ=%.2f expectedZ=%.2f playerClass=%s"),
+		Ticks, LastZ, 90.f + Result.FinalState.Fighters[0].Height, *Player->GetClass()->GetName());
+	Check(TEXT("Fighter actor is airborne after playback stops"), LastZ > 90.f + 50.f);
+	Check(TEXT("Fighter actor Z matches authoritative reaction height"),
+		FMath::Abs(LastZ - (90.f + Result.FinalState.Fighters[0].Height)) < 0.01f);
+
+	UBuhCombatSim::StopJumpPlayback();
+	if (!Player->Tags.Contains(TEXT("PlayerFighter"))) Player->Destroy();
+	if (!Opponent->Tags.Contains(TEXT("OpponentFighter"))) Opponent->Destroy();
+	if (!World->GetFirstPlayerController()) PC->Destroy();
+	return bAllPassed;
+}

@@ -35,64 +35,62 @@ authoritative saved graph states for the Jump movement action.
   (return (Variables|Default|GetJumpAwaitingExecute)))
 ```
 
-### ExecuteMove (airborne Jump playback)
+### ExecuteMove (airborne Jump playback) — LIVE graph as of 745fe06
 ```
 (fn ExecuteMove ()
   (bind _bhascurrentstate (|GetbHasCurrentState))
-  (bind _opponentmove (|GetOpponentMove))
-  (bind _returnvalue (|GetPlayerMove))
-  (bind _currentstate (|GetCurrentState))
-  (if (== _returnvalue 9)
-    (bind _prestate (CombatSim|WithPlayerJumpTargetFromPreview _currentstate))
-    (bind _prestate _currentstate))
-  (bind _result
-    (CombatSim|ExecuteMoveWithVars
-      _prestate
-      _returnvalue
-      _opponentmove
-      (|GetPlayerWalkTarget)
-      (|GetPlayerWalkTargetY)
-      (|GetPlayerY)
-      (|GetPlayerDashTarget)
-      (|GetPlayerDashTargetY)
-      (|GetPlayerJumpTarget)
-      (|GetPlayerJumpTargetY)))
-  (|SetPlayerX (CombatSim|GetFinalPlayerX _result))
-  (|SetOpponentX (CombatSim|GetFinalOpponentX _result))
-  (|SetPlayerHealth (CombatSim|GetFinalPlayerHealth _result))
-  (|SetOpponentHealth (CombatSim|GetFinalOpponentHealth _result))
-  (|SetStoppedReason (CombatSim|GetStoppedReason _result))
-  (|SetbReactionOpportunity (CombatSim|GetbReactionOpportunity _result))
-  (|SetReactionFighter (CombatSim|GetReactionFighter _result))
-  (|SetObservedThreatAction (CombatSim|GetObservedThreatAction _result))
-  (|SetbDashAwaitingExecute false)
-  (|SetbJumpAwaitingExecute false)
-  (if (or (== _returnvalue 9) (CombatSim|IsAirborneJump _result))
-    (CallFunction|StopJumpPlayback)
-    (bind _playeractor (Actor|GetFirstActorWithTag "Player"))
-    (bind _playerloc (Actor|GetActorLocation _playeractor))
-    (bind _playerbreak (Math|Vector|BreakPoint _playerloc))
-    (bind _newplayerloc
-      (Math|Vector|MakePoint
-        (CombatSim|GetFinalPlayerX _result)
-        _playerbreak.Y
-        (CombatSim|GetFinalPlayerWorldZ _result)))
-    (Actor|SetActorLocation _playeractor _newplayerloc))
-  (bind _opponentactor (Actor|GetFirstActorWithTag "Opponent"))
-  (bind _opponentloc (Actor|GetActorLocation _opponentactor))
-  (bind _opponentbreak (Math|Vector|BreakPoint _opponentloc))
-  (bind _newopponentloc
-    (Math|Vector|MakePoint
-      (CombatSim|GetFinalOpponentX _result)
-      _opponentbreak.Y
-      (CombatSim|GetFinalOpponentWorldZ _result)))
-  (Actor|SetActorLocation _opponentactor _newopponentloc)
-  (if (and (== _returnvalue 9) (|GetbJumpAwaitingExecute))
-    (bind _pc (Game|GetPlayerController 0))
-    (CombatSim|BeginJumpPlayback _pc _result _returnvalue _opponentmove)))
+  (bind _opponentmove (Variables|Default|GetOpponentMove))
+  (bind _returnvalue (select _bhascurrentstate _opponentmove (CombatSim|ChooseOpponentMove ...)))
+  (bind _currentstate (Variables|Default|GetCurrentState))
+  (bind _returnvalue_1 (select _bhascurrentstate _currentstate (CombatSim|MakeState ...)))
+  (CallFunction|ClearDashAwaitingExecute)
+  (if (== (Variables|Default|GetPlayerMove) -1)
+    (Variables|Default|SetPredictedOutcome "")
+    (else
+      (Variables|Default|SetState 1)
+      (if (not _bhascurrentstate)
+        (Variables|Default|SetOpponentMove _returnvalue))
+      (if (== (Variables|Default|GetPlayerMove) 9)
+        (bind _returnvalue_6 (CombatSim|WithPlayerJumpTargetFromPreview _returnvalue_1))
+        (Variables|Default|SetPreExecutionState _returnvalue_6)
+        (else
+          (Variables|Default|SetPreExecutionState _returnvalue_1)))
+      (bind _returnvalue_6 (CombatSim|ExecuteMoveWithVars ...))
+      (bind _returnvalue_7 (CombatSim|GetFinalState _returnvalue_6))
+      (CombatSim|LogCombatState _returnvalue_7 "PostResolve")
+      (Variables|Default|SetCurrentState _returnvalue_7)
+      (|SetbHasCurrentState true)
+      (Variables|Default|SetPlayerX ...)
+      (Variables|Default|SetOpponentX ...)
+      (Variables|Default|SetPlayerHealth ...)
+      (Variables|Default|SetOpponentHealth ...)
+      (if (or (== (Variables|Default|GetPlayerMove) 9) (> (CombatSim|GetJumpElapsedFlightInstants _returnvalue_1) 0))
+        (Development|PrintString "JumpPlayback: skipping immediate player teleport")
+        (else
+          (Transformation|SetActorLocation (Variables|Default|GetPlayerFighter) ...)))
+      (Transformation|SetActorLocation (Variables|Default|GetOpponentFighter) ...)
+      (Variables|Default|SetPlayerY ...)
+      (Variables|Default|SetLastPlayerMove ...)
+      (bind _returnvalue_15 (CombatSim|IsReactionOpportunity _returnvalue_6))
+      (if _returnvalue_15
+        (|SetbReactionOpportunity true)
+        (Variables|Default|SetReactionInstant ...)
+        (Variables|Default|SetReactionFighter ...)
+        (Variables|Default|SetObservedThreatAction ...)
+        (Variables|Default|SetState 3)
+        (else
+          (|SetbReactionOpportunity false)
+          ...state 0/2...))
+      (Class|WBPCombatUI|RefreshUI (Variables|Default|GetUI))
+      (CombatSim|ClearWalkPath (Game|GetPlayerController 0))
+      (CombatSim|SetExecDashTarget -9999)
+      (CombatSim|SetExecJumpTarget -9999)
+      (Variables|Default|SetJumpAwaitingExecute false)
+      (if (or (== (Variables|Default|GetPlayerMove) 9) (> (CombatSim|GetJumpElapsedFlightInstants _returnvalue_1) 0))
+        (CombatSim|BeginJumpPlayback (Game|GetPlayerController 0) (Variables|Default|GetPlayerFighter) (Variables|Default|GetOpponentFighter) _returnvalue_1 (Variables|Default|GetPlayerMove) _returnvalue _returnvalue_6)))))
 ```
 
-`ExecuteMove` now stores the pre-execution state in `PreExecutionState`, applies `WithPlayerJumpTargetFromPreview` when the player committed a Jump, resolves through `ExecuteMoveWithVars`, skips the player teleport for Jump/airborne states (the C++ playback system owns the fighter's position), uses `GetFinalOpponentWorldZ` for the opponent, and starts `BeginJumpPlayback` when a Jump was committed.
+`ExecuteMove` stores the pre-execution state in `PreExecutionState`, applies `WithPlayerJumpTargetFromPreview` when the player committed a Jump, resolves through `ExecuteMoveWithVars`, sets `CurrentState` and `bHasCurrentState`, skips the player teleport for Jump/airborne states (the C++ playback system owns the fighter's position), moves the opponent, sets reaction state if applicable, and starts `BeginJumpPlayback` when `PlayerMove == 9` or the player was already airborne. Note: `SetJumpAwaitingExecute false` fires BEFORE the `BeginJumpPlayback` gate, but the gate checks `PlayerMove == 9` (not `JumpAwaitingExecute`), so the early clear does not block playback.
 
 ## BP_CombatManager — variables
 

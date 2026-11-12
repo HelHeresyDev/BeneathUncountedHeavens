@@ -187,6 +187,8 @@ These eight are **[PROPOSED] archetypes** based on the examples discussed. They 
 | **Divine Alchemist** | Research herbs, refine pills, study formulas | Create a pill using an unfamiliar material | Ingredients, furnaces, recipes, alchemical insights |
 | **Shadow Sovereign** | Build covert networks and manipulate institutions | Place an informant in a rival faction | Contacts, covert tools, influence-related knowledge |
 | **Dual Cultivator** | Romance and seduce other people and cultivators, engage in dual cultivation, and build a family | Give a gift to a cultivator | Gift items, dual cultivation manuals, charm improving items |
+| **Dao of Creation** | Cultivate a universe inside of yourself | Observe the birth of a creature | Seeds, 
+| **Transmigrator** | Send your soul to other worlds / universes to inhabit the body of dying people and fulfil their last wishes to recieve a portion of their soul and fortuity | Avenge the young master | Soul enhancement pills, soul techniches
 
 Novel inspirations supplied by the creator: a fate-stealing System like *I Am the Fated Villain*; farming and animals like *Beware of Chicken*; businesses and money like *Dao of Money*; and raising talented disciples like *Arrogant Young Master Template A Variation 4*. These are references for *playstyle theme* rather than content to reproduce verbatim.
 
