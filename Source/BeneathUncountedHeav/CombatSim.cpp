@@ -2377,6 +2377,10 @@ int32 UBuhCombatSim::GJumpPlaybackOpponentDecision = -1;
 int32 UBuhCombatSim::GJumpPlaybackIndex = 0;
 float UBuhCombatSim::GJumpPlaybackAccumulator = 0.f;
 bool UBuhCombatSim::GJumpPlaybackActive = false;
+float UBuhCombatSim::GJumpPlaybackJumpStartX = 0.f;
+float UBuhCombatSim::GJumpPlaybackJumpStartY = 0.f;
+float UBuhCombatSim::GJumpPlaybackJumpTargetX = 0.f;
+float UBuhCombatSim::GJumpPlaybackJumpTargetY = 0.f;
 
 void UBuhCombatSim::SetExecDashTarget(float TargetX, float TargetY)
 {
@@ -3250,7 +3254,16 @@ void UBuhCombatSim::DrawJumpPathFromState(APlayerController* PC, const FBuhComba
 		if (Renderer)
 		{
 			Renderer->SetPath(Points, Segments);
-			UE_LOG(LogTemp, Warning, TEXT("JumpPlayback PATH: elapsed=%d remaining=%d firstZ=%.1f lastZ=%.1f"), ElapsedFlightInstants, Remaining, Points[0].Z, Points.Last().Z);
+			const float T0 = static_cast<float>(ElapsedFlightInstants) / static_cast<float>(Flight);
+			const float ExpX = F.JumpStartX + T0 * (F.JumpTarget - F.JumpStartX);
+			const float ExpY = F.JumpStartY + T0 * (F.JumpTargetY - F.JumpStartY);
+			const float ExpZ = GroundZ + 4.f * static_cast<float>(BuhCombat::JumpMaxHeight) * T0 * (1.f - T0);
+			UE_LOG(LogTemp, Warning, TEXT("JumpPlayback PATH: elapsed=%d remaining=%d jumpStart=(%.1f,%.1f) jumpTarget=(%.1f,%.1f) stateXY=(%.1f,%.1f) stateH=%.1f expectedParabola=(%.1f,%.1f,%.1f) firstPoint=(%.1f,%.1f,%.1f) lastPoint=(%.1f,%.1f,%.1f)"),
+				ElapsedFlightInstants, Remaining, F.JumpStartX, F.JumpStartY, F.JumpTarget, F.JumpTargetY, F.X, F.Y, F.Height, ExpX, ExpY, ExpZ, Points[0].X, Points[0].Y, Points[0].Z, Points.Last().X, Points.Last().Y, Points.Last().Z);
+			for (int32 Pt = 0; Pt < Points.Num(); ++Pt)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("JumpPlayback PATH pt[%d]=(%.1f,%.1f,%.1f)"), Pt, Points[Pt].X, Points[Pt].Y, Points[Pt].Z);
+			}
 			return;
 		}
 	}
@@ -3346,6 +3359,20 @@ void UBuhCombatSim::BeginJumpPlayback(APlayerController* PC, AActor* PlayerFight
 	GJumpPlaybackIndex = 0;
 	GJumpPlaybackAccumulator = 0.f;
 	GJumpPlaybackActive = true;
+	if (Result.FinalState.Fighters.Num() >= 1)
+	{
+		GJumpPlaybackJumpStartX = Result.FinalState.Fighters[0].JumpStartX;
+		GJumpPlaybackJumpStartY = Result.FinalState.Fighters[0].JumpStartY;
+		GJumpPlaybackJumpTargetX = Result.FinalState.Fighters[0].JumpTarget;
+		GJumpPlaybackJumpTargetY = Result.FinalState.Fighters[0].JumpTargetY;
+	}
+	else
+	{
+		GJumpPlaybackJumpStartX = PreState.Fighters[0].X;
+		GJumpPlaybackJumpStartY = PreState.Fighters[0].Y;
+		GJumpPlaybackJumpTargetX = PreState.Fighters[0].JumpTarget;
+		GJumpPlaybackJumpTargetY = PreState.Fighters[0].JumpTargetY;
+	}
 	UE_LOG(LogTemp, Warning, TEXT("JumpPlayback BEGIN: decision=%d opponent=%d snapshots=%d preAction=%d prePhase=%d prePI=%d preHeight=%.1f finalHeight=%.1f"),
 		PlayerDecision, OpponentDecision, GJumpPlaybackTimeline.Num(), PreState.Fighters[0].Action, PreState.Fighters[0].Phase, PreState.Fighters[0].PhaseInstants, PreState.Fighters[0].Height, Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Height : 0.f);
 }
@@ -3385,6 +3412,10 @@ bool UBuhCombatSim::TickJumpPlayback(float DeltaSeconds)
 					DrawState.Fighters[0].X = Snap.PlayerX;
 					DrawState.Fighters[0].Y = Snap.PlayerY;
 					DrawState.Fighters[0].Height = Snap.PlayerHeight;
+					DrawState.Fighters[0].JumpStartX = GJumpPlaybackJumpStartX;
+					DrawState.Fighters[0].JumpStartY = GJumpPlaybackJumpStartY;
+					DrawState.Fighters[0].JumpTarget = GJumpPlaybackJumpTargetX;
+					DrawState.Fighters[0].JumpTargetY = GJumpPlaybackJumpTargetY;
 				}
 				DrawJumpPathFromState(PC, DrawState, Snap.PlayerPhaseInstants);
 			}
@@ -3426,6 +3457,10 @@ void UBuhCombatSim::StopJumpPlayback()
 	GJumpPlaybackPC = nullptr;
 	GJumpPlaybackIndex = 0;
 	GJumpPlaybackAccumulator = 0.f;
+	GJumpPlaybackJumpStartX = 0.f;
+	GJumpPlaybackJumpStartY = 0.f;
+	GJumpPlaybackJumpTargetX = 0.f;
+	GJumpPlaybackJumpTargetY = 0.f;
 }
 
 void UBuhCombatSim::LogFighterZ(AActor* PlayerFighter, AActor* OpponentFighter, FString Tag)

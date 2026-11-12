@@ -12,6 +12,8 @@
 #include "GameFramework/Pawn.h"
 #include "UObject/UnrealType.h"
 #include "UObject/Field.h"
+#include "UObject/Class.h"
+#include "UObject/Object.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -574,6 +576,119 @@ bool FBuhPieDashDiagTest::RunTest(const FString& Parameters)
 		St->Instant = 10; St->Seed = 0;
 	}
 	AddInfo(TEXT("Set PIE CombatManager to a Dash reaction pause. The WBP EventTick will draw the Dash path next frame and log DashDiag."));
+	return true;
+}
+
+// TEMP DIAGNOSTIC: drives the LIVE PIE BP_CombatManager through a real Jump
+// execution (Action=9) by setting PlayerMove=9 and invoking the Blueprint
+// ExecuteMove function via reflection. The manager reaches the reaction pause,
+// calls DrawJumpPathFromState, and the new JumpPlayback PATH logging captures
+// the actual first/last points and expected parabola from the running PIE.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieJumpExecuteDiagTest, "BUH.PieJumpExecuteDiagTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBuhPieJumpExecuteDiagTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = GWorld;
+	if (!World)
+	{
+		AddError(TEXT("No active world. Start PIE first."));
+		return false;
+	}
+	AActor* CM = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetClass()->GetName().Contains(TEXT("BP_CombatManager")))
+		{
+			CM = *It;
+			break;
+		}
+	}
+	if (!CM)
+	{
+		AddError(TEXT("No BP_CombatManager actor in the world."));
+		return false;
+	}
+	UClass* Class = CM->GetClass();
+	if (FProperty* P = FindFProperty<FProperty>(Class, TEXT("playerMove"))) *P->ContainerPtrToValuePtr<int32>(CM) = 9;
+	if (FProperty* P = FindFProperty<FProperty>(Class, TEXT("targetingAction"))) *P->ContainerPtrToValuePtr<int32>(CM) = -1;
+	if (FProperty* P = FindFProperty<FProperty>(Class, TEXT("state"))) *P->ContainerPtrToValuePtr<int32>(CM) = 0;
+	if (FProperty* P = FindFProperty<FProperty>(Class, TEXT("bHasCurrentState"))) *P->ContainerPtrToValuePtr<bool>(CM) = false;
+	UFunction* Func = Class->FindFunctionByName(TEXT("ExecuteMove"));
+	if (!Func)
+	{
+		AddError(TEXT("ExecuteMove function not found on BP_CombatManager."));
+		return false;
+	}
+	CM->ProcessEvent(Func, nullptr);
+	UE_LOG(LogTemp, Display, TEXT("PIE JumpExecuteDiag: called ExecuteMove on %s"), *CM->GetName());
+	if (FProperty* P = FindFProperty<FProperty>(Class, TEXT("state")))
+	{
+		UE_LOG(LogTemp, Display, TEXT("PIE JumpExecuteDiag: state after ExecuteMove=%d"), *P->ContainerPtrToValuePtr<int32>(CM));
+	}
+	if (FProperty* P = FindFProperty<FProperty>(Class, TEXT("bReactionOpportunity")))
+	{
+		UE_LOG(LogTemp, Display, TEXT("PIE JumpExecuteDiag: bReactionOpportunity after ExecuteMove=%d"), *P->ContainerPtrToValuePtr<bool>(CM) ? 1 : 0);
+	}
+	AddInfo(TEXT("Called ExecuteMove on the live PIE CombatManager with PlayerMove=9. The JumpPlayback PATH log lines should now be present."));
+	return true;
+}
+
+// TEMP DIAGNOSTIC: reproduces the Jump reaction-pause path draw in the editor
+// world by calling DrawJumpPathFromState directly with the resolver's final
+// state. Captures the JumpPlayback PATH log lines showing jumpStart/jumpTarget,
+// stateXY/stateH, expectedParabola, firstPoint, and every rendered point, so
+// the changing-shape bug can be diagnosed without a live PIE session.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpPathShapeDiagTest, "BUH.JumpPathShapeDiagTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBuhJumpPathShapeDiagTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		AddError(TEXT("No editor world."));
+		return false;
+	}
+	APlayerController* PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	if (!PC)
+	{
+		AddError(TEXT("Could not spawn PlayerController."));
+		return false;
+	}
+	ABUHPathRenderer* Target = nullptr;
+	{
+		TActorIterator<ABUHPathRenderer> It(World);
+		if (It) Target = *It;
+	}
+	if (!Target)
+	{
+		Target = World->SpawnActor<ABUHPathRenderer>(FVector::ZeroVector, FRotator::ZeroRotator);
+		Target->PostInitializeComponents();
+		Target->DispatchBeginPlay();
+	}
+	if (!Target)
+	{
+		PC->Destroy();
+		AddError(TEXT("Could not spawn ABUHPathRenderer."));
+		return false;
+	}
+
+	FBuhCombatState PreState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, -20.f, 0.f);
+	const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, 1, 200);
+	UE_LOG(LogTemp, Warning, TEXT("JumpPathShapeDiag RESOLVE: reaction=%d stoppedReason=%d"),
+		Result.bReactionOpportunity ? 1 : 0, Result.StoppedReason);
+	if (!Result.bReactionOpportunity || Result.FinalState.Fighters.Num() < 1)
+	{
+		PC->Destroy();
+		AddError(TEXT("ResolveCombat did not reach a Jump reaction pause."));
+		return false;
+	}
+	const FBuhFighterState& F = Result.FinalState.Fighters[0];
+	UE_LOG(LogTemp, Warning, TEXT("JumpPathShapeDiag STATE: action=%d phase=%d phaseInstants=%d X=%.1f Y=%.1f Height=%.1f JumpStart=(%.1f,%.1f) JumpTarget=(%.1f,%.1f)"),
+		F.Action, F.Phase, F.PhaseInstants, F.X, F.Y, F.Height, F.JumpStartX, F.JumpStartY, F.JumpTarget, F.JumpTargetY);
+	UBuhCombatSim::DrawJumpPathFromState(PC, Result.FinalState, F.PhaseInstants);
+	PC->Destroy();
+	AddInfo(TEXT("Called DrawJumpPathFromState with the resolver's reaction-pause state. JumpPlayback PATH log lines should now be present."));
 	return true;
 }
 
@@ -1606,5 +1721,86 @@ bool FBuhJumpTargetHandoffTest::RunTest(const FString& Parameters)
 	if (!Player->Tags.Contains(TEXT("PlayerFighter"))) Player->Destroy();
 	if (!Opponent->Tags.Contains(TEXT("OpponentFighter"))) Opponent->Destroy();
 	if (!World->GetFirstPlayerController()) PC->Destroy();
+	return bAllPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpContinueReactionInfoTest, "BUH.JumpContinueReactionInfoTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpContinueReactionInfoTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GWorld;
+	if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
+	Check(TEXT("World available (PIE preferred)"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinueReactionInfo WORLD: PIE=%d"), GWorld ? 1 : 0);
+
+	// Fresh grounded encounter: player commits Jump, opponent commits Heavy.
+	// The Heavy's startup begins during the Jump's reaction-locked instants, so
+	// the reaction is detected once the lock ends.
+	FBuhCombatState PreState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, -20.f, 0.f);
+
+	const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, 1, 200);
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinueReactionInfo RESOLVE: reaction=%d finalAction=%d finalPhase=%d finalPI=%d finalHeight=%.2f"),
+		Result.bReactionOpportunity ? 1 : 0,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Action : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Phase : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].PhaseInstants : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Height : -1.f);
+	Check(TEXT("Fresh Jump vs Heavy reaches a reaction pause"), Result.bReactionOpportunity);
+	if (!Result.bReactionOpportunity)
+	{
+		return bAllPassed;
+	}
+
+	// GetReactionInfo must report a reaction and offer Continue (7) because the
+	// player's current action is Jump (9).
+	const FBuhReactionInfo Info = UBuhCombatSim::GetReactionInfo(true, 0, 1, Result.ReactionInstant, Result.FinalState);
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinueReactionInfo INFO: isReaction=%d currentAction=%d legalCount=%d"),
+		Info.bIsReaction ? 1 : 0, Info.PlayerCurrentAction, Info.LegalActions.Num());
+	Check(TEXT("GetReactionInfo reports a reaction"), Info.bIsReaction);
+	Check(TEXT("Player current action is Jump (9)"), Info.PlayerCurrentAction == 9);
+	bool bHasContinue = false;
+	for (int32 A : Info.LegalActions)
+	{
+		if (A == 7) bHasContinue = true;
+	}
+	Check(TEXT("Legal actions include Continue (7)"), bHasContinue);
+
+	// Continue (decision 7) from the reaction state must resume the same Jump:
+	// the fighter keeps its airborne state, advances PhaseInstants, and lands at
+	// the original JumpTarget instead of re-initializing a grounded Jump.
+	const FBuhCombatResult ContinueResult = UBuhCombatSim::ExecuteMoveWithVars(
+		true, Result.FinalState,
+		(int32)Result.FinalState.Fighters[0].X, (int32)Result.FinalState.Fighters[1].X,
+		Result.FinalState.Fighters[0].Health, Result.FinalState.Fighters[1].Health,
+		0, 7, 1,
+		-9999.f, 0.f, 0.f, 0.f);
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinueReactionInfo CONTINUE: finalAction=%d finalPhase=%d finalPI=%d finalHeight=%.2f finalX=%.1f"),
+		ContinueResult.FinalState.Fighters.Num() > 0 ? ContinueResult.FinalState.Fighters[0].Action : -1,
+		ContinueResult.FinalState.Fighters.Num() > 0 ? ContinueResult.FinalState.Fighters[0].Phase : -1,
+		ContinueResult.FinalState.Fighters.Num() > 0 ? ContinueResult.FinalState.Fighters[0].PhaseInstants : -1,
+		ContinueResult.FinalState.Fighters.Num() > 0 ? ContinueResult.FinalState.Fighters[0].Height : -1.f,
+		ContinueResult.FinalState.Fighters.Num() > 0 ? ContinueResult.FinalState.Fighters[0].X : -1.f);
+	Check(TEXT("Continue resumes the Jump (action stays 9)"),
+		ContinueResult.FinalState.Fighters.Num() > 0 && ContinueResult.FinalState.Fighters[0].Action == 9);
+	Check(TEXT("Continue lands at the original JumpTarget X"),
+		ContinueResult.FinalState.Fighters.Num() > 0 &&
+		FMath::Abs(ContinueResult.FinalState.Fighters[0].X - (-20.f)) < 1.f);
+	Check(TEXT("Continue ends on the ground (Height 0)"),
+		ContinueResult.FinalState.Fighters.Num() > 0 &&
+		FMath::Abs(ContinueResult.FinalState.Fighters[0].Height) < 0.01f);
+
+	UBuhCombatSim::StopJumpPlayback();
 	return bAllPassed;
 }

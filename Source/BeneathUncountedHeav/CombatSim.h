@@ -443,6 +443,10 @@ public:
 	static int32 GJumpPlaybackIndex;
 	static float GJumpPlaybackAccumulator;
 	static bool GJumpPlaybackActive;
+	static float GJumpPlaybackJumpStartX;
+	static float GJumpPlaybackJumpStartY;
+	static float GJumpPlaybackJumpTargetX;
+	static float GJumpPlaybackJumpTargetY;
 
 	UFUNCTION(BlueprintPure, Category = "CombatSim")
 	static int32 GetDashElapsedMovementInstants(const FBuhCombatState& S);
