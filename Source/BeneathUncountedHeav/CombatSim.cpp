@@ -394,11 +394,15 @@ static bool CheckReactionPause(FBuhCombatState& S, int32 Inst, const int32 Attac
 {
 	for (int32 Threat = 0; Threat < 2; ++Threat)
 	{
-		if (AttackStart[Threat] != Threat) continue;
+		const FBuhFighterState& T = S.Fighters[Threat];
+		const bool bThreatObservable = ((T.Action == 0 || T.Action == 1) && T.Phase == 1 && T.bCommitted);
+		const bool bThreatStarted = (AttackStart[Threat] == Threat);
+		if (!bThreatObservable && !bThreatStarted) continue;
 		const int32 Defender = 1 - Threat;
 		FBuhFighterState& Def = S.Fighters[Defender];
 		if (!IsReactableMovement(Def)) continue;
 		if (Def.ReactedThreatFighter == Threat) continue;
+		if (bThreatObservable && !bThreatStarted && !Def.bCommitted) continue;
 		Def.ReactedThreatFighter = Threat;
 		OutEvent.Instant = Inst;
 		OutEvent.Type = 6;

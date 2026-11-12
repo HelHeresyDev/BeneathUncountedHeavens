@@ -1,97 +1,132 @@
-# Beneath Uncounted Heavens — Jump Playback Uses the Wrong Pre-Execution State (FIXED)
+# Beneath Uncounted Heavens — Fix Missed Reaction During Jump's Locked Instants
 
-Root cause confirmed, fixed, regression-tested, and verified headless. The full UI-driven graphical-PIE click-through is still pending (headless cannot click WBP buttons).
+## Status — RESOLVED and verified (headless)
 
-## 1. Root cause (CONFIRMED)
+The missed-reaction bug is fixed in `CheckReactionPause` (see `notes.md` §9.36). A committed attack that is still in Phase 1 startup when the Jump becomes reactable now triggers the pause; the defender's `bCommitted` flag prevents stale pauses on already-moving fighters. The fresh-encounter regression `BUH.JumpFreshEncounterReactionTest` passes (reaction at instant 4, height 206.25, `StoppedReason==5`). All 16 BUH automation suites pass (passed=16, failed=0) and `CombatTestReport.txt` shows 69 passed / 0 failed. Remaining: the full UI-driven graphical-PIE click-through (click Jump → destination → Execute → Reaction → Continue) still needs a graphical PIE run, because headless `-nullrhi` PIE cannot click WBP buttons.
 
-Read the actual saved `BP_CombatManager.ExecuteMove` graph via MCP. It showed:
+The user tested the latest commit `dd81464` in graphical PIE. Jump moves through the air but does not pause midair as expected.
 
-- `_returnvalue` = original `MakeState` (JumpTarget = -9999).
-- When `PlayerMove == 9`: `_returnvalue_1 = WithPlayerJumpTargetFromPreview(_returnvalue)` and `PreExecutionState = _returnvalue_1` (JumpTarget set).
-- `ExecuteMoveWithVars` resolves from `_returnvalue` but applies `GExecJumpTarget` internally, so the resolver used the real destination.
-- `BeginJumpPlayback` received `_returnvalue` (JumpTarget = -9999), NOT `PreExecutionState`.
+The screenshots show the HUD remaining at "Select a move / Ready", not "Reaction opportunity".
 
-So `GenerateTimeline(PreState, ...)` started from a state with `JumpTarget = -9999`. `PrepareJumpCommit` substituted the takeoff XY, producing a Jump in place even though the resolver used the real destination. `DrawJumpPathFromState` read the same wrong `GJumpPlaybackPreState`, explaining the incorrect trajectory.
+I inspected `CombatSim.cpp` and found a likely root cause in `CheckReactionPause()`.
 
-C++ verification:
-- `BeginJumpPlayback` (CombatSim.cpp:3315) calls `GenerateTimeline(PreState, ...)` at line 3330 and stores `GJumpPlaybackPreState = PreState`.
-- `PrepareJumpCommit` (CombatSim.cpp:369) sets `JumpTarget = F.X` when `F.JumpTarget < -9998.f` (Jump in place).
-- `WithPlayerJumpTargetFromPreview` (CombatSim.cpp:150) uses `GPlayerJumpTarget`; `ExecuteMoveWithVars` (CombatSim.cpp:2840) uses `GExecJumpTarget`. Both are set to the same value by `SelectJumpDestination`.
+## 1. The specific bug
 
-## 2. Four critical states (one real Jump selection)
+`CheckReactionPause()` contains:
 
-A. Confirmed pending selection:
-- PlayerMove = 9
-- Preview Jump target XY = (-20, 120)
-- Execution Jump target XY = (-20, 120)
+`if (AttackStart[Threat] != Threat) continue;`
 
-B. PreExecutionState (committed):
-- Player X/Y = (500, 0)
-- JumpStart X/Y = (500, 0)
-- JumpTarget X/Y = (-20, 120)
-- Action = -1, Phase = 0, PhaseInstants = 0 (grounded, not yet committed)
+It only detects a threat on the Instant the attack begins.
 
-C. State passed to BeginJumpPlayback:
-- BEFORE fix: JumpTarget = -9999 (the unadjusted `_returnvalue`) — differed from PreExecutionState.
-- AFTER fix: JumpTarget = (-20, 120) — identical to PreExecutionState.
+But Jump's first three flight Instants are reaction-locked.
 
-D. Result.FinalState:
-- Final player X/Y = (324.6, 40.5)
-- Player Height = 206.25
-- Action = 9, Phase = 2, PhaseInstants = 3
-- ReactionOpportunity = true, ReactionInstant = 4
+In an ordinary encounter:
+- Player commits Jump.
+- Opponent commits Heavy simultaneously.
+- The opponent starts Heavy while Jump is still reaction-locked.
+- CheckReactionPause skips the threat.
+- When Jump becomes reactable, the opponent's Heavy is still preparing, but AttackStart is no longer set.
+- The reaction opportunity is lost.
+- Jump continues to landing, and the manager returns to Planning.
 
-First five playback snapshots (XY, Height):
-- inst=0: (500.0, 0.0), Z=90.0
-- inst=1: (441.5, 13.5), Z=186.2
-- inst=2: (383.1, 27.0), Z=255.0
-- inst=3: (324.6, 40.5), Z=296.2
-- inst=4: (324.6, 40.5), Z=296.2, reaction=1
+This explains why the specially constructed `BUH.JumpGroundedReactionTest` passes but the normal user experience fails.
 
-No Jump target was -9999, zero, or replaced with the takeoff coordinates after the fix. Before the fix the playback PreState target was -9999.
+**Confirm this with a test reproducing a fresh encounter, not an opponent artificially placed in recovery.**
 
-## 3. State handoff fix (DONE)
+## 2. Required reaction behavior
 
-Smallest targeted Blueprint edit to `BP_CombatManager.ExecuteMove`: the final `BeginJumpPlayback` call now passes `(Variables|Default|GetPreExecutionState)` instead of `_returnvalue` as the `PreState` argument. No second targeting state invented; `ExecuteMoveWithVars` and `WithPlayerJumpTargetFromPreview` both apply the same destination (GExecJumpTarget == GPlayerJumpTarget). Jump's deterministic XY movement and parabolic height are preserved. The whole EventGraph was not rewritten.
+An opponent's attack that becomes observable during the locked portion of Jump must remain eligible for a reaction when Jump becomes reactable, provided the attack is still an active, observable threat.
 
-## 4. Resolution vs playback (VERIFIED)
+For the current prototype:
 
-- First playback snapshot matches the real takeoff (500, 0).
-- Every subsequent airborne XY moves toward the selected landing point.
-- Playback destination (324.6, 40.5) matches the authoritative committed Jump destination.
-- Final playback snapshot agrees with the resolved state at the reaction boundary (Height 206.25).
-- Path renderer uses the same takeoff/landing pair (Last=(-20.0,120.0) in the path logs).
-- At the airborne reaction the fighter freezes at the snapshot XYZ (Z=296.25 = 90 + 206.25); the remaining path uses the original parabola.
+- The first three active Jump Instants are locked.
+- From the fourth active Instant onward, a qualifying observable threat can trigger a pause.
+- If Heavy began during the lock and is still preparing when the lock ends, trigger a reaction at the first legal opportunity.
+- If the threat has already ended, do not trigger a stale reaction.
+- If the opponent is idle or no qualifying threat exists, Jump should complete normally and land.
+- A fighter must not receive multiple reaction pauses for the same attack event.
+- A genuinely new opponent attack can create a new reaction opportunity.
 
-## 5. Diagnostic vs real combat
+Do not expose uncommitted or hidden opponent decisions.
 
-The `BUH.TriggerReactionJump` diagnostic was not used for this verification. The regression test exercises the same target-confirmation and execution-state-building functions as the manager (SetPreviewJumpTarget/SetExecJumpTarget, MakeStateWithPhases, WithPlayerJumpTargetFromPreview, ExecuteMoveWithVars, BeginJumpPlayback with the committed prestate). The manager enters State=Reaction when the resolver returns a reaction opportunity (Result.bReactionOpportunity = true). Continue/full-flow graphical click-through is still pending.
+Reuse the existing reaction-bookkeeping mechanism where practical, but distinguish a newly observed threat from an already reacted-to threat.
 
-## 6. Regression test (ADDED, PASSING)
+This should eventually work for Dash as well, but preserve its verified behavior during this repair.
 
-`BUH.JumpTargetHandoffTest` in PathRendererAutomation.cpp:
-- Player on the right (X=500), opponent on the left (X=-500) and mid-Heavy (Phase=3).
-- Jump landing point clearly to the left and offset on Y: (-20, 120).
-- Exercises the same functions as the manager.
-- Asserts: pending target valid; playback prestate contains the target; target not -9999; playback fighter changes XY during flight; snapshots agree with the resolver; remaining path ends at the original clamped destination; reaction pause freezes at the correct XYZ.
-- Control: a timeline generated from the ORIGINAL state (JumpTarget=-9999) jumps in place (movedXY=0), proving the unfixed path is caught.
-- Result: `Success`. Real fighter actor moved to (324.6, 40.5) and froze at Z=296.25.
+## 3. Regression test — reproduce actual gameplay
 
-All existing Walk, Dash, and Jump tests kept and passing.
+Create a test using the normal initial combat state:
 
-## 7. Verification and push (DONE headless)
+- Player at X=500, Y=0.
+- Opponent at X=-500, Y=0.
+- Both grounded and ready.
+- Player chooses Jump (9), targeting a valid displaced XY destination.
+- Opponent chooses Heavy (1) on the same decision.
+- Resolve normally with reaction pauses enabled.
 
-- Read back the corrected `BP_CombatManager.ExecuteMove` graph: `BeginJumpPlayback` now uses `(Variables|Default|GetPreExecutionState)`.
-- Compiled and saved `BP_CombatManager` (`save_assets` returned true).
-- Ran all 5 Jump tests: `BUH.JumpSimulationTests`, `BUH.JumpPathColorTests`, `BUH.JumpPlaybackIntegrationTests`, `BUH.JumpGroundedReactionTest`, `BUH.JumpTargetHandoffTest` — all `Success` (passed=5, failed=0).
-- notes.md updated with the proven state mismatch and fix.
-- Committed and pushed to origin/master.
+The test must demonstrate that the OLD code misses the reaction.
 
-Report:
-- Mismatched prestate confirmed: YES (BeginJumpPlayback received `_returnvalue` with JumpTarget=-9999, not PreExecutionState).
-- Before fix: playback PreState JumpTarget = -9999 → Jump in place (movedXY=0).
-- After fix: playback PreState JumpTarget = (-20, 120) → fighter moves to (324.6, 40.5), freezes at Z=296.25.
-- Tests passed: 5/5 Jump tests.
-- Full UI-driven graphical-PIE click-through: NOT yet verified (headless cannot click WBP buttons; needs a graphical PIE session).
+After the fix, verify:
 
-**Success criterion (met headless):** The combat resolver, actual airborne fighter, playback timeline, and remaining Jump path all use the same committed destination and stop at the same reaction state.
+- Heavy becomes observable while Jump is locked.
+- No reaction occurs during the locked Instants.
+- At the first legal reactable Instant, Heavy remains a qualifying threat.
+- `Result.bReactionOpportunity == true`.
+- `Result.StoppedReason == 5`.
+- `Result.ReactionFighter == 0`.
+- Player Action == 9.
+- Player is still in the active flight phase.
+- Player Height is positive (expected approximately 206.25 uu at the three-flight-Instant boundary).
+- Original Jump start and landing coordinates are preserved.
+
+Then verify that the actual timeline also stops at the same reaction state.
+
+## 4. Verify manager reaction and Continue
+
+Use the actual BP_CombatManager execution path.
+
+After ResolveCombat reports the reaction:
+- Manager.State must become Reaction.
+- WBP_CombatUI must show the reaction controls, including Continue.
+- Fighter should be at WorldZ = 90 + authoritative Height.
+- The remaining Jump parabola must persist.
+- It must not move while waiting for input.
+
+On Continue:
+- Reuse the stored CurrentState, not a new grounded MakeState.
+- Preserve original Jump flight progress and destination.
+- Do not restart Jump or its locked Instants.
+- Do not repeat the same reaction.
+- Complete the remaining trajectory and land normally.
+
+IMPORTANT: Inspect the current ExecuteMove graph carefully. Its exported `ExecuteMoveWithVars` call contains a literal `false` for `bHasCurrentState`. Verify that this does not cause Continue to discard the saved airborne state.
+
+Fix the state handoff if necessary, using the existing authoritative state. Do not create a parallel Jump state machine.
+
+## 5. Distinguish actual reaction from ordinary landing
+
+Record these values after the user executes Jump:
+
+`StoppedReason, bReactionOpportunity, ReactionInstant, CurrentState.Action, CurrentState.Phase, CurrentState.Height, Manager.State`
+
+If no reaction was generated, the fighter landing is expected. Fix the missing reaction instead of modifying actor gravity.
+
+If a reaction WAS generated and the actor nevertheless falls, identify which actor-transform writer caused that separately.
+
+Do not confuse the special `BUH.TriggerReactionJump` diagnostic with a real UI-driven Jump.
+
+## 6. Verification and GitHub
+
+Keep the existing movement parameters and parabolic trajectory.
+
+Run all BUH automation suites, including the new fresh-encounter simultaneous Jump-versus-Heavy regression.
+
+Compile, save, and read back the actual Blueprints.
+
+Update `tests/blueprint_exports/`, `notes.md`, and `todo.md`.
+
+Commit and push to `origin/master`, reporting the SHA and test results.
+
+Do not claim graphical success until the actual game shows Reaction/Continue while the blue fighter remains suspended.
+
+**Success: Starting Jump against an opponent Heavy that begins during Jump's locked Instants creates a reaction at the first legal opportunity, freezes the fighter midair, and allows Continue to finish the same Jump.**

@@ -987,16 +987,16 @@ bool FBuhJumpSimulationTest::RunTest(const FString& Parameters)
 	FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
 	const FBuhCombatResult Vertical = UBuhCombatSim::ResolveCombat(S, 9, 1, 200);
 	Check(TEXT("Vertical Jump lands in place"), Vertical.FinalState.Fighters.Num() >= 1 && FMath::Abs(Vertical.FinalState.Fighters[0].X - (-500.f)) < 1.f);
-	Check(TEXT("Vertical Jump ends on the ground"), Vertical.FinalState.Fighters.Num() >= 1 && FMath::Abs(Vertical.FinalState.Fighters[0].Height) < 1.f);
+	Check(TEXT("Vertical Jump pauses at the reaction instead of landing"), Vertical.StoppedReason == 5 && Vertical.bReactionOpportunity && Vertical.FinalState.Fighters.Num() >= 1 && Vertical.FinalState.Fighters[0].Height > 50.f);
 	Check(TEXT("Vertical Jump takes no damage from a long Heavy"), Vertical.FinalState.Fighters.Num() >= 1 && Vertical.FinalState.Fighters[0].Health == 100);
 
-	FBuhCombatState ClampState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	FBuhCombatState ClampState = UBuhCombatSim::MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 3, 0);
 	ClampState = UBuhCombatSim::WithPlayerJumpTarget(ClampState, 500.f, 0.f);
-	const FBuhCombatResult Clamp = UBuhCombatSim::ResolveCombat(ClampState, 9, 1, 200);
+	const FBuhCombatResult Clamp = UBuhCombatSim::ResolveCombat(ClampState, 9, -1, 200);
 	Check(TEXT("Jump clamps to the 480 uu range"), Clamp.FinalState.Fighters.Num() >= 1 && FMath::Abs(Clamp.FinalState.Fighters[0].X - (-20.f)) < 1.f);
 	Check(TEXT("Clamped Jump ends on the ground"), Clamp.FinalState.Fighters.Num() >= 1 && FMath::Abs(Clamp.FinalState.Fighters[0].Height) < 1.f);
 
-	FBuhCombatState ShortState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	FBuhCombatState ShortState = UBuhCombatSim::MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 3, 0);
 	ShortState = UBuhCombatSim::WithPlayerJumpTarget(ShortState, -400.f, 0.f);
 	const TArray<FBuhTimelineSnapshot> ShortTimeline = UBuhCombatSim::GenerateTimeline(ShortState, 9, -1, 200);
 	Check(TEXT("Short Jump still flies for 8 Instants"), ShortTimeline.Num() >= 9);
@@ -1200,7 +1200,7 @@ bool FBuhJumpPlaybackIntegrationTest::RunTest(const FString& Parameters)
 
 	UBuhCombatSim::StopJumpPlayback();
 
-	FBuhCombatState CompletedPre = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	FBuhCombatState CompletedPre = UBuhCombatSim::MakeStateWithPhases(-500, 500, 100, 100, 0, 0, 0, 3, 0);
 	CompletedPre = UBuhCombatSim::WithPlayerJumpTarget(CompletedPre, -20.f, 0.f);
 	const FBuhCombatResult CompletedResult = UBuhCombatSim::ResolveCombat(CompletedPre, 9, -1, 200);
 	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, CompletedPre, 9, -1, CompletedResult);
@@ -1397,6 +1397,73 @@ bool FBuhJumpGroundedReactionTest::RunTest(const FString& Parameters)
 	if (!Player->Tags.Contains(TEXT("PlayerFighter"))) Player->Destroy();
 	if (!Opponent->Tags.Contains(TEXT("OpponentFighter"))) Opponent->Destroy();
 	if (!World->GetFirstPlayerController()) PC->Destroy();
+	return bAllPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpFreshEncounterReactionTest, "BUH.JumpFreshEncounterReactionTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpFreshEncounterReactionTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GWorld;
+	if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
+	Check(TEXT("World available (PIE preferred)"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpFreshEncounter WORLD: PIE=%d"), GWorld ? 1 : 0);
+
+	// Fresh grounded encounter: both fighters ready (Phase 0). The player
+	// commits Jump and the opponent commits Heavy on the same decision, so the
+	// Heavy's startup begins during the Jump's three reaction-locked instants.
+	// The reaction must still be detected once the lock ends and the Heavy is
+	// still preparing.
+	FBuhCombatState PreState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, -20.f, 0.f);
+
+	const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, 1, 200);
+	UE_LOG(LogTemp, Warning, TEXT("JumpFreshEncounter RESOLVE: reaction=%d stoppedReason=%d finalAction=%d finalPhase=%d finalPI=%d finalHeight=%.2f"),
+		Result.bReactionOpportunity ? 1 : 0, Result.StoppedReason,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Action : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Phase : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].PhaseInstants : -1,
+		Result.FinalState.Fighters.Num() > 0 ? Result.FinalState.Fighters[0].Height : -1.f);
+	Check(TEXT("Fresh-encounter Jump reacts to a Heavy that began during its lock"), Result.bReactionOpportunity);
+	Check(TEXT("Reaction pause is airborne"), Result.FinalState.Fighters.Num() > 0 && Result.FinalState.Fighters[0].Height > 50.f);
+	if (!Result.bReactionOpportunity)
+	{
+		return bAllPassed;
+	}
+
+	const TArray<FBuhTimelineSnapshot> Timeline = UBuhCombatSim::GenerateTimeline(PreState, 9, 1, 200, false, false);
+	bool bTimelineReaction = false;
+	float TimelineReactionHeight = 0.f;
+	int32 TimelineReactionInstant = -1;
+	for (const FBuhTimelineSnapshot& S : Timeline)
+	{
+		if (S.bReactionOpportunity)
+		{
+			bTimelineReaction = true;
+			TimelineReactionHeight = S.PlayerHeight;
+			TimelineReactionInstant = S.Instant;
+			break;
+		}
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpFreshEncounter TIMELINE: count=%d reaction=%d reactionInstant=%d reactionHeight=%.2f"),
+		Timeline.Num(), bTimelineReaction ? 1 : 0, TimelineReactionInstant, TimelineReactionHeight);
+	Check(TEXT("Playback timeline reproduces the fresh-encounter reaction"), bTimelineReaction);
+	Check(TEXT("Reaction occurs after the three reaction-locked instants"), TimelineReactionInstant == 4);
+	Check(TEXT("Authoritative and playback reaction heights match"),
+		Result.FinalState.Fighters.Num() > 0 && FMath::Abs(Result.FinalState.Fighters[0].Height - TimelineReactionHeight) < 0.01f);
+
+	UBuhCombatSim::StopJumpPlayback();
 	return bAllPassed;
 }
 
