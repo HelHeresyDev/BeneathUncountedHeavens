@@ -1,6 +1,13 @@
 #include "CombatSim.h"
 #include "Misc/AutomationTest.h"
 #include "Engine/Blueprint.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/Actor.h"
+#include "UObject/UObjectIterator.h"
+#include "UObject/UnrealType.h"
+#include "Blueprint/UserWidget.h"
+#include "Components/Button.h"
 
 // todo.md §9 — 13 automated tests for the Tactical Timeline Preview.
 //
@@ -272,4 +279,214 @@ bool FBuhTimelinePreviewTest::RunTest(const FString& Parameters)
 	}
 
 	return bAllPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieWalkContinueReactionTest, "BUH.PIE.WalkContinueReaction",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhPieWalkContinueReactionTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = GWorld;
+	if (!World)
+	{
+		AddError(TEXT("No active world. Start PIE first."));
+		return false;
+	}
+
+	AActor* CM = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetClass()->GetName().Contains(TEXT("BP_CombatManager")))
+		{
+			CM = *It;
+			break;
+		}
+	}
+	if (!CM)
+	{
+		AddError(TEXT("No BP_CombatManager actor in the PIE world."));
+		return false;
+	}
+
+	UClass* Class = CM->GetClass();
+
+	auto GetInt = [CM, Class](const TCHAR* Name) -> int32
+	{
+		if (FProperty* P = FindFProperty<FProperty>(Class, Name))
+		{
+			return *P->ContainerPtrToValuePtr<int32>(CM);
+		}
+		return INT_MIN;
+	};
+
+	auto SetInt = [CM, Class](const TCHAR* Name, int32 Value) -> bool
+	{
+		if (FProperty* P = FindFProperty<FProperty>(Class, Name))
+		{
+			*P->ContainerPtrToValuePtr<int32>(CM) = Value;
+			return true;
+		}
+		return false;
+	};
+
+	auto GetBool = [CM, Class](const TCHAR* Name) -> bool
+	{
+		if (FProperty* P = FindFProperty<FProperty>(Class, Name))
+		{
+			return *P->ContainerPtrToValuePtr<bool>(CM);
+		}
+		return false;
+	};
+
+	auto SetBool = [CM, Class](const TCHAR* Name, bool Value) -> bool
+	{
+		if (FProperty* P = FindFProperty<FProperty>(Class, Name))
+		{
+			*P->ContainerPtrToValuePtr<bool>(CM) = Value;
+			return true;
+		}
+		return false;
+	};
+
+	auto CallBP = [CM, Class](const TCHAR* FuncName) -> bool
+	{
+		UFunction* Func = Class->FindFunctionByName(FName(FuncName));
+		if (!Func)
+		{
+			return false;
+		}
+		uint8* Params = nullptr;
+		if (Func->ParmsSize > 0)
+		{
+			Params = (uint8*)FMemory::Malloc(Func->ParmsSize);
+			FMemory::Memzero(Params, Func->ParmsSize);
+		}
+		CM->ProcessEvent(Func, Params);
+		if (Params)
+		{
+			FMemory::Free(Params);
+		}
+		return true;
+	};
+
+	auto GetCurrentStatePtr = [CM, Class]() -> FBuhCombatState*
+	{
+		FStructProperty* CS = FindFProperty<FStructProperty>(Class, TEXT("CurrentState"));
+		return (CS && CS->Struct) ? CS->ContainerPtrToValuePtr<FBuhCombatState>(CM) : nullptr;
+	};
+
+	AActor* PlayerFighter = nullptr;
+	AActor* OpponentFighter = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* A = *It;
+		if (!A->GetClass()->GetName().Contains(TEXT("BP_Fighter")))
+		{
+			continue;
+		}
+		bool bIsGhost = false;
+		if (FProperty* P = FindFProperty<FProperty>(A->GetClass(), TEXT("bIsGhost")))
+		{
+			bIsGhost = *P->ContainerPtrToValuePtr<bool>(A);
+		}
+		if (bIsGhost)
+		{
+			continue;
+		}
+		int32 Team = -1;
+		if (FProperty* PTeam = FindFProperty<FProperty>(A->GetClass(), TEXT("Team")))
+		{
+			Team = *PTeam->ContainerPtrToValuePtr<int32>(A);
+		}
+		else if (FProperty* PTeamLower = FindFProperty<FProperty>(A->GetClass(), TEXT("team")))
+		{
+			Team = *PTeamLower->ContainerPtrToValuePtr<int32>(A);
+		}
+		const bool bPlayerTag = A->ActorHasTag(FName(TEXT("PlayerFighter")));
+		const bool bOpponentTag = A->ActorHasTag(FName(TEXT("OpponentFighter")));
+		if ((bPlayerTag || Team == 0) && !PlayerFighter)
+		{
+			PlayerFighter = A;
+		}
+		if ((bOpponentTag || Team == 1) && !OpponentFighter)
+		{
+			OpponentFighter = A;
+		}
+		if (PlayerFighter && OpponentFighter)
+		{
+			break;
+		}
+	}
+	if (!PlayerFighter)
+	{
+		if (FObjectProperty* PFProp = FindFProperty<FObjectProperty>(Class, TEXT("PlayerFighter")))
+		{
+			PlayerFighter = Cast<AActor>(PFProp->GetObjectPropertyValue_InContainer(CM));
+		}
+	}
+	if (!OpponentFighter)
+	{
+		if (FObjectProperty* OFProp = FindFProperty<FObjectProperty>(Class, TEXT("OpponentFighter")))
+		{
+			OpponentFighter = Cast<AActor>(OFProp->GetObjectPropertyValue_InContainer(CM));
+		}
+	}
+	if (!PlayerFighter || !OpponentFighter)
+	{
+		AddError(TEXT("Player/opponent BP_Fighter actors not found in the PIE world."));
+		return false;
+	}
+
+	if (FObjectProperty* PFProp = FindFProperty<FObjectProperty>(Class, TEXT("PlayerFighter")))
+	{
+		PFProp->SetObjectPropertyValue_InContainer(CM, PlayerFighter);
+	}
+	if (FObjectProperty* OFProp = FindFProperty<FObjectProperty>(Class, TEXT("OpponentFighter")))
+	{
+		OFProp->SetObjectPropertyValue_InContainer(CM, OpponentFighter);
+	}
+
+	if (!CallBP(TEXT("ResetEncounter")))
+	{
+		AddError(TEXT("ResetEncounter function not found on BP_CombatManager."));
+		return false;
+	}
+	SetInt(TEXT("OpponentMove"), 1);
+	SetInt(TEXT("TargetingAction"), -1);
+	SetBool(TEXT("bHasCurrentState"), false);
+
+	if (!CallBP(TEXT("SelectWalkToward")))
+	{
+		AddError(TEXT("SelectWalkToward function not found on BP_CombatManager."));
+		return false;
+	}
+	if (!CallBP(TEXT("ExecuteMove")))
+	{
+		AddError(TEXT("ExecuteMove function not found on BP_CombatManager."));
+		return false;
+	}
+
+	FBuhCombatState St = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	St = UBuhCombatSim::WithPlayerWalkTarget(St, 500.f);
+	FBuhCombatResult Res = UBuhCombatSim::ResolveCombat(St, 4, 1, 100);
+	TestTrue(TEXT("Resolver reports a reaction opportunity for Walk vs Heavy"),
+		UBuhCombatSim::IsReactionOpportunity(Res));
+	const int32 ReactionFighter = UBuhCombatSim::GetReactionFighter(Res);
+	const int32 ObservedThreatAction = UBuhCombatSim::GetObservedThreatAction(Res);
+	const int32 ReactionInstant = UBuhCombatSim::GetReactionInstant(Res);
+	TestTrue(TEXT("Reaction fighter is the player (0)"), ReactionFighter == 0);
+	TestTrue(TEXT("Observed threat action is Heavy (1)"), ObservedThreatAction == 1);
+
+	FBuhCombatState FinalState = UBuhCombatSim::GetFinalState(Res);
+	const FBuhReactionInfo Info = UBuhCombatSim::GetReactionInfo(
+		true, ReactionFighter, ObservedThreatAction, ReactionInstant, FinalState);
+	TestTrue(TEXT("GetReactionInfo reports a reaction"), Info.bIsReaction);
+	bool bContinueLegal = false;
+	for (const int32 A : Info.LegalActions)
+	{
+		if (A == 7) { bContinueLegal = true; break; }
+	}
+	TestTrue(TEXT("Continue (7) is a legal reaction action"), bContinueLegal);
+
+	return true;
 }

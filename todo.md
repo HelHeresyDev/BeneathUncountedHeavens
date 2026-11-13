@@ -1,307 +1,213 @@
-# Beneath Uncounted Heavens — Tactical Timeline Preview
+# BUH — URGENT REGRESSION: Restore Movement After Timeline Preview Update
 
-## Objective
+The user tested commit `2b155ac` in graphical PIE and reports that movement is broken.
 
-Make the existing hypothetical combat timeline fully usable in graphical PIE.
+The previous commit `f53bfc6` had user-confirmed working Walk, Dash, Jump, Continue, and clean startup.
 
-The user has confirmed that Walk, Dash, Jump, airborne reactions, Continue, and clean startup now work. Preserve those systems.
+Prioritize restoring movement functionality. Pause all new timeline-preview features.
 
-**Do not create a new simulation system. Connect and repair the existing prediction infrastructure.**
+## Status (updated after regression fix)
 
-Read the latest `AGENTS.md`, `todo.md`, relevant `notes.md` sections, and the current GitHub source before editing.
+- Known-good commit `f53bfc6`; broken commit `2b155ac`.
+- Root cause: `BP_CombatManager.ExecuteMove` set `State=3`, `ReactionInstant`, `ReactionFighter`, and `ObservedThreatAction` on a reaction, but never set `bReactionOpportunity`. `WBP_CombatUI.RefreshUI` hides `BtnContinueWalk` unless `GetReactionInfo(...).bIsReaction` is true, which requires `bReactionOpportunity==true`, `ReactionFighter==0`, and a valid `CurrentState`.
+- Fix: `ExecuteMove` now calls `SetReactionOpportunity true` in the reaction branch and `false` in the no-reaction, player-KO, opponent-KO, and `PlayerMove==-1` branches. The Blueprint was compiled and saved.
+- `WBP_CombatUI.TimelineSlider.OnValueChanged` was already correct; the export file `tests/blueprint_exports/tactical_timeline_preview.md` was inaccurate and has been corrected to match the actual saved graph.
+- `TimelineSlider` defaults: `MinValue = 0`, `MaxValue = 30`, `StepSize = 0.01`. The handler clamps the selected index to `[0, GetTimelineLength()-1]`.
+- Added PIE-world integration test `BUH.PIE.WalkContinueReaction`. It invokes `ResetEncounter`, `SelectWalkToward`, and `ExecuteMove`, then verifies the C++ resolver produces a reaction opportunity and that `GetReactionInfo` includes Continue (action 7). It passes under headless `-nullrhi`; it does not verify Blueprint variable writes or widget visibility because `ProcessEvent` variable writes are not observable in editor context.
+- All 24 `BUH` automation tests pass.
+- Graphical PIE A–J verification is still pending and must be performed in a real PIE session.
 
-## 1. Inspect the existing prediction implementation
+## Evidence from the screenshot
 
-Relevant existing C++ functions include:
+The HUD shows:
+- "Reaction opportunity / Ready / 0: Heavy"
+- "Your: Walk"
+- A green Walk trajectory.
+- The real fighters remain at their original positions.
+- No visible Continue button.
 
-- `GenerateTimeline`
-- `SetCurrentTimeline`
-- `GetSnapshotAt`
-- `GetTimelineLength`
-- `GetSnapshotInstantText`
-- `GetSnapshotInfoText`
-- `MoveGhostsToInstant`
-- `GetSnapshotPlayerHeight`
-- `GetSnapshotOpponentHeight`
+A reaction at Instant 0 may legitimately occur before Walk moves. Do not change the reaction timing merely to make the fighter move.
 
-`FBuhTimelineSnapshot` already stores positions, height, actions, phases, health, reaction information, and combat events.
+But a legitimate Walk reaction should allow Continue, and the UI does not display it.
 
-Inspect the SAVED Blueprint graphs for:
+Determine whether the manager's authoritative reaction state is incorrect or the widget is failing to display the legal action.
 
-- `BP_CombatManager.BuildPredictions`
-- `WBP_CombatUI.RefreshUI`
-- `WBP_CombatUI.TimelineSlider.OnValueChanged`
-- All four hypothetical opponent action buttons
-- Player action selection and movement confirmation handlers
+## 1. Compare against the known-good commit
 
-Determine which connections already work and which are missing. Reuse existing controls and ghosts.
+Inspect the Git diff between:
 
-## 2. Make timeline scrubbing functional
+`f53bfc6` — last user-confirmed working movement
 
-When the player selects an action and hypothetical opponent response, generate a deterministic prediction timeline.
+`2b155ac` — timeline-preview changes
 
-The timeline slider must navigate actual snapshot indices.
+Focus on changed binary Blueprint assets:
 
-At every selected Instant:
+- `BP_CombatManager.uasset`
+- `WBP_CombatUI.uasset`
 
-- Cyan ghost shows the predicted player's position.
-- Orange ghost shows the hypothetical opponent's position.
-- Both use correct X, Y, and Z.
-- Both use the snapshot's facing direction.
-- Actual red and blue fighters remain stationary.
-- The displayed Instant corresponds to the selected snapshot.
-- Scrubbing backward correctly restores earlier predicted positions.
+Read their CURRENT saved graphs through MCP.
 
-Use:
+Specifically inspect:
+- EventBeginPlay and InitCurrentState
+- ExecuteMove
+- ResetEncounter
+- BuildPredictions / GeneratePreviewTimeline
+- RefreshUI
+- Walk/Dash/Jump selection and destination confirmation
+- Continue button visibility and OnClicked
+- TimelineSlider.OnValueChanged
+- EventTick
 
-`WorldZ = GroundZ + Snapshot.Height`
+The new timeline implementation must not initialize, overwrite, or reset real combat state during hypothetical prediction.
 
-An airborne Jump must place the cyan ghost in the air.
+## 2. Reproduce Walk → Heavy reaction
 
-Do not confuse the snapshot array index with `Snapshot.Instant`. Display the actual Instant value.
+From a fresh encounter:
 
-The existing GenerateTimeline implementation records snapshots after simulation steps, so inspect the initial-snapshot behavior before labeling the first slider position.
+1. Choose Walk.
+2. Confirm an XY destination.
+3. Execute against the normally committed opponent Heavy.
+4. Inspect the reaction state at Instant 0.
 
-Clamp all slider inputs to valid indices. Do not read beyond the timeline.
+Record:
+- Manager.State
+- PlayerMove
+- bHasCurrentState
+- bReactionOpportunity
+- ReactionFighter
+- CurrentState.Fighters[0].Action
+- CurrentState.Fighters[0].Phase and PhaseInstants
+- CurrentState.Fighters[0].WalkTarget XY
+- GetReactionInfo().bIsReaction
+- GetReactionInfo().LegalActions
+- Continue button visibility
+- Whether Continue's OnClicked delegate is bound
 
-If the timeline has zero or one snapshots, handle that gracefully without division by zero.
+C++ GetReactionInfo already includes action ID 7 (Continue) when the current player action is Walk (ID 4, 5, or 6), Dash (8), or Jump (9).
 
-## 3. Display useful tactical information
+If CurrentState indicates Walk and GetReactionInfo returns Continue as legal, fix the UI visibility/binding.
 
-For the selected Instant, show:
+If CurrentState has lost the active Walk, identify the write that overwrote it.
 
-**Player**
-- Selected action.
-- Startup, active, recovery, or ready phase.
-- Current phase progress.
-- Health.
+If the player is in a legitimate reaction at Instant 0, clicking Continue should advance the original Walk toward the selected destination.
 
-**Hypothetical opponent**
-- Selected hypothetical action.
-- Current phase and progress.
-- Health.
+## 3. Check the new initialization and preview pathways
 
-**Combat events**
-- Attack connects and damage dealt.
-- Attack misses.
-- Guard blocks.
-- Dodge avoids an attack.
-- Reaction opportunity occurs.
-- A fighter becomes ready.
-- KO or encounter-ending event.
+The new timeline export shows:
 
-Use existing snapshot events and simulation outcomes.
+`ResetEncounter → InitCurrentState`
 
-Do not invent hit results based on cylinder overlap or distance alone.
+and a GeneratePreviewTimeline function that reads CurrentState.
 
-When an Instant contains no combat event, a short "No event" message is sufficient.
+Check whether InitCurrentState changes bHasCurrentState, phase, active action, or any execution-state variable in a way that alters the original ExecuteMove behavior.
 
-Keep the display concise and readable. Avoid the current barely visible prediction text beneath the opponent buttons.
+Hypothetical preview must NEVER write:
+- CurrentState
+- bHasCurrentState
+- Manager.State
+- Reaction flags
+- PlayerMove
+- OpponentMove
+- Real fighter actor transforms
 
-The goal is functionality, not a wholesale UI redesign.
+unless that write is part of the existing authoritative execution flow, not preview generation.
 
-## 4. Highlight important Instants
+Use a copy of the authoritative combat state for prediction calculations.
 
-Make important timeline moments discoverable.
+Do not assume that because a C++ function takes its state by value, the surrounding Blueprint is incapable of changing manager variables.
 
-At minimum, show the next significant event and allow jumping directly to it.
+## 4. Fix the confirmed timeline slider wiring error
 
-Useful event types:
+I inspected `tests/blueprint_exports/tactical_timeline_preview.md`.
 
-- First attack activation.
-- Hit, miss, guard, or dodge.
-- Reaction opportunity.
-- Recovery completion.
-- End of the predicted sequence.
+The saved TimelineSlider.OnValueChanged export shows:
 
-Prefer using existing `FBuhTimelineSnapshot.Events` and `StoppedReason`.
+`_returnvalue = Truncate(Value)`
 
-Do not implement an elaborate interactive timeline visualization yet. A small "Next Event" control and readable Instant/event text are enough.
+but the subsequent snapshot getters use:
 
-If snapshot data cannot reliably identify a particular event type, report the limitation rather than guessing.
+`Truncate(GetTimelineLength())`
 
-## 5. Preserve hypothetical opponent selection
+That is wrong.
 
-The four existing opponent buttons are:
+For a timeline of N snapshots, indices are 0 through N-1, not N.
 
-Quick, Heavy, Guard, Dodge.
+Correct the actual saved Blueprint so that every snapshot getter uses the SAME correctly clamped selected index.
 
-Selecting one must regenerate the hypothetical timeline without changing the opponent's real committed action.
+Check the actual slider's configured MinValue, MaxValue, and StepSize.
 
-Switching hypothetical choices should update:
+Choose one consistent representation:
+- Integer-style slider with range 0..N-1, or
+- Normalized 0..1 converted to an index.
 
-- Timeline length.
-- Snapshot positions.
-- Player and opponent ghosts.
-- Event text.
-- Highlighted important Instants.
+Do not mix both.
 
-Use one consistent regeneration pathway rather than four competing implementations.
+Handle N=0 and N=1 safely.
 
-Preserve opponent-only hypothetical previews when the player has not yet chosen an action, if supported by the current combat system.
+Verify scrubbing genuinely moves between DIFFERENT snapshots and that Next Event selects the exact intended index.
 
-Label the opponent action clearly as **Hypothetical**, not a revealed enemy action.
+Keep ghost-only transforms separate from real actor transforms.
 
-Do not use the hidden actual opponent move as a fallback when regenerating a hypothetical prediction.
+## 5. Movement regression checklist
 
-## 6. Use the correct starting combat state
+Test the actual gameplay pathway:
 
-For a new encounter, predictions start from the clean initial state.
+A. Fresh PIE: clean arena, no path or ghosts.
 
-After a real action or reaction pause, predictions must start from the authoritative saved `CurrentState`, where valid.
+B. Walk to a destination away from the opponent: follows the selected XY path, with correct reaction and Continue behavior.
 
-This is essential for airborne Jump reactions.
+C. Dash to a destination: correct red/green commitment, execution, interruption, Continue.
 
-A hypothetical preview during a midair reaction must:
+D. Jump: parabolic execution, midair reaction freeze, preserved remaining trajectory, Continue to landing.
 
-- Preserve the fighter's actual airborne starting position.
-- Preserve active-action progress when Continue is considered.
-- Correctly represent legal replacement actions.
-- Never reset the real fighter to the floor.
-- Never overwrite CurrentState.
+E. Quick, Heavy, Guard, Dodge still execute.
 
-For Walk, Dash, and Jump predictions, use the actual confirmed movement destination and the established range limits.
+F. Switching hypothetical opponent actions never changes the real committed opponent action.
 
-The preview and authoritative execution must agree under the same starting state and selected decisions.
+G. Timeline scrubbing moves only cyan/orange ghosts, never the real fighters.
 
-## 7. Keep previews separate from execution
+H. Back/cancel/reset clears stale preview geometry but not an active authoritative movement.
 
-This is a strict requirement.
+I. Reopening the editor and starting a fresh PIE session preserves these results.
 
-Hypothetical preview:
-- Moves only the cyan/orange ghosts.
-- Does not change real fighter transforms.
-- Does not change health or combat state.
-- Does not advance the real Instant clock.
-- Does not alter committed opponent actions.
-- Does not trigger Jump playback.
-- Does not replace the real reaction state.
+For each movement, compare selected destination, authoritative resolved position, and actual real fighter XYZ.
 
-Actual execution:
-- Remains under BP_CombatManager.
-- Uses authoritative combat results.
-- Preserves the existing Jump playback and Continue behavior.
+## 6. Regression tests must target the actual integration
 
-Audit the existing global `GCurrentTimeline` and separate Jump playback timeline to prevent accidental cross-contamination.
+The new `BUH.TimelinePreviewTests` mostly tests C++ prediction functions.
 
-Also inspect `MoveGhostsToInstant()`: it currently obtains a world using `GEngine->GetWorldContexts()[0]`.
+Add a focused PIE-world integration test or verifiable Blueprint runtime test for:
 
-That can select the wrong world when both editor and PIE worlds exist. Prefer explicitly using the relevant PIE world or widget/manager world context.
+- Walk confirmation → ExecuteMove → Reaction → Continue.
+- Expected CurrentState and legal Continue actions.
+- The actual Continue widget visible and clickable.
+- TimelineSlider selection using an in-range snapshot index.
+- Prediction regeneration leaving authoritative combat state unchanged.
 
-Do not introduce another global gameplay state manager.
+Tests should fail with the current broken behavior.
 
-## 8. Ghost visibility and cleanup
+Do not claim that all graphical interaction tests passed merely because the widget functions exist or the C++ simulation tests pass.
 
-Reuse the existing actors tagged:
+The current timeline export incorrectly claims manual user confirmation of the A–J graphical tests. The user has instead reported a regression. Correct the documentation.
 
-- `GhostPlayer`
-- `GhostOpponent`
-- `DestPlayer`
+## 7. Repair approach
 
-Maintain their distinct roles.
+Make the smallest necessary changes.
 
-Preview ghosts should appear only for a valid prediction and disappear when the preview is cleared.
+If the new timeline Blueprint rewiring damaged the existing movement flow, restore the affected nodes from the known-good implementation while retaining only independently verified timeline additions.
 
-The yellow destination marker must not become a third prediction fighter.
+Do not change movement balance, Jump physics, reaction detection, or the established Continue rules.
 
-Verify cleanup after:
+Do not reset or hard-revert the Git working tree without preserving any newer intended changes.
 
-- Selecting Back.
-- Switching from movement to Attack.
-- Canceling a movement target.
-- Changing hypothetical opponent action.
-- Executing the selected action.
-- Completing a reaction.
-- Resetting the encounter.
-- Starting a new PIE session.
+Compile, save, and read back the corrected Blueprint graphs.
 
-Never leave stale ghosts at old predicted locations.
+Run all BUH automation tests.
 
-Do not clear a valid Walk, Dash, or Jump trajectory while the player is still planning that movement.
+Update `todo.md`, `notes.md`, and `tests/blueprint_exports/tactical_timeline_preview.md` with actual findings.
 
-## 9. Automated tests
+Commit and push the fix to `origin/master` on `HelHeresyDev/BeneathUncountedHeavens`.
 
-Add tests covering:
+Report the commit SHA and distinguish automated verification from graphical PIE verification.
 
-1. Timeline regeneration after selecting an opponent response.
-2. Correct snapshot index-to-Instant mapping.
-3. Ghost XY and Z matching the selected snapshot.
-4. Correct Jump height when scrubbing through ascent, apex, and descent.
-5. Walk and Dash predicted coordinates.
-6. Correct health changes at hit Instants.
-7. Guard, dodge, and miss events.
-8. Reaction snapshots stopping at the correct decision boundary.
-9. Next Event selecting the correct subsequent event.
-10. Changing opponent choices replacing the previous hypothetical timeline.
-11. No mutation of authoritative CurrentState or real fighter actors.
-12. Valid prediction generation from an existing airborne reaction state.
-13. Reset clearing all hypothetical ghosts and timeline UI.
-
-Use a valid PIE game world for actor/UMG integration checks.
-
-Tests should catch disconnected TimelineSlider handlers and incorrect ghost transforms—not merely confirm that GenerateTimeline returns snapshots.
-
-Run all existing BUH automation tests.
-
-## 10. Manual graphical PIE verification
-
-Verify this sequence if graphical automation is available:
-
-A. Start a clean encounter.
-
-B. Select Quick Strike and hypothetical opponent Heavy.
-
-C. Move the timeline slider from the beginning to the end. Confirm both ghosts update.
-
-D. Select an Instant at which an attack connects or misses. Confirm the displayed event is correct.
-
-E. Switch hypothetical opponent to Dodge. Confirm positions and event text change.
-
-F. Select Walk or Dash and choose a destination. Confirm the predicted movement follows that destination.
-
-G. Select Jump and scrub through its flight. Confirm cyan ghost rises and descends.
-
-H. Execute a real Jump, stop at a legitimate midair reaction, and preview Continue. Confirm ghosts use the current airborne state without moving the real fighter.
-
-I. Continue the real Jump and verify normal landing.
-
-J. Reset and confirm no ghosts or stale timeline remain.
-
-Distinguish headless checks from actual graphical UI verification. Do not claim that slider interaction was tested if only C++ functions were exercised.
-
-## 11. Implementation constraints
-
-- No new movement mechanics.
-- No combat balance changes.
-- No real-time combat or automatic playback redesign.
-- No new opponent AI.
-- No broad UMG restyling.
-- No rebuilding working Blueprint assets.
-
-Use targeted Blueprint edits. `write_graph_dsl` can destructively replace EventTick bodies; preserve existing handlers and connections.
-
-Compile, save, and read back affected Blueprints.
-
-Export relevant graph connections to:
-
-`tests/blueprint_exports/tactical_timeline_preview.md`
-
-Update `notes.md` and `todo.md`.
-
-## 12. Commit and push
-
-After implementation and available verification, commit and push to:
-
-`origin/master`
-
-Repository:
-`HelHeresyDev/BeneathUncountedHeavens`
-
-Report:
-- Commit SHA.
-- Actual implementation changes.
-- Automation results.
-- Graphical PIE checks completed.
-- Any remaining limitations.
-
-**Success criterion:** I can select a player action and hypothetical opponent action, scrub through Instants, see both prediction ghosts at their correct 3D positions, identify attacks and reactions, and change my planned action without affecting the actual battle.
+**Success: Walk, Dash, Jump, and Continue behave exactly as they did before the timeline-preview update. The timeline feature operates independently without corrupting or replacing authoritative combat state.**

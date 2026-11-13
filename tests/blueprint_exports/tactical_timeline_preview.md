@@ -11,11 +11,27 @@ The slider value is clamped to a valid snapshot index, then the cyan/orange ghos
 moved to that snapshot's X/Y with `Z = 90.0 + Snapshot.Height`, rotated to the
 snapshot's facing, and the instant + event text is updated. Real fighters are untouched.
 
+`TimelineSlider` defaults: `MinValue = 0`, `MaxValue = 30`, `StepSize = 0.01`. The
+handler clamps the selected index to `[0, GetTimelineLength()-1]`, so the fixed maximum
+is only a UI bound; the C++ timeline length is authoritative.
+
 ```
 (event OnValueChanged(TimelineSlider) (Value)
   (bind _returnvalue (Math|Float|Truncate Value))
-  ; clamp to [0, TimelineLength-1]
-  (bind _returnvalue_13 (CombatSim|GetTimelineLength))
+  (bind _returnvalue_1 0)
+  (bind _returnvalue_2 1)
+  (bind _returnvalue_3 0)
+  (bind _returnvalue_4 0.0)
+  (bind _returnvalue_5 0.0)
+  (bind _returnvalue_6 (> (CombatSim|GetTimelineLength) _returnvalue_1))
+  (bind _returnvalue_7 (- (CombatSim|GetTimelineLength) _returnvalue_2))
+  (bind _returnvalue_8 (select _returnvalue_6 _returnvalue_7 _returnvalue_3))
+  (bind _returnvalue_9 (> _returnvalue _returnvalue_8))
+  (bind _returnvalue_10 (select _returnvalue_9 _returnvalue_8 _returnvalue))
+  (bind _returnvalue_11 (Math|Conversions|ToFloat(Integer) _returnvalue_10))
+  (bind _returnvalue_12 (< _returnvalue _returnvalue_4))
+  (bind _returnvalue_13 (select _returnvalue_12 _returnvalue_5 _returnvalue_11))
+  (bind _returnvalue_14 (CombatSim|GetTimelineLength))
   (bind _returnvalue_15 (CombatSim|GetSnapshotPlayerX (Math|Float|Truncate _returnvalue_13)))
   (bind _returnvalue_16 (CombatSim|GetSnapshotOpponentX (Math|Float|Truncate _returnvalue_13)))
   (bind _returnvalue_17 (CombatSim|GetSnapshotPlayerY (Math|Float|Truncate _returnvalue_13)))
@@ -26,20 +42,12 @@ snapshot's facing, and the instant + event text is updated. Real fighters are un
   (bind _returnvalue_22 (CombatSim|GetSnapshotInfoText (Math|Float|Truncate _returnvalue_13)))
   (bind _outactors (Actor|GetAllActorsWithTag "GhostPlayer"))
   (bind _outactors_1 (Actor|GetAllActorsWithTag "GhostOpponent"))
-  (Transformation|SetActorLocation (Utilities|Array|Get(acopy) _outactors)
-      (Math|Vector|MakeVector _returnvalue_15 _returnvalue_17
-          (+ 90.0 (CombatSim|GetSnapshotPlayerHeight (Math|Float|Truncate _returnvalue_13)))))
-  (Transformation|SetActorLocation (Utilities|Array|Get(acopy) _outactors_1)
-      (Math|Vector|MakeVector _returnvalue_16 _returnvalue_18
-          (+ 90.0 (CombatSim|GetSnapshotOpponentHeight (Math|Float|Truncate _returnvalue_13)))))
-  (Transformation|SetActorRotation (Utilities|Array|Get(acopy) _outactors)
-      (Math|Rotator|MakeRotator 0.0 (select (== _returnvalue_19 1) 0.0 180.0)))
-  (Transformation|SetActorRotation (Utilities|Array|Get(acopy) _outactors_1)
-      (Math|Rotator|MakeRotator 0.0 (select (== _returnvalue_20 1) 0.0 180.0)))
-  (Widget|SetText(Text) (Variables|WBP_CombatUI|GetTimelineInstantText)
-      (Utilities|Text|ToText(String) _returnvalue_21))
-  (Widget|SetText(Text) (Variables|WBP_CombatUI|GetPredictedOutcomeText)
-      (Utilities|Text|ToText(String) _returnvalue_22)))
+  (Transformation|SetActorLocation (Utilities|Array|Get(acopy) _outactors) (Math|Vector|MakeVector _returnvalue_15 _returnvalue_17 (+ 90.0 (CombatSim|GetSnapshotPlayerHeight (Math|Float|Truncate _returnvalue_13)))))
+  (Transformation|SetActorLocation (Utilities|Array|Get(acopy) _outactors_1) (Math|Vector|MakeVector _returnvalue_16 _returnvalue_18 (+ 90.0 (CombatSim|GetSnapshotOpponentHeight (Math|Float|Truncate _returnvalue_13)))))
+  (Transformation|SetActorRotation (Utilities|Array|Get(acopy) _outactors) (Math|Rotator|MakeRotator 0.0 (select (== _returnvalue_19 1) 0.0 180.0)))
+  (Transformation|SetActorRotation (Utilities|Array|Get(acopy) _outactors_1) (Math|Rotator|MakeRotator 0.0 (select (== _returnvalue_20 1) 0.0 180.0)))
+  (Widget|SetText(Text) (Variables|WBP_CombatUI|GetTimelineInstantText) (Utilities|Text|ToText(String) _returnvalue_21))
+  (Widget|SetText(Text) (Variables|WBP_CombatUI|GetPredictedOutcomeText) (Utilities|Text|ToText(String) _returnvalue_22)))
 ```
 
 ## 2. WBP_CombatUI — BtnNextEvent.OnClicked (jump to next significant event)
@@ -125,19 +133,8 @@ round-trip bug) and the hypothetical opponent move, then generates the timeline.
 
 All 13 pass; the full BUH suite is 23/23.
 
-## 7. Graphical PIE verification (user-driven)
+## 7. Graphical PIE verification (pending)
 
 MCP cannot click UMG buttons or drag the slider, so the A–J sequence in `todo.md` §10
-is confirmed manually in a fresh graphical PIE session:
-
-A. Start a clean encounter.
-B. Select Quick Strike and hypothetical opponent Heavy.
-C. Move the timeline slider end-to-end; both ghosts update.
-D. Select an Instant where an attack connects/misses; the event text is correct.
-E. Switch the hypothetical opponent to Dodge; positions and event text change.
-F. Select Walk or Dash and a destination; the predicted movement follows it.
-G. Select Jump and scrub through its flight; the cyan ghost rises and descends.
-H. Execute a real Jump, stop at a midair reaction, preview Continue; ghosts use the
-   airborne state without moving the real fighter.
-I. Continue the real Jump; normal landing.
-J. Reset; no ghosts or stale timeline remain.
+must be confirmed manually in a fresh graphical PIE session. This export documents the
+Blueprint connections only; the graphical verification is still pending.
