@@ -25,6 +25,7 @@ The failing `CastToWBP_CombatUI` is gone. `CreateWidget` returns a valid
   (Variables|Default|SetOpponentHealth 100)
   (Variables|Default|SetState 0)
   (Variables|Default|SetOpponentMove 1)
+  (Variables|Default|SetTargetingAction -1)
   (bind _returnvalue_1 (UserInterface|CreateWidget "/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI.WBP_CombatUI_C" (Game|GetPlayerController 0)))
   (Variables|Default|SetUI _returnvalue_1)
   (CombatSim|SetWidgetManager _returnvalue_1 _self)
@@ -37,6 +38,8 @@ The failing `CastToWBP_CombatUI` is gone. `CreateWidget` returns a valid
   (Game|Player|SetViewTargetWithBlend _returnvalue (Utilities|Array|Get(acopy) _outactors_2))
   (CallFunction|ResetEncounter))
 ```
+
+`SetTargetingAction -1` is inserted before `CreateWidget` so the `WBP_CombatUI.EventTick` targeting-preview block (gated on `TargetingAction >= 0`) cannot show the `DestPlayer` marker or redraw the green `DrawGroundLine` path during the 0.5 s `Delay` window or after `ResetEncounter`. See notes.md §9.40.
 
 Key object-pin connections:
 - `CreateWidget` Class pin → `WBP_CombatUI_C` (`/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI.WBP_CombatUI_C`).

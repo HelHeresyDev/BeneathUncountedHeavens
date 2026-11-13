@@ -1,151 +1,161 @@
-# BUH — Fix Continue Playback: Two Execution-Order Bugs
+# Beneath Uncounted Heavens — Fix Dirty Initial Encounter State
 
-**Status: RESOLVED (headless-verified).** Both execution-order bugs are fixed in `BP_CombatManager.ExecuteMove` (Continue branch now sets `PreExecutionState` to the airborne `CurrentState` before the resolver; the resolver and both playback gates consume `PreExecutionState`, not the post-resolution `CurrentState`). The yellow "BUH DASH v3" banner is removed from `WBP_CombatUI`. A new C++ regression test `BUH.JumpContinueExecuteMoveRegressionTest` exercises the actual state-selection and playback-gating logic. All 22 `BUH.*` automation tests pass. See `notes.md` §9.39. The remaining manual check is the graphical-PIE button click-through (headless `-nullrhi` cannot click WBP buttons).
+## STATUS — RESOLVED (headless-verified; interactive graphical checks remain)
 
-The user tested commit `109d310` in graphical PIE.
+Root cause: `TargetingAction` was never reset to `-1` at startup, so its default (`>= 0`)
+kept the `WBP_CombatUI.EventTick` targeting-preview block active every frame, showing the
+`DestPlayer` marker and redrawing the green `DrawGroundLine` path even after `ResetEncounter`
+cleared it. Fix: `SetTargetingAction -1` inserted into `EventBeginPlay` (before `CreateWidget`)
+and `ResetEncounter` (before `RefreshUI`); the `WBP_CombatUI CONSTRUCTED` `PrintString` removed
+from `EventConstruct`. Verified headless: fresh PIE launch reads `TargetingAction = -1`,
+`State = 0`, `PlayerMove = -1`, `PathRenderer.segmentPool = []`; both Blueprints compiled and
+saved; all 22 `BUH.*` automation tests pass. Remaining manual graphical-PIE checks: interactive
+Walk/Dash/Jump → cancel (B–E), switch-to-Attack (E), and reset-after-movement (G) — headless
+`-nullrhi` PIE cannot click WBP buttons or move the cursor. See notes.md §9.40.
 
-**Working:**
-- Jump distance is now correctly restricted to 480 uu.
-- Jump executes.
-- Heavy triggers a midair reaction.
-- Fighter freezes in midair.
-- Continue button appears.
+The user has confirmed in graphical PIE that Jump, airborne interruption, and Continue now work.
 
-**Still broken:** Selecting Continue and clicking Execute returns the HUD to "Select a move / Ready", but the blue fighter remains suspended. The remaining Jump playback never visibly finishes.
+**Do not change those mechanics.**
 
-I inspected the latest saved `BP_CombatManager.ExecuteMove` graph exported to `tests/blueprint_exports/jump_selection_flow.md`.
+The remaining problem is the initial presentation.
 
-There are TWO concrete execution-order problems.
+At fresh PIE launch:
+- HUD says "Select a move / Ready".
+- HUD says "Your: None".
+- Both real fighters are present.
+- A yellow DestPlayer cylinder is visible.
+- A green movement line is already visible between the player and the destination marker.
+- No movement action has been selected.
 
-## Bug 1 — PreExecutionState is read before it is prepared
+This should be a completely clean planning state.
 
-The graph begins:
+## 1. Investigate initialization and reset
 
-`(bind _preexecutionstate (GetPreExecutionState))`
+Read the actual saved graphs for:
 
-Later, for Continue:
+- `BP_CombatManager.EventBeginPlay`
+- `BP_CombatManager.ResetEncounter`
+- `BP_CombatManager.CancelTargeting`
+- `WBP_CombatUI.EventConstruct`
+- `WBP_CombatUI.RefreshUI`
+- `WBP_CombatUI.EventTick`
 
-`SetPreExecutionState(GetCurrentState)`
+Also inspect `ABUHPathRenderer.BeginPlay`, `SetPathVisible`, `SetPath`, and `ClearPath`.
 
-But both `ExecuteMoveWithVars` and `BeginJumpPlayback` receive the earlier `_preexecutionstate` binding.
+Important findings from GitHub:
 
-The latest commit moved the correct airborne state into the manager variable but did not ensure that the value consumed by the resolver/playback is the newly selected state.
+- EventBeginPlay creates and adds WBP_CombatUI to the viewport, waits 0.5 seconds, then calls ResetEncounter.
+- PathRenderer.BeginPlay hides its path.
+- notes.md §9.24 documents an earlier fix where ResetEncounter needed to call CancelTargeting and hide DestPlayer.
+- PathRenderer.SetPath is persistent until explicitly cleared.
 
-**Fix:**
+Verify whether those earlier ResetEncounter fixes remain intact and correctly connected in the saved Blueprint.
 
-Establish the pre-execution state in this order:
+## 2. Identify the last startup path writer
 
-1. Determine PlayerMove.
-2. For Continue (7), select the saved airborne CurrentState.
-3. For a fresh Jump (9), select the correctly prepared state with the confirmed Jump target.
-4. For other actions, retain the appropriate existing combat state.
-5. Only AFTER this selection, capture the definitive PreExecutionState.
-6. Pass that SAME captured state to both ResolveCombat/ExecuteMoveWithVars and BeginJumpPlayback.
+Do not assume ResetEncounter isn't running.
 
-Do not use a prestate snapshot taken before the Continue branch.
+During one fresh PIE launch, log:
 
-Avoid extra global variables or another combat state machine.
+1. PathRenderer.BeginPlay.
+2. WBP EventConstruct.
+3. CombatManager.BeginPlay.
+4. ResetEncounter entry and completion.
+5. Every SetPath, SetLine, DrawGroundLine, DrawDashPath, DrawJumpPath, and ClearPath until the first clean planning frame.
 
-## Bug 2 — Playback eligibility checks POST-resolution state
+For each path write, identify its actual caller and the relevant PlayerMove, TargetingAction, and manager State.
 
-At the end of ExecuteMove, the graph currently checks:
+Determine whether:
+- ResetEncounter fails to clear the path.
+- The path gets drawn after ResetEncounter.
+- The marker isn't hidden.
+- A default targeting variable is briefly active during widget construction.
+- A saved actor or widget default is exposing stale preview geometry.
 
-`PlayerMove == 9 OR GetJumpElapsedFlightInstants(CurrentState) > 0`
+Find the precise cause before editing.
 
-But `CurrentState` has already been overwritten with `Result.FinalState`.
+## 3. Establish a clean initial-state invariant
 
-For Continue:
-- PlayerMove == 7, not 9.
-- When Continue finishes the Jump, FinalState is grounded.
-- GetJumpElapsedFlightInstants(FinalState) returns zero.
-- BeginJumpPlayback is therefore never called.
+After initial setup, and after ResetEncounter:
 
-The authoritative resolver may finish the Jump correctly, but the real fighter is left suspended at the previous visual position.
+- State = Planning (0).
+- PlayerMove = -1.
+- TargetingAction = -1.
+- No pending Walk, Dash, or Jump selection.
+- No pending movement destination.
+- bHasCurrentState and reaction flags reset appropriately.
+- DestPlayer hidden.
+- GhostPlayer hidden.
+- GhostOpponent hidden.
+- PathRenderer hidden, with zero visible segments.
+- No stale predicted timeline or destination.
+- No movement selected in the HUD.
+- Only the two real fighters visible in the arena.
 
-**Fix:**
+A clean state should be established before the player is allowed to interact.
 
-Determine whether Jump playback is required using the PRE-EXECUTION state and selected action.
+Preserve the correct fighter positions and health.
 
-Examples:
+## 4. Fix startup ordering and preview cleanup
 
-- New Jump: PlayerMove == 9.
-- Continue an airborne Jump: PlayerMove == 7 AND PreExecutionState.Fighters[0].Action == 9 AND Phase == Active.
+Make the smallest reliable correction.
 
-Capture that decision before resolution, or derive it afterward only from the preserved pre-execution state.
+If the UI is ticking before the encounter is initialized, correct the ordering or guard presentation until initialization finishes.
 
-Do not use Result.FinalState or the newly assigned CurrentState to determine whether the move WAS a Jump.
+If ResetEncounter is incomplete, repair its existing cleanup execution chain.
 
-Playback must start even when the authoritative result has already landed. That is precisely when visual playback is needed to animate the remaining movement.
+If a later function redraws a preview when PlayerMove == -1, fix that function's eligibility condition.
 
-## Required execution sequence
+Prefer centralized, idempotent cleanup shared by fresh initialization and ResetEncounter.
 
-For Continue from a midair reaction:
+**Do not clear paths every EventTick.**
 
-1. Capture the authoritative frozen airborne CurrentState.
-2. Preserve its JumpStart, JumpTarget, PhaseInstants, XY, Height, and opponent commitment.
-3. Confirm that the chosen action is Continue (7).
-4. Record that Jump playback is required.
-5. Resolve Continue from that frozen state.
-6. Store the resulting FinalState as authoritative.
-7. BeginJumpPlayback with the original frozen pre-execution state and the resolution result.
-8. Play the remaining snapshots from frozen XYZ through landing.
-9. On playback completion, ensure the real actor is at the authoritative final XYZ.
-10. Clear the remaining Jump path and return to normal planning.
+That would break the already-working confirmed Dash previews and midair Jump reaction paths.
 
-Do not teleport to the final position before playback.
+Do not hide legitimate movement paths during targeting, execution, or reactions.
 
-Do not restart the full parabola.
+## 5. Remove remaining temporary startup diagnostics
 
-Do not start a new reaction for the same observed Heavy.
+The large yellow Dash version banner is already removed.
 
-## Regression tests
+The screenshot still shows "WBP_CombatUI CONSTRUCTED" at the upper left.
 
-The current C++ playback acceptance test is insufficient because it directly passes a valid airborne prestate to BeginJumpPlayback.
+Remove that temporary on-screen construction diagnostic if no longer needed.
 
-Add a test that checks the actual BP_CombatManager ExecuteMove state-selection and playback-gating logic.
+Keep useful error logging, but eliminate unnecessary per-frame diagnostics.
 
-Verify:
+## 6. Regression verification
 
-- PreExecutionState is the frozen airborne state when PlayerMove=7.
-- The resolver receives that exact state.
-- Playback receives that exact same prestate.
-- Playback is requested based on the PRE-resolution Jump action.
-- Playback is still requested when FinalState is grounded.
-- BeginJumpPlayback accepts PlayerDecision=7 with PreState.Action=9 and Phase=2.
-- The fighter visually advances from its frozen midair location to the original landing destination.
-- The final real actor XYZ matches FinalState.
-- No duplicate reaction is generated.
-- Walk and Dash Continue remain functional.
+Check in actual PIE or with a valid PIE-world integration test:
 
-Log the exact prestate Action/Phase/Height, poststate Action/Phase/Height, playback-gate result, and BeginJumpPlayback acceptance.
+A. Fresh launch: clean encounter with only two fighters.
 
-Ensure the test would FAIL with the currently exported graph.
+B. Move → Walk → cancel: no leftover line or destination marker.
 
-## Blueprint verification
+C. Move → Dash → cancel: no leftover line or marker.
 
-Read the actual saved ExecuteMove graph through MCP before editing.
+D. Move → Jump → cancel: no leftover arc or marker.
 
-Make targeted wiring changes.
+E. Select any movement, then Back and switch to Attack: no stale movement geometry.
 
-Pay special attention to evaluation order and Blueprint pins. Do not assume that setting a manager variable later updates an earlier cached/bound value.
+F. Execute Jump → freeze in midair → Continue: existing working trajectory and playback unaffected.
 
-After editing:
-- Compile and save.
-- Read back the graph again.
-- Verify the definitive prestate is selected before being consumed.
-- Verify the playback gate uses that prestate, not the resolved final state.
-- Run all BUH automation suites.
+G. Reset after completing movement: same clean state as fresh launch.
 
-Do not change Jump range, parabola, reaction detection, or the working airborne freeze.
+H. Start another PIE session: still clean.
 
-Remove the old yellow "BUH DASH v3" diagnostic banner once this is verified.
+Assert actual renderer visibility and ghost actor hidden flags, not just PlayerMove == -1.
 
-## GitHub
+Compile and save the affected Blueprints, then read back the saved graph.
 
-Update notes.md, todo.md, and the actual Blueprint export.
+Run all BUH automation suites.
+
+## 7. GitHub
+
+Update `notes.md`, `todo.md`, and relevant Blueprint exports with the proven startup cause and fix.
 
 Commit and push to `origin/master`.
 
-Report the SHA, the exact corrected execution wiring, and the test results.
+Report the commit SHA, root cause, automated tests, and any graphical PIE checks still needed.
 
-**Success:** Clicking Continue at a midair Jump reaction visibly finishes the remaining parabola, lands the blue fighter at the original destination, and returns to normal planning without another jump or a teleport.
+**Success: Fresh PIE opens to a clean battlefield with only the red and blue real fighters, no yellow marker, no green line, and no debug banner. All existing movement and reaction behavior remains working.**
