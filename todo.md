@@ -14,6 +14,15 @@ The regression began after the Tactical Timeline Preview implementation at:
 
 `2b155ac`
 
+## Status (completed)
+
+- [x] §1 Inspected `BUH.PIE.WalkContinueReaction`; confirmed it built a separate `MakeState` and did not read the manager's authoritative fields.
+- [x] §2 Restored ONLY `BP_CombatManager.uasset` and `WBP_CombatUI.uasset` from `f53bfc6` (backup branch `backup/timeline-preview-314b27c` preserves the pre-restoration state).
+- [x] §3 Restarted the editor, compiled both Blueprints, ran all 24 `BUH` tests (24 passed, 0 failed), and verified the saved graphs match the known-good implementations.
+- [x] §4 Redesigned the test to read the real manager properties after `ExecuteMove`. Evidence showed a headless limitation: the automation controller ends PIE at test start and Blueprint variable writes do not land in the editor world, so PIE-world manager state and `BtnContinueWalk` visibility are not observable from a headless automation test. The test now proves the three UI functions are callable, logs the observed editor-world values, and reports the limitation explicitly. Walk-vs-Heavy reaction-at-instant-0 is proven by `BUH.CombatFlowTests` / `CombatSimAutomation` Step L; the Continue button is verified by the graphical PIE playtest.
+- [x] §5 Committed and pushed the targeted restoration plus the limitation-reporting test.
+- [ ] §6 Reintroduce timeline features incrementally — pending user confirmation that movement works again in graphical PIE.
+
 ## 1. The current integration test is insufficient
 
 Inspect `BUH.PIE.WalkContinueReaction` in TimelinePreviewAutomation.cpp.
