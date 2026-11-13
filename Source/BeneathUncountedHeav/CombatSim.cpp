@@ -2240,6 +2240,27 @@ FString UBuhCombatSim::GetSnapshotInfoText(int32 Index)
 	return Out;
 }
 
+int32 UBuhCombatSim::GetNextSignificantEventIndex(int32 AfterIndex)
+{
+	if (AfterIndex < 0) AfterIndex = -1;
+	for (int32 i = AfterIndex + 1; i < GCurrentTimeline.Num(); ++i)
+	{
+		const FBuhTimelineSnapshot& Snap = GCurrentTimeline[i];
+		for (const FBuhCombatEvent& E : Snap.Events)
+		{
+			if (E.Type == 0 || E.Type == 1 || E.Type == 2 || E.Type == 3 || E.Type == 5 || E.Type == 6)
+			{
+				return i;
+			}
+		}
+		if (Snap.StoppedReason != 0)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
 FString UBuhCombatSim::PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision)
 {
 	const FBuhCombatResult R = ResolveCombat(InState, PlayerDecision, OpponentDecision, 200);

@@ -1,161 +1,307 @@
-# Beneath Uncounted Heavens — Fix Dirty Initial Encounter State
+# Beneath Uncounted Heavens — Tactical Timeline Preview
 
-## STATUS — RESOLVED (headless-verified; interactive graphical checks remain)
+## Objective
 
-Root cause: `TargetingAction` was never reset to `-1` at startup, so its default (`>= 0`)
-kept the `WBP_CombatUI.EventTick` targeting-preview block active every frame, showing the
-`DestPlayer` marker and redrawing the green `DrawGroundLine` path even after `ResetEncounter`
-cleared it. Fix: `SetTargetingAction -1` inserted into `EventBeginPlay` (before `CreateWidget`)
-and `ResetEncounter` (before `RefreshUI`); the `WBP_CombatUI CONSTRUCTED` `PrintString` removed
-from `EventConstruct`. Verified headless: fresh PIE launch reads `TargetingAction = -1`,
-`State = 0`, `PlayerMove = -1`, `PathRenderer.segmentPool = []`; both Blueprints compiled and
-saved; all 22 `BUH.*` automation tests pass. Remaining manual graphical-PIE checks: interactive
-Walk/Dash/Jump → cancel (B–E), switch-to-Attack (E), and reset-after-movement (G) — headless
-`-nullrhi` PIE cannot click WBP buttons or move the cursor. See notes.md §9.40.
+Make the existing hypothetical combat timeline fully usable in graphical PIE.
 
-The user has confirmed in graphical PIE that Jump, airborne interruption, and Continue now work.
+The user has confirmed that Walk, Dash, Jump, airborne reactions, Continue, and clean startup now work. Preserve those systems.
 
-**Do not change those mechanics.**
+**Do not create a new simulation system. Connect and repair the existing prediction infrastructure.**
 
-The remaining problem is the initial presentation.
+Read the latest `AGENTS.md`, `todo.md`, relevant `notes.md` sections, and the current GitHub source before editing.
 
-At fresh PIE launch:
-- HUD says "Select a move / Ready".
-- HUD says "Your: None".
-- Both real fighters are present.
-- A yellow DestPlayer cylinder is visible.
-- A green movement line is already visible between the player and the destination marker.
-- No movement action has been selected.
+## 1. Inspect the existing prediction implementation
 
-This should be a completely clean planning state.
+Relevant existing C++ functions include:
 
-## 1. Investigate initialization and reset
+- `GenerateTimeline`
+- `SetCurrentTimeline`
+- `GetSnapshotAt`
+- `GetTimelineLength`
+- `GetSnapshotInstantText`
+- `GetSnapshotInfoText`
+- `MoveGhostsToInstant`
+- `GetSnapshotPlayerHeight`
+- `GetSnapshotOpponentHeight`
 
-Read the actual saved graphs for:
+`FBuhTimelineSnapshot` already stores positions, height, actions, phases, health, reaction information, and combat events.
 
-- `BP_CombatManager.EventBeginPlay`
-- `BP_CombatManager.ResetEncounter`
-- `BP_CombatManager.CancelTargeting`
-- `WBP_CombatUI.EventConstruct`
+Inspect the SAVED Blueprint graphs for:
+
+- `BP_CombatManager.BuildPredictions`
 - `WBP_CombatUI.RefreshUI`
-- `WBP_CombatUI.EventTick`
+- `WBP_CombatUI.TimelineSlider.OnValueChanged`
+- All four hypothetical opponent action buttons
+- Player action selection and movement confirmation handlers
 
-Also inspect `ABUHPathRenderer.BeginPlay`, `SetPathVisible`, `SetPath`, and `ClearPath`.
+Determine which connections already work and which are missing. Reuse existing controls and ghosts.
 
-Important findings from GitHub:
+## 2. Make timeline scrubbing functional
 
-- EventBeginPlay creates and adds WBP_CombatUI to the viewport, waits 0.5 seconds, then calls ResetEncounter.
-- PathRenderer.BeginPlay hides its path.
-- notes.md §9.24 documents an earlier fix where ResetEncounter needed to call CancelTargeting and hide DestPlayer.
-- PathRenderer.SetPath is persistent until explicitly cleared.
+When the player selects an action and hypothetical opponent response, generate a deterministic prediction timeline.
 
-Verify whether those earlier ResetEncounter fixes remain intact and correctly connected in the saved Blueprint.
+The timeline slider must navigate actual snapshot indices.
 
-## 2. Identify the last startup path writer
+At every selected Instant:
 
-Do not assume ResetEncounter isn't running.
+- Cyan ghost shows the predicted player's position.
+- Orange ghost shows the hypothetical opponent's position.
+- Both use correct X, Y, and Z.
+- Both use the snapshot's facing direction.
+- Actual red and blue fighters remain stationary.
+- The displayed Instant corresponds to the selected snapshot.
+- Scrubbing backward correctly restores earlier predicted positions.
 
-During one fresh PIE launch, log:
+Use:
 
-1. PathRenderer.BeginPlay.
-2. WBP EventConstruct.
-3. CombatManager.BeginPlay.
-4. ResetEncounter entry and completion.
-5. Every SetPath, SetLine, DrawGroundLine, DrawDashPath, DrawJumpPath, and ClearPath until the first clean planning frame.
+`WorldZ = GroundZ + Snapshot.Height`
 
-For each path write, identify its actual caller and the relevant PlayerMove, TargetingAction, and manager State.
+An airborne Jump must place the cyan ghost in the air.
 
-Determine whether:
-- ResetEncounter fails to clear the path.
-- The path gets drawn after ResetEncounter.
-- The marker isn't hidden.
-- A default targeting variable is briefly active during widget construction.
-- A saved actor or widget default is exposing stale preview geometry.
+Do not confuse the snapshot array index with `Snapshot.Instant`. Display the actual Instant value.
 
-Find the precise cause before editing.
+The existing GenerateTimeline implementation records snapshots after simulation steps, so inspect the initial-snapshot behavior before labeling the first slider position.
 
-## 3. Establish a clean initial-state invariant
+Clamp all slider inputs to valid indices. Do not read beyond the timeline.
 
-After initial setup, and after ResetEncounter:
+If the timeline has zero or one snapshots, handle that gracefully without division by zero.
 
-- State = Planning (0).
-- PlayerMove = -1.
-- TargetingAction = -1.
-- No pending Walk, Dash, or Jump selection.
-- No pending movement destination.
-- bHasCurrentState and reaction flags reset appropriately.
-- DestPlayer hidden.
-- GhostPlayer hidden.
-- GhostOpponent hidden.
-- PathRenderer hidden, with zero visible segments.
-- No stale predicted timeline or destination.
-- No movement selected in the HUD.
-- Only the two real fighters visible in the arena.
+## 3. Display useful tactical information
 
-A clean state should be established before the player is allowed to interact.
+For the selected Instant, show:
 
-Preserve the correct fighter positions and health.
+**Player**
+- Selected action.
+- Startup, active, recovery, or ready phase.
+- Current phase progress.
+- Health.
 
-## 4. Fix startup ordering and preview cleanup
+**Hypothetical opponent**
+- Selected hypothetical action.
+- Current phase and progress.
+- Health.
 
-Make the smallest reliable correction.
+**Combat events**
+- Attack connects and damage dealt.
+- Attack misses.
+- Guard blocks.
+- Dodge avoids an attack.
+- Reaction opportunity occurs.
+- A fighter becomes ready.
+- KO or encounter-ending event.
 
-If the UI is ticking before the encounter is initialized, correct the ordering or guard presentation until initialization finishes.
+Use existing snapshot events and simulation outcomes.
 
-If ResetEncounter is incomplete, repair its existing cleanup execution chain.
+Do not invent hit results based on cylinder overlap or distance alone.
 
-If a later function redraws a preview when PlayerMove == -1, fix that function's eligibility condition.
+When an Instant contains no combat event, a short "No event" message is sufficient.
 
-Prefer centralized, idempotent cleanup shared by fresh initialization and ResetEncounter.
+Keep the display concise and readable. Avoid the current barely visible prediction text beneath the opponent buttons.
 
-**Do not clear paths every EventTick.**
+The goal is functionality, not a wholesale UI redesign.
 
-That would break the already-working confirmed Dash previews and midair Jump reaction paths.
+## 4. Highlight important Instants
 
-Do not hide legitimate movement paths during targeting, execution, or reactions.
+Make important timeline moments discoverable.
 
-## 5. Remove remaining temporary startup diagnostics
+At minimum, show the next significant event and allow jumping directly to it.
 
-The large yellow Dash version banner is already removed.
+Useful event types:
 
-The screenshot still shows "WBP_CombatUI CONSTRUCTED" at the upper left.
+- First attack activation.
+- Hit, miss, guard, or dodge.
+- Reaction opportunity.
+- Recovery completion.
+- End of the predicted sequence.
 
-Remove that temporary on-screen construction diagnostic if no longer needed.
+Prefer using existing `FBuhTimelineSnapshot.Events` and `StoppedReason`.
 
-Keep useful error logging, but eliminate unnecessary per-frame diagnostics.
+Do not implement an elaborate interactive timeline visualization yet. A small "Next Event" control and readable Instant/event text are enough.
 
-## 6. Regression verification
+If snapshot data cannot reliably identify a particular event type, report the limitation rather than guessing.
 
-Check in actual PIE or with a valid PIE-world integration test:
+## 5. Preserve hypothetical opponent selection
 
-A. Fresh launch: clean encounter with only two fighters.
+The four existing opponent buttons are:
 
-B. Move → Walk → cancel: no leftover line or destination marker.
+Quick, Heavy, Guard, Dodge.
 
-C. Move → Dash → cancel: no leftover line or marker.
+Selecting one must regenerate the hypothetical timeline without changing the opponent's real committed action.
 
-D. Move → Jump → cancel: no leftover arc or marker.
+Switching hypothetical choices should update:
 
-E. Select any movement, then Back and switch to Attack: no stale movement geometry.
+- Timeline length.
+- Snapshot positions.
+- Player and opponent ghosts.
+- Event text.
+- Highlighted important Instants.
 
-F. Execute Jump → freeze in midair → Continue: existing working trajectory and playback unaffected.
+Use one consistent regeneration pathway rather than four competing implementations.
 
-G. Reset after completing movement: same clean state as fresh launch.
+Preserve opponent-only hypothetical previews when the player has not yet chosen an action, if supported by the current combat system.
 
-H. Start another PIE session: still clean.
+Label the opponent action clearly as **Hypothetical**, not a revealed enemy action.
 
-Assert actual renderer visibility and ghost actor hidden flags, not just PlayerMove == -1.
+Do not use the hidden actual opponent move as a fallback when regenerating a hypothetical prediction.
 
-Compile and save the affected Blueprints, then read back the saved graph.
+## 6. Use the correct starting combat state
 
-Run all BUH automation suites.
+For a new encounter, predictions start from the clean initial state.
 
-## 7. GitHub
+After a real action or reaction pause, predictions must start from the authoritative saved `CurrentState`, where valid.
 
-Update `notes.md`, `todo.md`, and relevant Blueprint exports with the proven startup cause and fix.
+This is essential for airborne Jump reactions.
 
-Commit and push to `origin/master`.
+A hypothetical preview during a midair reaction must:
 
-Report the commit SHA, root cause, automated tests, and any graphical PIE checks still needed.
+- Preserve the fighter's actual airborne starting position.
+- Preserve active-action progress when Continue is considered.
+- Correctly represent legal replacement actions.
+- Never reset the real fighter to the floor.
+- Never overwrite CurrentState.
 
-**Success: Fresh PIE opens to a clean battlefield with only the red and blue real fighters, no yellow marker, no green line, and no debug banner. All existing movement and reaction behavior remains working.**
+For Walk, Dash, and Jump predictions, use the actual confirmed movement destination and the established range limits.
+
+The preview and authoritative execution must agree under the same starting state and selected decisions.
+
+## 7. Keep previews separate from execution
+
+This is a strict requirement.
+
+Hypothetical preview:
+- Moves only the cyan/orange ghosts.
+- Does not change real fighter transforms.
+- Does not change health or combat state.
+- Does not advance the real Instant clock.
+- Does not alter committed opponent actions.
+- Does not trigger Jump playback.
+- Does not replace the real reaction state.
+
+Actual execution:
+- Remains under BP_CombatManager.
+- Uses authoritative combat results.
+- Preserves the existing Jump playback and Continue behavior.
+
+Audit the existing global `GCurrentTimeline` and separate Jump playback timeline to prevent accidental cross-contamination.
+
+Also inspect `MoveGhostsToInstant()`: it currently obtains a world using `GEngine->GetWorldContexts()[0]`.
+
+That can select the wrong world when both editor and PIE worlds exist. Prefer explicitly using the relevant PIE world or widget/manager world context.
+
+Do not introduce another global gameplay state manager.
+
+## 8. Ghost visibility and cleanup
+
+Reuse the existing actors tagged:
+
+- `GhostPlayer`
+- `GhostOpponent`
+- `DestPlayer`
+
+Maintain their distinct roles.
+
+Preview ghosts should appear only for a valid prediction and disappear when the preview is cleared.
+
+The yellow destination marker must not become a third prediction fighter.
+
+Verify cleanup after:
+
+- Selecting Back.
+- Switching from movement to Attack.
+- Canceling a movement target.
+- Changing hypothetical opponent action.
+- Executing the selected action.
+- Completing a reaction.
+- Resetting the encounter.
+- Starting a new PIE session.
+
+Never leave stale ghosts at old predicted locations.
+
+Do not clear a valid Walk, Dash, or Jump trajectory while the player is still planning that movement.
+
+## 9. Automated tests
+
+Add tests covering:
+
+1. Timeline regeneration after selecting an opponent response.
+2. Correct snapshot index-to-Instant mapping.
+3. Ghost XY and Z matching the selected snapshot.
+4. Correct Jump height when scrubbing through ascent, apex, and descent.
+5. Walk and Dash predicted coordinates.
+6. Correct health changes at hit Instants.
+7. Guard, dodge, and miss events.
+8. Reaction snapshots stopping at the correct decision boundary.
+9. Next Event selecting the correct subsequent event.
+10. Changing opponent choices replacing the previous hypothetical timeline.
+11. No mutation of authoritative CurrentState or real fighter actors.
+12. Valid prediction generation from an existing airborne reaction state.
+13. Reset clearing all hypothetical ghosts and timeline UI.
+
+Use a valid PIE game world for actor/UMG integration checks.
+
+Tests should catch disconnected TimelineSlider handlers and incorrect ghost transforms—not merely confirm that GenerateTimeline returns snapshots.
+
+Run all existing BUH automation tests.
+
+## 10. Manual graphical PIE verification
+
+Verify this sequence if graphical automation is available:
+
+A. Start a clean encounter.
+
+B. Select Quick Strike and hypothetical opponent Heavy.
+
+C. Move the timeline slider from the beginning to the end. Confirm both ghosts update.
+
+D. Select an Instant at which an attack connects or misses. Confirm the displayed event is correct.
+
+E. Switch hypothetical opponent to Dodge. Confirm positions and event text change.
+
+F. Select Walk or Dash and choose a destination. Confirm the predicted movement follows that destination.
+
+G. Select Jump and scrub through its flight. Confirm cyan ghost rises and descends.
+
+H. Execute a real Jump, stop at a legitimate midair reaction, and preview Continue. Confirm ghosts use the current airborne state without moving the real fighter.
+
+I. Continue the real Jump and verify normal landing.
+
+J. Reset and confirm no ghosts or stale timeline remain.
+
+Distinguish headless checks from actual graphical UI verification. Do not claim that slider interaction was tested if only C++ functions were exercised.
+
+## 11. Implementation constraints
+
+- No new movement mechanics.
+- No combat balance changes.
+- No real-time combat or automatic playback redesign.
+- No new opponent AI.
+- No broad UMG restyling.
+- No rebuilding working Blueprint assets.
+
+Use targeted Blueprint edits. `write_graph_dsl` can destructively replace EventTick bodies; preserve existing handlers and connections.
+
+Compile, save, and read back affected Blueprints.
+
+Export relevant graph connections to:
+
+`tests/blueprint_exports/tactical_timeline_preview.md`
+
+Update `notes.md` and `todo.md`.
+
+## 12. Commit and push
+
+After implementation and available verification, commit and push to:
+
+`origin/master`
+
+Repository:
+`HelHeresyDev/BeneathUncountedHeavens`
+
+Report:
+- Commit SHA.
+- Actual implementation changes.
+- Automation results.
+- Graphical PIE checks completed.
+- Any remaining limitations.
+
+**Success criterion:** I can select a player action and hypothetical opponent action, scrub through Instants, see both prediction ghosts at their correct 3D positions, identify attacks and reactions, and change my planned action without affecting the actual battle.

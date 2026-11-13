@@ -264,6 +264,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetSnapshotInfoText(int32 Index);
 
+	// §4 Next Event: returns the next snapshot index strictly after AfterIndex that
+	// carries a significant combat event (hit/guard/miss/dodge/KO/reaction, Types
+	// 0,1,2,3,5,6) or a non-zero StoppedReason (recovery completion / end of the
+	// predicted sequence). Returns -1 when no such instant remains.
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 GetNextSignificantEventIndex(int32 AfterIndex);
+
 	// Deterministic opponent AI. Chooses from the same four moves as the player
 	// (0 Quick, 1 Heavy, 2 Guard, 3 Dodge) using only observable state: distance,
 	// healths, the opponent's own readiness, and the player's LAST revealed move.
