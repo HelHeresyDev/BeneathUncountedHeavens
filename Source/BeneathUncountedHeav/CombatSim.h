@@ -398,6 +398,9 @@ public:
 	static void DrawJumpPathFromState(APlayerController* PC, const FBuhCombatState& S, int32 ElapsedFlightInstants = 0);
 
 	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static FVector GetClampedJumpDestination(const FVector& Start, const FVector& Cursor);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
 	static float GetFinalPlayerHeight(const FBuhCombatResult& Result);
 
 	UFUNCTION(BlueprintPure, Category = "CombatSim")

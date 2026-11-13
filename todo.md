@@ -1,172 +1,172 @@
-# Beneath Uncounted Heavens — Finish Jump Reaction: Continue and Original Trajectory
+# Beneath Uncounted Heavens — Fix Two Confirmed Jump Bugs
 
-The user has verified commit 78ac22e in graphical PIE.
+## Status (HEADLESS VERIFIED)
 
-**Confirmed working:**
-- Jump executes and moves the fighter through the air.
-- The opponent's Heavy triggers a legal midair reaction.
-- The HUD displays "Reaction opportunity".
-- The blue fighter freezes in midair.
+- [x] BUG 1: Continue now passes the airborne `CurrentState` as `PreExecutionState` (surgical node edits in `ExecuteMove`).
+- [x] BUG 2: `DrawJumpPath` clamps `End` to 480 uu and forces `GroundZ=90`; `GetClampedJumpDestination` UFUNCTION added.
+- [x] WBP `DestPlayer` marker placed at `GetClampedJumpDestination` (preview and marker agree at any cursor distance).
+- [x] C++ rebuilt clean; `BP_CombatManager` and `WBP_CombatUI` compiled and saved.
+- [x] Regression tests added: `BUH.JumpContinuePlaybackAcceptanceTest`, `BUH.JumpPreviewClampTest`.
+- [x] All 10 `BUH.Jump*` tests pass; all 21 `BUH.*` tests pass.
+- [x] Blueprint exports updated in `tests/blueprint_exports/jump_selection_flow.md`.
+- [x] `notes.md` §9.38 documents both fixes.
+- [ ] Graphical PIE click-through: click Jump → destination → Execute → reaction pause → Continue → Jump resumes through landing; preview and marker clamped to 480 uu. (Requires a graphical PIE run; headless `-nullrhi` cannot click WBP buttons or capture the path/marker.)
 
-**Resolved (this pass):**
-1. The remaining Jump path now retains the exact original parabola. `BeginJumpPlayback` captures the resolver's committed `JumpStart`/`JumpTarget` and `TickJumpPlayback` draws from those values, so the remaining green path is a precise subset of the original preview curve.
-2. The Continue button now appears. `BP_CombatManager.ExecuteMove` writes the resolver's final airborne state to `CurrentState` and sets `bReactionOpportunity`/`bHasCurrentState`, so `WBP_CombatUI.RefreshUI`'s `GetReactionInfo` returns `bIsReaction=true` with Continue (7) in `LegalActions`.
+The user tested commit 3568add in graphical PIE.
 
-Do not revisit the now-working threat detection or airborne freeze mechanics.
+Current behavior:
+- The player genuinely freezes midair at a reaction pause. WORKING.
+- The Continue button is now visible. WORKING.
+- Clicking Continue does not resume the airborne Jump. BROKEN.
+- The Jump trajectory becomes shorter/different after Execute. BROKEN.
 
-## 1. Fix the missing Continue button
+I reviewed the latest GitHub C++ and Blueprint export. There are two concrete implementation problems.
 
-I reviewed the current C++ and exported Blueprint graphs.
+## BUG 1: Continue passes a grounded prestate to playback
 
-`UBuhCombatSim::GetReactionInfo()` already considers Action 9 eligible for Continue:
+In `BP_CombatManager.ExecuteMove`, when `PlayerMove == 7`:
 
-`LegalActions = {0, 1, 2, 3, 7}`
+- The manager preserves `CurrentState`, which correctly contains the interrupted airborne Jump.
+- However, `PreExecutionState` is still constructed from fresh `MakeState(...)`, because the Jump-specific adjustment only runs for `PlayerMove == 9`.
+- `ExecuteMoveWithVars(true, CurrentState, ..., 7, ...)` correctly resolves Continue from the airborne state.
+- But `BeginJumpPlayback(..., PreExecutionState, PlayerMove=7, ...)` receives the fresh grounded state.
 
-But it requires:
-- bReactionOpportunity == true.
-- ReactionFighter == 0.
-- CurrentState.Fighters[0].Action == 9.
+In C++, `BeginJumpPlayback()` requires either:
 
-The exported `BP_CombatManager.ExecuteMove` graph sets `State = 3` and records ReactionInstant, ReactionFighter, and ObservedThreatAction.
+`PlayerDecision == 9`
 
-However, it does not visibly assign:
-- `CurrentState = Result.FinalState`
-- `bHasCurrentState = true`
-- `bReactionOpportunity = true`
+OR
 
-Verify the actual saved graph. If those assignments are missing, this is likely why the HUD recognizes a reaction but Continue is unavailable.
+`PreState.Fighters[0].Action == 9 && PreState.Fighters[0].Phase == 2`
 
-Correct the manager's authoritative state handoff.
+For Continue, both are FALSE when the wrong PreExecutionState is supplied. The function returns without starting playback.
 
-At the pause, verify:
+### Fix
 
-- Manager.State == 3.
-- bReactionOpportunity == true.
-- bHasCurrentState == true.
-- CurrentState.Fighters[0].Action == 9.
-- CurrentState.Fighters[0].Phase == 2.
-- CurrentState.Fighters[0].Height > 0.
-- GetReactionInfo().bIsReaction == true.
-- GetReactionInfo().LegalActions contains 7.
+Build one correct `PreExecutionState` BEFORE resolving:
 
-Then inspect the actual `WBP_CombatUI.RefreshUI` graph and the Continue button's visibility logic.
+For Continue (7):
+- Set PreExecutionState to the existing authoritative airborne CurrentState.
+- Do not call MakeState to replace the airborne state.
+- Preserve Action=9, Phase=2, PhaseInstants, Height, JumpStart, JumpTarget, and threat bookkeeping.
 
-Ensure Continue becomes visible and clickable, not merely present in the list of legal actions.
+For a new Jump (9):
+- Build or reuse the appropriate combat state.
+- Apply the newly confirmed Jump target.
+- Set PreExecutionState to that destination-adjusted state.
 
-Preserve Walk and Dash Continue behavior.
+For other actions:
+- Preserve existing working state-selection behavior.
 
-## 2. Correct Continue's execution
+Pass the SAME PreExecutionState to:
+1. The authoritative combat resolver.
+2. BeginJumpPlayback / GenerateTimeline.
 
-The current exported ExecuteMove graph calls:
+Ensure the manager stores the resulting FinalState after resolution, not only when another reaction occurs.
 
-`ExecuteMoveWithVars(false, MakeState(...), ...)`
+Do not introduce another global flag or secondary simulation.
 
-This is another important problem.
+### Verify
 
-Passing false for bHasCurrentState reconstructs a new grounded state rather than preserving the existing airborne Jump.
+At the moment Continue is clicked, log:
 
-When Continue is selected, ExecuteMove must use the saved authoritative CurrentState.
+- PlayerMove = 7.
+- PreExecutionState.Action = 9.
+- PreExecutionState.Phase = 2.
+- PreExecutionState.Height > 0.
+- PreExecutionState.JumpStart/Target.
+- BeginJumpPlayback acceptance.
+- Generated playback snapshot count.
 
-Verify the actual current graph, then fix the state selection so that:
-- Fresh encounters use MakeState.
-- Subsequent decisions use CurrentState.
-- Continue resumes the existing Action 9 and PhaseInstants.
-- Continue never reinitializes the Jump.
-- Continue does not reset JumpStart, JumpTarget, or Height.
-- The existing opponent committed action and reaction bookkeeping remain intact.
+Continue must resume from the existing midair XYZ, finish the original trajectory, and land.
 
-Also ensure that selecting Continue actually starts the visual playback of the remaining Jump, not just the resolver.
+The same Heavy must not cause a duplicate reaction.
 
-Do not change the meaning of action ID 7.
+## BUG 2: The preview ignores Jump's 480-unit range
 
-## 3. Fix the changing trajectory
+I found the likely cause of the changing trajectory.
 
-The original Jump path is a parabola defined by:
+`UBuhCombatSim::DrawJumpPath()` (CombatSim.cpp) draws the preview directly from Start to the raw End supplied by the cursor.
 
-- Original JumpStart XY.
-- Original JumpTarget XY.
-- Ground Z.
-- Eight flight Instants.
-- Maximum height 220 uu.
+It DOES NOT clamp horizontal range.
 
-This curve must not change at the reaction pause.
+But `PrepareJumpCommit()` clamps the committed destination to `JumpMaxRange = 480`.
 
-In `DrawJumpPathFromState()`, the function creates future points from JumpStart and JumpTarget but forcibly replaces the first point with the current fighter location.
+Consequently:
+- The preview can show a long parabola toward a destination 800–1000 uu away.
+- The executed Jump clamps that destination to 480 uu.
+- The airborne remaining trajectory uses the real clamped destination.
+- The trajectory therefore appears to change dramatically when combat starts.
 
-This can produce a visible kink if the actor's current XY and the calculated original-curve point disagree.
+This matches the screenshots.
 
-At a real reaction pause, log:
+### Fix
 
-- JumpStart XY.
-- JumpTarget XY.
-- PhaseInstants.
-- CurrentState XY and Height.
-- Playback snapshot XY and Height.
-- Expected original parabola point at t = PhaseInstants / 8.
-- Every remaining renderer point in XYZ.
+Use one common deterministic Jump destination-clamping helper for:
 
-Determine whether the first point is being stitched onto a different curve or whether the remaining points use the wrong starting/landing coordinates.
+1. Cursor targeting.
+2. Yellow landing marker.
+3. Confirmed Jump preview.
+4. Committed destination.
+5. Actual simulated movement.
+6. Playback and remaining path.
 
-Do not conceal a trajectory mismatch by forcing the first point to the actor location.
+Range is based on XY distance from the takeoff location, not 3D arc length.
 
-Correct the source of disagreement.
+If the cursor is farther than 480 uu, place the landing marker at the reachable point along that direction.
 
-Use the same authoritative trajectory evaluation for the executed movement, playback snapshots, and remaining-path geometry.
+The visible parabola must end at that clamped marker.
 
-The expected result is that the path after interruption is a precise subset of the original preview curve, beginning at the frozen fighter location.
+Reuse the same target-clamping math already implemented by PrepareJumpCommit. Avoid creating a second version with different rounding or coordinate rules.
 
-At the first reactable Jump pause, the remaining flight segments should be green.
+Do not modify the 480-uu range or Jump's eight-Instant flight duration.
 
-## 4. Preserve reaction state while time is frozen
+### Verify
 
-During the planning pause:
+Test a cursor destination 1000 uu from the player.
 
-- Fighter XYZ must remain constant.
-- CurrentState must remain constant.
-- Renderer points must remain constant.
-- Original takeoff and landing coordinates must remain unchanged.
-- No movement or gravity should occur before the player chooses an action.
+Expected:
+- Marker is 480 uu from the takeoff point.
+- Preview ends at exactly that marker.
+- Committed JumpTarget equals preview endpoint.
+- Actual Jump lands at that endpoint.
+- At an airborne reaction, every remaining trajectory point is a subset of the original preview curve.
 
-RefreshUI must not replace the execution path with a new targeting preview.
+Also test a destination within 480 uu. It must not be shortened.
 
-Selecting a replacement action should obey the already established pending-action lifecycle.
+## Regression tests
 
-## 5. Test the real sequence
+Add tests for:
 
-Add focused regression coverage for:
+- Initial Jump into a valid midair reaction.
+- Continue preserving the airborne PreExecutionState.
+- BeginJumpPlayback accepting Continue with an airborne state.
+- Playback starting at the frozen midair XYZ.
+- No extra jump apex or commitment restart.
+- Landing at the original destination.
+- Preview range clamped to 480 uu.
+- Yellow marker matching the clamped target.
+- Original preview and interrupted remaining path matching point-for-point for a long-distance cursor selection.
+- Existing Walk and Dash behavior remaining unchanged.
 
-1. Fresh Jump versus simultaneous Heavy.
-2. Reaction occurs at the first legal airborne Instant.
-3. Manager transitions to State=3.
-4. CurrentState contains the exact airborne FinalState.
-5. GetReactionInfo includes Continue (7).
-6. The actual Continue widget is visible and enabled.
-7. Remaining path points match the original parabola.
-8. Continue executes from CurrentState, not MakeState.
-9. The fighter continues from its frozen XYZ without jumping again.
-10. The fighter lands at the original destination.
-11. No duplicate reaction occurs for the same Heavy attack.
+Do not treat a standalone ResolveCombat(airborneState, 7, ...) test as sufficient. That bypasses the broken Blueprint PreExecutionState handoff.
 
-Make sure the test exercises the combat manager and real widget where possible.
+Run all BUH automation suites.
 
-A direct GetReactionInfo unit test alone does not verify the widget.
+## Delivery
 
-Run all existing BUH suites, especially Walk/Dash reaction and Continue regressions.
+Read back the actual current BP_CombatManager.ExecuteMove graph before editing.
 
-## 6. Report and push (DONE)
+Make targeted changes. Preserve the working frozen-time reaction, mouse cursor, and Dash behavior.
 
-Read back the actual saved `BP_CombatManager.ExecuteMove` and `WBP_CombatUI.RefreshUI` graphs before modifying them. Done — both graphs inspected; the WBP Continue-visibility logic was already correct, the manager handoff was the bug.
+Compile and save the changed Blueprints.
 
-Make targeted changes only. Done — C++ playback globals + one `ExecuteMove` graph edit.
+Export actual saved graph readback to tests/blueprint_exports/.
 
-Compile and save changed Blueprints. Done — C++ UBT clean, `BP_CombatManager` compiled and saved.
+Update todo.md and notes.md.
 
-Update readable Blueprint exports, notes.md, and todo.md. Done — `tests/blueprint_exports/jump_selection_flow.md` (ExecuteMove + RefreshUI sections), `notes.md` §9.37, this file.
+Commit and push the changes to origin/master on HelHeresyDev/BeneathUncountedHeavens so ChatGPT can inspect the results.
 
-Commit and push to `origin/master` on HelHeresyDev/BeneathUncountedHeavens. Done — see commit SHA below.
+Report the commit SHA, tests, and outstanding graphical checks.
 
-Report the commit SHA, the confirmed reason Continue was missing, and the precise cause of the trajectory mismatch. Done — Continue was missing because `ExecuteMove` never wrote the airborne `FinalState` to `CurrentState` / `bReactionOpportunity` / `bHasCurrentState`, so `GetReactionInfo` saw a grounded state. The trajectory changed shape because `TickJumpPlayback` drew from `GJumpPlaybackPreState`, whose `JumpStartX/Y` were still 0 (pre-commit); the fix captures the resolver's committed `JumpStart`/`JumpTarget` and reuses them for drawing.
-
-Distinguish headless automated tests from actual graphical PIE testing. Headless: `BUH.JumpContinueReactionInfoTest` and all 19 BUH suites pass; graph inspection confirms the WBP button logic. Still open: the full graphical-PIE click-through (click Continue in the running UI) needs a graphical PIE run, since headless `-nullrhi` PIE cannot click WBP buttons.
-
-**Success:** The fighter freezes midair at the correct point on the original parabola, the unchanged remaining green trajectory is displayed, Continue is available, and clicking Continue resumes the same Jump through landing. Verified headless; graphical-PIE click-through pending.
+**Success: A Jump preview never exceeds its actual 480-uu range. When the fighter freezes midair, its remaining path matches the original preview, and Continue resumes the same Jump through landing.**

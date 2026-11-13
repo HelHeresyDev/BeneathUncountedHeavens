@@ -1804,3 +1804,149 @@ bool FBuhJumpContinueReactionInfoTest::RunTest(const FString& Parameters)
 	UBuhCombatSim::StopJumpPlayback();
 	return bAllPassed;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpContinuePlaybackAcceptanceTest, "BUH.JumpContinuePlaybackAcceptanceTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpContinuePlaybackAcceptanceTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	UWorld* World = GWorld;
+	if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
+	Check(TEXT("World available (PIE preferred)"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinuePlaybackAcceptance WORLD: PIE=%d"), GWorld ? 1 : 0);
+
+	// Fresh grounded encounter: player commits Jump, opponent commits Heavy. The
+	// Heavy's startup begins during the Jump's reaction-locked instants, so the
+	// reaction is detected once the lock ends, leaving an airborne FinalState.
+	FBuhCombatState PreState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, -20.f, 0.f);
+	const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, 1, 200);
+	Check(TEXT("Fresh Jump vs Heavy reaches a reaction pause"), Result.bReactionOpportunity);
+	if (!Result.bReactionOpportunity)
+	{
+		return bAllPassed;
+	}
+	const FBuhFighterState& Airborne = Result.FinalState.Fighters[0];
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinuePlaybackAcceptance AIRBORNE: action=%d phase=%d PI=%d height=%.2f x=%.1f"),
+		Airborne.Action, Airborne.Phase, Airborne.PhaseInstants, Airborne.Height, Airborne.X);
+	Check(TEXT("Airborne state has Action=9"), Airborne.Action == 9);
+	Check(TEXT("Airborne state has Phase=2"), Airborne.Phase == 2);
+
+	AActor* Player = nullptr;
+	AActor* Opponent = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->Tags.Contains(TEXT("PlayerFighter"))) Player = *It;
+		else if (It->Tags.Contains(TEXT("OpponentFighter"))) Opponent = *It;
+	}
+	if (!Player || !Opponent)
+	{
+		Player = World->SpawnActor<AActor>(FVector(-500, 0, 90), FRotator::ZeroRotator);
+		Opponent = World->SpawnActor<AActor>(FVector(500, 0, 90), FRotator::ZeroRotator);
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC) PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	Check(TEXT("Fighter actors and PC available"), PC != nullptr && Player != nullptr && Opponent != nullptr);
+	if (!PC || !Player || !Opponent)
+	{
+		return bAllPassed;
+	}
+
+	// BUG 1 regression: Continue (PlayerDecision=7) must be accepted by
+	// BeginJumpPlayback when handed the authoritative airborne state. The old
+	// Blueprint handed a fresh grounded MakeState, so playback returned early.
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, Result.FinalState, 7, 1, Result);
+	Check(TEXT("BeginJumpPlayback accepts Continue (7) with airborne state"), UBuhCombatSim::GJumpPlaybackActive);
+	if (!UBuhCombatSim::GJumpPlaybackActive)
+	{
+		UBuhCombatSim::StopJumpPlayback();
+		return bAllPassed;
+	}
+
+	// Control: a grounded prestate with Continue must be rejected.
+	FBuhCombatState Grounded = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	UBuhCombatSim::StopJumpPlayback();
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, Grounded, 7, 1, Result);
+	Check(TEXT("BeginJumpPlayback rejects Continue (7) with grounded state"), !UBuhCombatSim::GJumpPlaybackActive);
+
+	// Resume the airborne playback and verify it lands at the original target.
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, Result.FinalState, 7, 1, Result);
+	int32 Ticks = 0;
+	FVector LastPos;
+	while (UBuhCombatSim::TickJumpPlayback(0.05f) && Ticks < 400)
+	{
+		LastPos = Player->GetActorLocation();
+		++Ticks;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinuePlaybackAcceptance ACTOR: ticks=%d lastX=%.1f lastY=%.1f lastZ=%.2f"), Ticks, LastPos.X, LastPos.Y, LastPos.Z);
+	Check(TEXT("Continue playback advances the fighter"), Ticks > 0);
+	Check(TEXT("Continue playback lands at the original JumpTarget X"),
+		FMath::Abs(LastPos.X - (-20.f)) < 1.f);
+	Check(TEXT("Continue playback ends on the ground"),
+		FMath::Abs(LastPos.Z - 90.f) < 0.01f);
+
+	UBuhCombatSim::StopJumpPlayback();
+	if (!Player->Tags.Contains(TEXT("PlayerFighter"))) Player->Destroy();
+	if (!Opponent->Tags.Contains(TEXT("OpponentFighter"))) Opponent->Destroy();
+	if (!World->GetFirstPlayerController()) PC->Destroy();
+	return bAllPassed;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpPreviewClampTest, "BUH.JumpPreviewClampTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpPreviewClampTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	// BUG 2 regression: the preview clamp (GetClampedJumpDestination) must match
+	// the execution clamp (PrepareJumpCommit via ResolveCombat) so the drawn
+	// parabola ends exactly where the fighter actually lands.
+	struct FCase { const TCHAR* Name; float CursorX; float CursorY; };
+	const FCase Cases[] = {
+		{ TEXT("short"), -300.f, 0.f },
+		{ TEXT("long"), 300.f, 0.f },
+		{ TEXT("diagonal"), -100.f, 400.f },
+	};
+	const FVector Start(-500.f, 0.f, 90.f);
+	for (const FCase& C : Cases)
+	{
+		const FVector Cursor(C.CursorX, C.CursorY, 90.f);
+		const FVector Clamped = UBuhCombatSim::GetClampedJumpDestination(Start, Cursor);
+
+		FBuhCombatState PreState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+		PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, C.CursorX, C.CursorY);
+		const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, -1, 200);
+		const FBuhFighterState& F = Result.FinalState.Fighters[0];
+
+		UE_LOG(LogTemp, Warning, TEXT("JumpPreviewClamp %s: cursor=(%.1f,%.1f) clamp=(%.1f,%.1f) execTarget=(%.1f,%.1f)"),
+			C.Name, C.CursorX, C.CursorY, Clamped.X, Clamped.Y, F.JumpTarget, F.JumpTargetY);
+		Check(*FString::Printf(TEXT("%s: preview clamp matches execution landing"), C.Name),
+			FMath::Abs(Clamped.X - F.JumpTarget) < 0.5f && FMath::Abs(Clamped.Y - F.JumpTargetY) < 0.5f);
+	}
+
+	// Explicit long-range clamp: an 800 uu cursor from (-500,0) must land at (-20,0).
+	const FVector LongClamped = UBuhCombatSim::GetClampedJumpDestination(Start, FVector(300.f, 0.f, 90.f));
+	Check(TEXT("Long cursor clamps to 480 uu along +X"),
+		FMath::Abs(LongClamped.X - (-20.f)) < 0.5f && FMath::Abs(LongClamped.Y) < 0.5f);
+	// Explicit short-range: no clamp.
+	const FVector ShortClamped = UBuhCombatSim::GetClampedJumpDestination(Start, FVector(-300.f, 0.f, 90.f));
+	Check(TEXT("Short cursor is not clamped"),
+		FMath::Abs(ShortClamped.X - (-300.f)) < 0.5f && FMath::Abs(ShortClamped.Y) < 0.5f);
+
+	return bAllPassed;
+}

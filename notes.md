@@ -924,3 +924,42 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Still open:** The full UI-driven graphical-PIE click-through (click Jump → click destination → click Execute → reaction pause → click Continue → Jump resumes through landing) still needs a graphical PIE run, because headless `-nullrhi` PIE cannot click WBP buttons. The manager state handoff, the C++ Continue execution, and the trajectory shape are all verified headless; the WBP button visibility logic is verified by graph inspection.
 
 **Lesson:** (1) A reaction-pause UI gate that reads `CurrentState` will silently fail if the manager never writes the resolver's final state to `CurrentState` — the button logic can be correct and still never fire. (2) `MakeState` leaves `JumpStartX/Y` at 0; only `PrepareJumpCommit` (during resolver stepping) sets them. Any playback that draws from a pre-commit state will use the wrong takeoff, so the committed `JumpStart`/`JumpTarget` must be captured from the resolver's final state and reused for drawing. (3) `ExecuteMoveWithVars` with `bHasCurrentState=true` and the existing `CurrentState` is how a Continue resumes an airborne movement; passing `false` + a fresh `MakeState` rebuilds a grounded state and loses the flight.
+
+### 9.38 Jump Continue passed a grounded prestate + preview/marker ignored the 480 uu clamp (RESOLVED)
+
+**Problem:** In graphical PIE the user committed Jump against a Heavy, reached a midair reaction pause, and clicked Continue. Two bugs: (1) Continue did not resume the airborne Jump — the fighter stayed frozen instead of finishing the parabola. (2) The Jump preview and the yellow `DestPlayer` marker ignored the 480 uu `JumpMaxRange` clamp — a cursor dragged far beyond 480 uu produced a preview/marker at the raw cursor position, not the clamped landing point the resolver actually commits to.
+
+**Cause:**
+- **BUG 1 (grounded prestate on Continue):** In `BP_CombatManager.ExecuteMove`, the Jump-specific prestate adjustment (`WithPlayerJumpTargetFromPreview`) only ran when `PlayerMove == 9`. On a Continue (`PlayerMove == 7`) that branch was skipped, so `PreExecutionState` was still the fresh grounded `MakeState(...)` — even though `CurrentState` held the airborne state. `BeginJumpPlayback(..., PreExecutionState, PlayerMove=7, ...)` therefore received a grounded state, and its acceptance condition (`PlayerDecision == 9` OR `PreState.Fighters[0].Action == 9 && PreState.Fighters[0].Phase == 2`) was false on both clauses, so playback never started.
+- **BUG 2 (no clamp in preview/marker):** `DrawJumpPath` drew the parabola from `Start` to the raw cursor `End` with no clamping, while `PrepareJumpCommit` clamps `JumpTarget`/`JumpTargetY` to `JumpMaxRange = 480` based on XY distance from takeoff. The WBP `DestPlayer` marker was likewise placed at the raw cursor, so both the preview curve and the marker overshot the real committed destination.
+
+**Fix (C++):**
+- Added a `static void ClampJumpDestination(double StartX, double StartY, double& TargetX, double& TargetY)` helper in `CombatSim.cpp` that clamps a destination to `JumpMaxRange` uu from the takeoff. `PrepareJumpCommit` now uses it (with local `double` copies and `float` casts).
+- `DrawJumpPath` now clamps `End.X/Y` via `ClampJumpDestination` before building the parabola and forces both `StartGround.Z` and `EndGround.Z` to `GroundZ = 90.f` (it ignores the passed `End.Z`).
+- Added a `UFUNCTION(BlueprintPure) FVector GetClampedJumpDestination(const FVector& Start, const FVector& Cursor)` that returns the clamped destination and preserves the cursor's Z, so the WBP can place the marker at the same clamped point the resolver commits to.
+
+**Fix (Blueprint, BUG 1 — surgical node edits in `BP_CombatManager.ExecuteMove`):**
+- Created `K2Node_VariableSet_51` (`Variables|Default|SetPreExecutionState`) and inserted it between the Continue-branch `PrintString` (`K2Node_CallFunction_144`) and the resolver call (`K2Node_CallFunction_145`). Its value is wired from `K2Node_VariableGet_128` (`GetCurrentState`), so a Continue overwrites the grounded prestate with the live airborne state before resolving.
+- Rewired the resolver's `CurrentState` input (idx 2) from `GetCurrentState` to `GetPreExecutionState` (`K2Node_VariableGet_148`), so the resolver always consumes the committed prestate.
+- Created `K2Node_VariableSet_52` (`Variables|Default|SetCurrentState`) and inserted it between `LogCombatState` (`K2Node_CallFunction_147`) and `GetFinalPlayerX` (`K2Node_CallFunction_148`). Its value is wired from the resolver's `GetFinalState` output (idx 1), so `CurrentState` is updated to the resolver's final state after every execution.
+
+**Fix (Blueprint, BUG 2 — WBP marker clamp in `WBP_CombatUI.EventGraph`):**
+- Created `K2Node_CallFunction_121` (`CombatSim|GetClampedJumpDestination`, data-only) and `K2Node_CallFunction_122` (`Transformation|SetActorLocation`).
+- Wired the Jump targeting branch so the `DestPlayer` marker is placed at the clamped destination: `GetClampedJumpDestination(Start, Cursor)` → `SetActorLocation(self, NewLocation)`, chained into the existing `IfThenElse_12` exec flow. The marker now lands exactly where the resolver commits, so the preview curve and the marker agree at any cursor distance.
+
+**Regression tests (C++, `PathRendererAutomation.cpp`):**
+- `BUH.JumpContinuePlaybackAcceptanceTest`: verifies `BeginJumpPlayback` accepts a Continue with an airborne state, rejects a grounded control, ticks until landing, and lands at the original `JumpTarget` X.
+- `BUH.JumpPreviewClampTest`: verifies `GetClampedJumpDestination` matches the execution landing for short, long, and diagonal cursors, and that an 800 uu cursor clamps to 480 uu along +X.
+
+**Test correction:** `BUH.JumpPreviewClampTest` initially failed because it compared `GetClampedJumpDestination` against `F.X/F.Y` — the fighter's position at instant 3 of 8 (3/8 of the way to the target) — instead of the clamped `JumpTarget`. `FBuhFighterState` stores `JumpTarget`/`JumpTargetY`, which `PrepareJumpCommit` clamps. The test now compares `Clamped.X/Y` against `F.JumpTarget/F.JumpTargetY` and logs `execTarget`. After recompile and a headless editor restart, all three cases pass: short `(-300,0)`, long `(-20,0)`, diagonal `(-160.6,339.4)`.
+
+**Verified:**
+- C++ rebuilt clean (`RunUBT.sh -project="..." BeneathUncountedHeavEditor Development Linux`, Result: Succeeded).
+- `BP_CombatManager` and `WBP_CombatUI` compiled clean and saved via `AssetTools.save_assets`.
+- Live `ExecuteMove` DSL readback confirms the Continue branch sets `PreExecutionState` to `GetCurrentState`, the resolver consumes `GetPreExecutionState`, and `SetCurrentState` runs after `LogCombatState`.
+- Live `WBP_CombatUI.EventGraph` DSL readback confirms the Jump branch sets the `DestPlayer` marker to `GetClampedJumpDestination`.
+- All 10 `BUH.Jump*` tests pass. All 21 `BUH.*` tests pass (passed=21, failed=0).
+
+**Still open:** The full UI-driven graphical-PIE click-through (click Jump → click destination → click Execute → reaction pause → click Continue → Jump resumes through landing, with the preview and marker clamped to 480 uu) still needs a graphical PIE run, because headless `-nullrhi` PIE cannot click WBP buttons or capture the path/marker. The Continue-prestate fix, the C++ clamp, and the WBP marker clamp are all verified headless; the button click and the visual clamp are the remaining manual checks.
+
+**Lesson:** (1) A Continue that rebuilds a grounded prestate instead of reusing the airborne `CurrentState` silently loses the flight — the prestate must be overwritten with the live state on the Continue branch before the resolver runs, and `CurrentState` must be updated from the resolver's final state after every execution. (2) A preview/marker that draws from the raw cursor while the resolver clamps to a max range will disagree at long distances — clamp the preview and the marker with the same helper the resolver uses, and force the ground Z so the marker does not float. (3) A clamp regression test must compare the clamped destination against the committed `JumpTarget`, not the fighter's mid-flight position — the latter is only a fraction of the way to the target and will not catch an unclamped preview.

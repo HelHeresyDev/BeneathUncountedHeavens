@@ -366,27 +366,34 @@ static bool IsReactableMovement(const FBuhFighterState& F)
 	return IsReactableWalk(F) || IsReactableDash(F) || IsReactableJump(F);
 }
 
+static void ClampJumpDestination(double StartX, double StartY, double& TargetX, double& TargetY)
+{
+	if (TargetX < -9998.0)
+	{
+		TargetX = StartX;
+		TargetY = StartY;
+		return;
+	}
+	const double Dx = TargetX - StartX;
+	const double Dy = TargetY - StartY;
+	const double Dist = FMath::Sqrt(Dx * Dx + Dy * Dy);
+	if (Dist > static_cast<double>(BuhCombat::JumpMaxRange))
+	{
+		const double Scale = static_cast<double>(BuhCombat::JumpMaxRange) / Dist;
+		TargetX = StartX + Dx * Scale;
+		TargetY = StartY + Dy * Scale;
+	}
+}
+
 static void PrepareJumpCommit(FBuhFighterState& F)
 {
 	F.JumpStartX = F.X;
 	F.JumpStartY = F.Y;
-	if (F.JumpTarget < -9998.f)
-	{
-		F.JumpTarget = F.X;
-		F.JumpTargetY = F.Y;
-	}
-	else
-	{
-		const float Dx = F.JumpTarget - F.X;
-		const float Dy = F.JumpTargetY - F.Y;
-		const float Dist = FMath::Sqrt(Dx * Dx + Dy * Dy);
-		if (Dist > static_cast<float>(BuhCombat::JumpMaxRange))
-		{
-			const float Scale = static_cast<float>(BuhCombat::JumpMaxRange) / Dist;
-			F.JumpTarget = F.X + Dx * Scale;
-			F.JumpTargetY = F.Y + Dy * Scale;
-		}
-	}
+	double ClampedTargetX = F.JumpTarget;
+	double ClampedTargetY = F.JumpTargetY;
+	ClampJumpDestination(F.X, F.Y, ClampedTargetX, ClampedTargetY);
+	F.JumpTarget = static_cast<float>(ClampedTargetX);
+	F.JumpTargetY = static_cast<float>(ClampedTargetY);
 	F.Height = 0.f;
 }
 
@@ -3159,7 +3166,9 @@ void UBuhCombatSim::DrawJumpPath(APlayerController* PC, FVector Start, FVector E
 	const float GroundZ = 90.f;
 	FVector StartGround = Start;
 	StartGround.Z = GroundZ;
-	FVector EndGround = End;
+	FVector ClampedEnd = End;
+	ClampJumpDestination(Start.X, Start.Y, ClampedEnd.X, ClampedEnd.Y);
+	FVector EndGround = ClampedEnd;
 	EndGround.Z = GroundZ;
 	TArray<FVector> Points;
 	for (int32 i = ElapsedFlightInstants; i <= Flight; ++i)
@@ -3190,6 +3199,13 @@ void UBuhCombatSim::DrawJumpPath(APlayerController* PC, FVector Start, FVector E
 	const bool bAllRed = (RemainingLocked >= Remaining);
 	const FColor LineColor = bAllRed ? FColor::Red : FColor::Green;
 	DrawDebugLine(World, Current, Points.Last(), LineColor, false, 5.f, 0, 10.f);
+}
+
+FVector UBuhCombatSim::GetClampedJumpDestination(const FVector& Start, const FVector& Cursor)
+{
+	FVector Out = Cursor;
+	ClampJumpDestination(Start.X, Start.Y, Out.X, Out.Y);
+	return Out;
 }
 
 void UBuhCombatSim::DrawJumpPathFromState(APlayerController* PC, const FBuhCombatState& S, int32 ElapsedFlightInstants)
