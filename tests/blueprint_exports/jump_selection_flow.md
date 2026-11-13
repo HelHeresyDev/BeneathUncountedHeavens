@@ -35,7 +35,7 @@ authoritative saved graph states for the Jump movement action.
   (return (Variables|Default|GetJumpAwaitingExecute)))
 ```
 
-### ExecuteMove (airborne Jump playback + reaction handoff + Continue prestate) — LIVE graph after the BUG 1/BUG 2 fix
+### ExecuteMove (airborne Jump playback + reaction handoff + Continue prestate) — LIVE graph after the §9.39 execution-order fix
 ```
 (fn ExecuteMove ()
   (bind _preexecutionstate (Variables|Default|GetPreExecutionState))
@@ -52,14 +52,13 @@ authoritative saved graph states for the Jump movement action.
         (else
           (Variables|Default|SetPreExecutionState _returnvalue)))
       (if (== (Variables|Default|GetPlayerMove) 7)
-        (Development|PrintString "Continue: preserving CurrentState")
         (Variables|Default|SetPreExecutionState (Variables|Default|GetCurrentState))
+        (Development|PrintString "Continue: preserving CurrentState")
         (else
           (Variables|Default|SetCurrentState _returnvalue)))
       (bind _returnvalue_1 (CombatSim|ExecuteMoveWithVars true _preexecutionstate (Variables|Default|GetPlayerX) (Variables|Default|GetOpponentX) (Variables|Default|GetPlayerHealth) (Variables|Default|GetOpponentHealth) (Variables|Default|GetSeed) (Variables|Default|GetPlayerMove) 1 (Variables|Default|GetPlayerWalkTarget) (Variables|Default|GetPlayerWalkTargetY) (Variables|Default|GetPlayerY)))
       (bind _returnvalue_2 (CombatSim|GetFinalState _returnvalue_1))
       (CombatSim|LogCombatState _returnvalue_2 "PostResolve")
-      (Variables|Default|SetCurrentState _returnvalue_2)
       (bind _returnvalue_3 (CombatSim|GetFinalPlayerX _returnvalue_1))
       (bind _returnvalue_4 (CombatSim|GetFinalOpponentX _returnvalue_1))
       (bind _returnvalue_5 (CombatSim|GetFinalPlayerHealth _returnvalue_1))
@@ -69,7 +68,7 @@ authoritative saved graph states for the Jump movement action.
       (Variables|Default|SetPlayerHealth _returnvalue_5)
       (Variables|Default|SetOpponentHealth _returnvalue_6)
       (bind _returnvalue_7 (CombatSim|GetFinalPlayerY _returnvalue_1))
-      (if (or (== (Variables|Default|GetPlayerMove) 9) (> (CombatSim|GetJumpElapsedFlightInstants (Variables|Default|GetCurrentState)) 0))
+      (if (or (== (Variables|Default|GetPlayerMove) 9) (> (CombatSim|GetJumpElapsedFlightInstants _preexecutionstate) 0))
         (Development|PrintString "JumpPlayback: skipping immediate player teleport")
         (else
           (Transformation|SetActorLocation (Variables|Default|GetPlayerFighter) (Math|Vector|MakeVector (Math|Conversions|ToFloat(Integer) _returnvalue_3) _returnvalue_7 (CombatSim|GetFinalPlayerWorldZ _returnvalue_1)))))
@@ -100,11 +99,11 @@ authoritative saved graph states for the Jump movement action.
       (CombatSim|SetExecDashTarget -9999)
       (CombatSim|SetExecJumpTarget -9999)
       (Variables|Default|SetJumpAwaitingExecute false)
-      (if (or (== (Variables|Default|GetPlayerMove) 9) (> (CombatSim|GetJumpElapsedFlightInstants (Variables|Default|GetCurrentState)) 0))
+      (if (or (== (Variables|Default|GetPlayerMove) 9) (> (CombatSim|GetJumpElapsedFlightInstants _preexecutionstate) 0))
         (CombatSim|BeginJumpPlayback (Game|GetPlayerController 0) (Variables|Default|GetPlayerFighter) (Variables|Default|GetOpponentFighter) _preexecutionstate (Variables|Default|GetPlayerMove) 1 _returnvalue_1)))))
 ```
 
-`ExecuteMove` snapshots `PreExecutionState` into `_preexecutionstate` at the top, builds the original state via `MakeState`, applies `WithPlayerJumpTargetFromPreview` when the player committed a Jump (storing the committed destination in `PreExecutionState`), and — for `PlayerMove == 7`/Continue — overwrites `PreExecutionState` with the existing airborne `CurrentState` so the resolver receives the frozen midair state instead of a fresh grounded one. The resolver runs through `ExecuteMoveWithVars true` with `_preexecutionstate`, so a Continue resumes the airborne Jump instead of rebuilding a grounded state. The resolver's final state is written back to `CurrentState` immediately after `LogCombatState`, and `bHasCurrentState`/`bReactionOpportunity` are set when a reaction is detected, so `WBP_CombatUI.RefreshUI` can call `GetReactionInfo` with the authoritative airborne state and show the Continue button. The player teleport is skipped for Jump/airborne states (the C++ playback system owns the fighter's position). `BeginJumpPlayback` receives `_preexecutionstate` and the resolver's result, and the C++ playback stores the committed `JumpStart`/`JumpTarget` from the resolver's final state so the remaining parabola keeps its original shape through the reaction pause.
+`ExecuteMove` snapshots `PreExecutionState` into `_preexecutionstate` at the top, builds the original state via `MakeState`, applies `WithPlayerJumpTargetFromPreview` when the player committed a Jump (storing the committed destination in `PreExecutionState`), and — for `PlayerMove == 7`/Continue — overwrites `PreExecutionState` with the existing airborne `CurrentState` so the resolver receives the frozen midair state instead of a fresh grounded one. The resolver runs through `ExecuteMoveWithVars true` with `_preexecutionstate`, so a Continue resumes the airborne Jump instead of rebuilding a grounded state. The resolver's final state is written back to `CurrentState` only inside the reaction branch (when a reaction is detected), and `bHasCurrentState`/`bReactionOpportunity` are set there too, so `WBP_CombatUI.RefreshUI` can call `GetReactionInfo` with the authoritative airborne state and show the Continue button. The player teleport is skipped for Jump/airborne states (the C++ playback system owns the fighter's position). `BeginJumpPlayback` receives `_preexecutionstate` and the resolver's result, and the C++ playback stores the committed `JumpStart`/`JumpTarget` from the resolver's final state so the remaining parabola keeps its original shape through the reaction pause.
 
 ## BP_CombatManager — variables
 

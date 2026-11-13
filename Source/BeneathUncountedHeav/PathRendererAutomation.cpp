@@ -1950,3 +1950,95 @@ bool FBuhJumpPreviewClampTest::RunTest(const FString& Parameters)
 
 	return bAllPassed;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhJumpContinueExecuteMoveRegressionTest, "BUH.JumpContinueExecuteMoveRegressionTest",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhJumpContinueExecuteMoveRegressionTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	// Drive a fresh Jump vs Heavy to a reaction pause. The player is left
+	// airborne (Action 9, Phase 2) with committed JumpStart/JumpTarget.
+	FBuhCombatState PreState = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	PreState = UBuhCombatSim::WithPlayerJumpTarget(PreState, -20.f, 0.f);
+	const FBuhCombatResult Result = UBuhCombatSim::ResolveCombat(PreState, 9, 1, 200);
+	Check(TEXT("Fresh Jump vs Heavy reaches a reaction pause"), Result.bReactionOpportunity);
+	if (!Result.bReactionOpportunity)
+	{
+		return bAllPassed;
+	}
+	const FBuhFighterState& Airborne = Result.FinalState.Fighters[0];
+	Check(TEXT("Airborne state has Action=9"), Airborne.Action == 9);
+	Check(TEXT("Airborne state has Phase=2"), Airborne.Phase == 2);
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinueExecuteMoveRegression AIRBORNE: action=%d phase=%d PI=%d height=%.2f x=%.1f"),
+		Airborne.Action, Airborne.Phase, Airborne.PhaseInstants, Airborne.Height, Airborne.X);
+
+	// BUG 1 regression: the Continue branch must select the airborne CurrentState
+	// as PreExecutionState (not a fresh grounded state). Feeding that airborne
+	// state to the resolver must resume the same Jump.
+	const FBuhCombatState& PreExecutionState = Result.FinalState;
+	const FBuhCombatResult ContinueResult = UBuhCombatSim::ExecuteMoveWithVars(
+		true, PreExecutionState,
+		(int32)PreExecutionState.Fighters[0].X, (int32)PreExecutionState.Fighters[1].X,
+		PreExecutionState.Fighters[0].Health, PreExecutionState.Fighters[1].Health,
+		0, 7, 1,
+		-9999.f, 0.f, 0.f, 0.f);
+	Check(TEXT("Continue resolver resumes the Jump (action stays 9)"),
+		ContinueResult.FinalState.Fighters.Num() > 0 && ContinueResult.FinalState.Fighters[0].Action == 9);
+	Check(TEXT("Continue resolver lands at the original JumpTarget X"),
+		ContinueResult.FinalState.Fighters.Num() > 0 &&
+		FMath::Abs(ContinueResult.FinalState.Fighters[0].X - (-20.f)) < 1.f);
+
+	// BUG 2 regression: the playback gate must read PreExecutionState (airborne),
+	// so GetJumpElapsedFlightInstants(PreExecutionState) > 0. The old gate read the
+	// post-resolution grounded CurrentState and returned 0, skipping playback.
+	const int32 Elapsed = UBuhCombatSim::GetJumpElapsedFlightInstants(PreExecutionState);
+	UE_LOG(LogTemp, Warning, TEXT("JumpContinueExecuteMoveRegression GATE: elapsed=%d"), Elapsed);
+	Check(TEXT("Playback gate is true for airborne PreExecutionState"), Elapsed > 0);
+
+	// Control: a grounded prestate must yield a false gate (elapsed == 0).
+	const FBuhCombatState Grounded = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	Check(TEXT("Playback gate is false for grounded PreExecutionState"),
+		UBuhCombatSim::GetJumpElapsedFlightInstants(Grounded) == 0);
+
+	// End-to-end: BeginJumpPlayback must accept the airborne Continue state.
+	UWorld* World = GWorld;
+	if (!World && GEditor) World = GEditor->GetEditorWorldContext().World();
+	Check(TEXT("World available (PIE preferred)"), World != nullptr);
+	if (!World)
+	{
+		return bAllPassed;
+	}
+	AActor* Player = nullptr;
+	AActor* Opponent = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->Tags.Contains(TEXT("PlayerFighter"))) Player = *It;
+		else if (It->Tags.Contains(TEXT("OpponentFighter"))) Opponent = *It;
+	}
+	if (!Player || !Opponent)
+	{
+		Player = World->SpawnActor<AActor>(FVector(-500, 0, 90), FRotator::ZeroRotator);
+		Opponent = World->SpawnActor<AActor>(FVector(500, 0, 90), FRotator::ZeroRotator);
+	}
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC) PC = World->SpawnActor<APlayerController>(FVector::ZeroVector, FRotator::ZeroRotator);
+	Check(TEXT("Fighter actors and PC available"), PC != nullptr && Player != nullptr && Opponent != nullptr);
+	if (!PC || !Player || !Opponent)
+	{
+		return bAllPassed;
+	}
+	UBuhCombatSim::BeginJumpPlayback(PC, Player, Opponent, PreExecutionState, 7, 1, ContinueResult);
+	Check(TEXT("BeginJumpPlayback accepts Continue with airborne PreExecutionState"), UBuhCombatSim::GJumpPlaybackActive);
+	UBuhCombatSim::StopJumpPlayback();
+
+	if (!Player->Tags.Contains(TEXT("PlayerFighter"))) Player->Destroy();
+	if (!Opponent->Tags.Contains(TEXT("OpponentFighter"))) Opponent->Destroy();
+	if (!World->GetFirstPlayerController()) PC->Destroy();
+	return bAllPassed;
+}
