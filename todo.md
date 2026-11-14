@@ -1,119 +1,131 @@
- # BUH — Timeline Slider Is Invisible in Graphical PIE
+ # BUH — Slider Still Invisible After SizeBox Fix
 
- **Status (post-fix):** Inspected the full UMG hierarchy — the slider's own state was fine (`Visible`, opacity 1, `Value 0 / Min 0 / Max 30`, horizontal) and `RootCanvas` was **not** zero-height (panels render), so the §4.2 bug is not active. The slider's `HorizontalBoxSlot` was `Fill coeff 0` with no explicit size, so it rendered at zero width. Wrapped `TimelineSlider` in a `SizeBox` (`SizeBox_2`, `WidthOverride=550`, `HeightOverride=40`) via `UMGToolSet.WrapWidgets` + `ObjectTools.set_properties`, matching the existing Left/Right panel convention. Rewrote `ScrubTimeline` to guard on `CombatSim|bHasTimeline` (not `GetTimelineLength<=0`), so an empty timeline shows "No preview" instead of the garbage `0/134743044`. Compile clean, 22/22 `BUH` tests pass, WBP saved. **Graphical PIE drag verification still pending** (headless cannot capture the viewport or drive a drag) — the user must confirm the slider is visible and draggable in a fresh graphical PIE. See notes.md §9.46.
+ **Status (post-fix):** Confirmed the real cause — `WrapWidgets` makes the wrapper **inherit the wrapped widget's slot**, so `SizeBox_2` inherited the slider's zero-weight `Fill` (`Value=0`) `HorizontalBoxSlot` and still rendered at zero width despite its 550 px `WidthOverride`. Fixed by `MoveWidget`-ing the **existing** `TimelineSlider` directly into `BottomTimelineContent` (it got a fresh `Auto` `HorizontalBoxSlot_4`), deleting the empty `SizeBox_2`, then re-wrapping the same slider in `SizeBox_3` (which inherits the `Auto` slot) with `WidthOverride=550`, `HeightOverride=40`. An `Auto` slot honors the explicit desired width, so the slider now gets a guaranteed 550×40. The `OnValueChanged(TimelineSlider) → ScrubTimeline` binding is intact (same widget instance). Compile clean, 22/22 `BUH` tests pass, WBP saved. **Graphical PIE drag verification still pending** (headless cannot capture the viewport or drive a drag) — the user must confirm the slider is visible and draggable in a fresh graphical PIE. See notes.md §9.47.
 
- The user tested commit 3ae8de0. The slider is NOT visible anywhere in graphical PIE.
+ The user tested commit `5e10bf9` in graphical PIE.
 
-The latest commit changed ScrubTimeline, OnValueChanged, RefreshUI, and RegeneratePredictionPreview, but it did not verify the widget's visual layout.
+ The timeline slider is STILL completely invisible.
 
-The screenshot shows player/opponent controls and faint prediction text, but no visible slider track or draggable thumb.
+The "No preview" text now displays correctly, confirming that the updated WBP is loading. However, there is no visible slider track, thumb, or bottom timeline area.
 
-## 1. Inspect the actual UMG widget hierarchy
+Stop adjusting the slider's own WidthOverride without proving its parent has usable layout space.
 
-Open WBP_CombatUI and inspect:
+## 1. Investigate the likely remaining zero-width slot
 
-- TimelineSlider
-- TimelineInstantText
-- BottomTimelineContent
-- BottomTimelinePanel and its ancestors, if present
-- RootCanvas
-- RootBox
+Your last fix wrapped TimelineSlider in:
 
-Use UMGToolSet.GetWidgetDescription and available ObjectTools properties.
+`SizeBox_2 (WidthOverride=550, HeightOverride=40)`
 
-For the slider and each ancestor, report:
-- Widget class and parent
-- Visibility
-- Render opacity
-- IsEnabled
-- Slot type
-- Anchors, offsets, alignment
-- Desired dimensions
-- SizeBox or container constraints
-- Clipping
-- Z-order where relevant
+But your notes say the new SizeBox is still the only **Fill** child of `BottomTimelineContent`, a HorizontalBox.
 
-Review notes.md §4.2: this project previously had a zero-height RootCanvas issue that hid the entire bottom timeline.
+The original slider's HorizontalBoxSlot had:
 
-Also check whether the bottom timeline is positioned outside the viewport or behind another widget.
+`SizeRule=Fill, Value=0`
 
-A widget existing in the WidgetTree does not prove that it is visible or usable.
+Check whether `SizeBox_2` inherited that same zero-weight Fill slot.
 
-## 2. Repair the layout, not the simulation
+A SizeBox with a 550-pixel desired width can still receive zero arranged width when its parent HorizontalBox assigns zero space to its Fill slot.
 
-Make the existing TimelineSlider clearly visible near the bottom center of the gameplay viewport.
+**First attempt:** Give the wrapper's HorizontalBoxSlot `SizeRule=Auto`, allowing its explicit desired width to determine the allocation.
 
-Suggested first-playable presentation:
-- Slider track approximately 500–650 px wide.
-- Adequate clickable height.
-- Clearly visible thumb.
-- Distinct contrast against the arena.
-- Readable "Instant N / N" display beside or above it.
-- No overlap with the Execute button.
-- No overlap with the opponent-action buttons.
+Alternatively, use `Fill` with a positive coefficient, such as 1, and verify its parent has sufficient width.
 
-Use correct slot geometry and anchors so the slider remains visible when the PIE viewport is resized.
+Do not assume that being the only Fill child guarantees allocation.
 
-Ensure the widget is enabled and hit-testable.
+## 2. Inspect the COMPLETE ancestor chain
 
-Preserve the existing player and opponent menu layouts as much as possible.
+Inspect actual saved WidgetTree properties for:
 
-Do not create another slider if TimelineSlider already exists.
+`RootBox → RootCanvas → BottomTimelinePanel → BottomTimelineContent → SizeBox_2 → TimelineSlider`
 
-## 3. Check the displayed Instant value
+Adjust the chain to match the actual saved hierarchy if necessary.
 
-The screenshot contains a suspicious prediction readout resembling "0/134743044".
+For every ancestor, report:
+- Class.
+- Visibility and render opacity.
+- Parent and slot class.
+- Size rule and coefficient.
+- Canvas anchors and offsets, where applicable.
+- Desired width/height.
+- Available arranged space.
+- Clipping.
+- Z-order.
 
-Verify:
-- Actual GetTimelineLength.
-- Actual selected snapshot index.
-- TimelineSlider MinValue and MaxValue.
-- TimelineInstantText's final displayed value.
-- Whether another Blueprint handler overwrites that text.
+Check the actual bottom panel's position relative to the gameplay viewport.
 
-For N snapshots, valid indices are 0 through N-1.
+The screenshot has a large unused lower area, yet no slider or Instant text. Determine whether the entire timeline container is offscreen, clipped, collapsed, or obscured.
 
-Do not display an uninitialized or invalid timeline length.
+## 3. Establish one definitely visible layout
 
-An empty timeline should display "No preview".
+If the existing bottom layout cannot be fixed through one or two targeted slot edits, position the existing timeline container explicitly in RootCanvas.
 
-## 4. Verify real scrubbing
+Suggested temporary layout:
 
-Once visible:
+- Bottom-center anchor.
+- Approximately 650 px wide and 75 px tall.
+- Position it 20–30 px above the bottom of the viewport.
+- Clearly visible slider track.
+- 550 px slider width.
+- "Instant 0 / N" text directly above the slider.
+- Clearly visible thumb and hit-test area.
 
-1. Select Quick.
-2. Select hypothetical opponent Heavy.
-3. Confirm the timeline has multiple snapshots.
-4. Drag the slider to the first, middle, and final snapshots.
-5. Confirm the cyan and orange ghosts change positions appropriately.
-6. Confirm the real blue and red fighters remain stationary.
-7. Confirm the displayed Instant matches the snapshot.
-8. Confirm the thumb is actually draggable and not obstructed by an overlapping widget.
+A CanvasPanelSlot with a real size and bottom-center anchoring is preferable to repeatedly adding SizeBoxes inside a broken container.
 
-For Jump predictions, verify the cyan ghost's airborne Z.
+Do not create another TimelineSlider.
 
-If the available headless MCP environment cannot verify widget geometry or mouse dragging, explicitly report that limitation. Do not call the feature visually verified until graphical PIE confirms it.
+If necessary, add a temporary contrasting panel to establish the container's exact visible position, then remove that diagnostic once the slider is working.
 
-## 5. Preserve the stable combat system
+## 4. Verify actual graphical geometry
+
+Do not claim success solely because GetWidgetDescription reports Visibility=Visible or because WBP compiles.
+
+If possible, use the existing graphical PIE test runner to inspect the visible result.
+
+A graphical-only diagnostic can also report:
+
+- TimelineSlider.GetCachedGeometry().GetAbsoluteSize().
+- SizeBox_2.GetCachedGeometry().GetAbsoluteSize().
+- BottomTimelineContent.GetCachedGeometry().GetAbsoluteSize().
+- BottomTimelinePanel.GetCachedGeometry().GetAbsoluteSize().
+- Slider absolute screen position.
+- Effective visibility for the whole ancestor chain.
+
+Do not rely on cached geometry in headless `-nullrhi` tests; it can report zero for otherwise valid widgets.
+
+The slider needs actual positive screen dimensions and must be inside the visible viewport.
+
+## 5. Handle empty predictions correctly
+
+"No preview" is the correct text when no hypothetical timeline exists.
+
+But the timeline control should still be visible, even if disabled, so the player knows where timeline scrubbing will occur.
+
+When a player action and hypothetical opponent action produce a valid timeline:
+- Enable the slider.
+- Set its range to valid snapshot indices.
+- Show the current Instant.
+- Allow mouse dragging.
+- Move only the cyan/orange prediction ghosts.
+
+Confirm actual dragging works, not merely the OnValueChanged binding.
+
+## 6. Preserve working combat
 
 Do not modify:
-- BP_CombatManager.ExecuteMove
-- Walk, Dash, or Jump simulation
-- Reaction/Continue logic
-- ResetEncounter
-- Combat balance
-- Movement path renderers
+- BP_CombatManager.
+- ExecuteMove.
+- ResetEncounter.
+- Walk, Dash, Jump.
+- Continue/reactions.
+- Movement path rendering.
+- CombatSim movement rules.
 
-Do not rewrite WBP_CombatUI.EventTick or RefreshUI merely to solve widget geometry.
+Limit the implementation to WBP_CombatUI widget layout and the minimum necessary visibility handling.
 
-Prefer a small, targeted WidgetTree or slot-property correction.
+Run the BUH tests, compile and save the Blueprint, and read back the modified WidgetTree/slot properties.
 
-Compile and save WBP_CombatUI, then read back the corrected widget properties.
+Commit and push to origin/master.
 
-Run all BUH automation tests.
+Report the commit SHA and the actual confirmed cause. Do not label graphical verification complete until it has been performed.
 
-Update notes.md and todo.md with the actual visibility cause.
-
-Commit and push to origin/master and report the SHA.
-
-**Success:** The slider is unmistakably visible and draggable at the bottom of graphical PIE, shows a valid Instant number, and moves prediction ghosts without disturbing real combat.
+**Success:** I can clearly see a timeline slider near the bottom of the game, even when there is no preview, and drag it when a hypothetical timeline is available.
