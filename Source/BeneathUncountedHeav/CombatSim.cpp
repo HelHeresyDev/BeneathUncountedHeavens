@@ -2109,6 +2109,13 @@ bool UBuhCombatSim::bHasTimeline()
 	return bGHasTimeline;
 }
 
+int32 UBuhCombatSim::ClampInstantFromFloat(float Value)
+{
+	const int32 Len = GCurrentTimeline.Num();
+	if (Len <= 0) return 0;
+	return FMath::Clamp(FMath::RoundToInt(Value), 0, Len - 1);
+}
+
 int32 UBuhCombatSim::GetSnapshotInstant(int32 Index)
 {
 	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].Instant;

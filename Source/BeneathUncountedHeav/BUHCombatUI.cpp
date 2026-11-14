@@ -27,7 +27,7 @@ void UBUHCombatUI::ResetTimelineSlider(const FString& NewValueStr)
 	}
 }
 
-void UBUHCombatUI::MoveGhostsToInstant(int32 Instant)
+void UBUHCombatUI::MoveGhostsToInstantXOnly(int32 Instant)
 {
 	if (!UBuhCombatSim::bHasTimeline()) return;
 	UWorld* World = GetWorld();
@@ -65,12 +65,12 @@ void UBUHCombatUI::MoveGhostsToInstant(int32 Instant)
 	}
 }
 
-void UBUHCombatUI::SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant)
+void UBUHCombatUI::SetupTimelineAndMoveGhostsXOnly(int32 PlayerMove, int32 OpponentMove, int32 Instant)
 {
 	FBuhCombatState State = UBuhCombatSim::MakeState(-500.0f, 500.0f, 100.0f, 100.0f, 0);
 	TArray<FBuhTimelineSnapshot> Timeline = UBuhCombatSim::GenerateTimeline(State, PlayerMove, OpponentMove, 30);
 	UBuhCombatSim::SetCurrentTimeline(Timeline);
-	MoveGhostsToInstant(Instant);
+	MoveGhostsToInstantXOnly(Instant);
 }
 
 static FAutoConsoleCommand ScrubTimelineCmd(

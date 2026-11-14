@@ -1,92 +1,45 @@
-# BUH — Fix Walk Path Disappearing at Reaction Pause
+# Beneath Uncounted Heavens — Phase 1: Restore Timeline Scrubbing Safely
 
-The user tested restored commit `5ea1e38` in graphical PIE.
+Stable baseline: commit ed2596e.
 
-**Confirmed working:**
-- Walk execution.
-- Reaction detection.
-- Continue button.
-- Continue movement.
-- Clean startup.
+The user has confirmed Walk, Dash, Jump, Continue, reaction paths, and clean startup are working in graphical PIE.
 
-**Remaining bug:** The green Walk path disappears when combat stops for a reaction.
+Implement ONE feature: let the player scrub through hypothetical combat Instants using the existing timeline slider.
 
-The screenshot shows a valid reaction with Continue available, but no remaining green movement line.
+Requirements:
 
-## Suspected cause
+1. Inspect the current WBP_CombatUI timeline controls and existing CombatSim timeline APIs.
+2. Reuse GenerateTimeline, GetSnapshotAt, and MoveGhostsToInstant where appropriate.
+3. Bind the timeline slider to a valid snapshot index, clamped to 0 through TimelineLength-1.
+4. Move only the cyan and orange prediction ghosts to the selected snapshot positions, including correct airborne Z.
+5. Show the currently selected Instant and total available Instants.
+6. Changing hypothetical opponent actions should regenerate the preview and update the slider's range.
+7. Handle empty and single-snapshot timelines safely.
+8. Preserve a clean initial encounter without visible ghosts.
 
-The known-good `BP_CombatManager.ExecuteMove` graph contains a `ClearWalkPath` call after combat resolution.
+**Critical restriction:** Do not modify BP_CombatManager.ExecuteMove, ResetEncounter, movement targeting, reaction detection, Continue, Jump playback, or movement rules.
 
-Meanwhile, `WBP_CombatUI.EventTick` draws the Walk preview primarily in Planning (`State == 0`).
+Hypothetical previews must never modify authoritative CurrentState or actual fighter transforms.
 
-When a reaction changes the manager to State 3, the existing path is cleared and not restored.
+Do not implement Next Event, new tactical information panels, or UI restyling during this phase.
 
-Verify the actual saved graphs before editing.
+After implementation:
+- Run the existing BUH tests.
+- Compile and save modified Blueprints.
+- Export actual Blueprint graph readback.
+- Verify real fighter transforms are unchanged during scrubbing.
+- Commit and push to origin/master.
+- Report the commit SHA and any graphical PIE checks still required.
 
-## Required behavior
+**Success:** The player can scrub through a hypothetical encounter and see both prediction ghosts move correctly without breaking any existing gameplay.
 
-When Walk is interrupted:
+## Status: COMPLETE
 
-- Preserve the fighter's current authoritative position.
-- Preserve the original Walk destination.
-- Display a green line from the current fighter position to that destination.
-- Keep the line visible while the player considers the reaction.
-- Continue remains available.
-- Selecting Continue resumes the existing Walk, not a new movement action.
-- If another reaction happens, update the remaining line again.
-- Once the Walk finishes, remove the line.
-- If the player abandons Walk for another action, remove the old line.
-
-## Implementation
-
-1. Inspect `BP_CombatManager.ExecuteMove`, especially `ClearWalkPath`, state assignment, and `RefreshUI`.
-
-2. Inspect the current path-rendering branches in `WBP_CombatUI.EventTick`.
-
-3. For an active Walk reaction, obtain the actual remaining destination from `CurrentState.Fighters[0].WalkTarget` and `WalkTargetY`.
-
-4. Use `CurrentState.Fighters[0].X/Y` or the authoritative real fighter location for the beginning of the line.
-
-5. Draw the remaining path using the existing `DrawWalkPath` or `DrawGroundLine` API.
-
-6. Make sure this happens AFTER any unconditional clearing, or conditionally skip clearing only when preserving a valid interrupted movement.
-
-7. Do not use the yellow `DestPlayer` actor as the authoritative endpoint during a reaction. Its location may be stale or the actor may be hidden.
-
-8. Do not rely on `PlayerMove == 6` during a reaction. The player may have selected Continue (`PlayerMove == 7`), while the active movement remains Walk in `CurrentState`.
-
-9. Avoid redrawing every Tick unless necessary. Prefer updating the persistent PathRenderer when the authoritative movement/reaction state changes.
-
-10. Preserve Dash and Jump path behavior. Do not modify their coloring, movement timing, or interruption rules.
-
-## Verification
-
-Test in graphical PIE:
-
-- Fresh startup has no path.
-- Selecting Walk displays a green line.
-- Executing Walk moves the fighter correctly.
-- At a reaction pause, the remaining green line persists.
-- Selecting Continue does not erase the remaining path prematurely.
-- A second reaction displays the shorter remaining line.
-- Completing Walk clears the path.
-- Choosing a replacement action clears the abandoned Walk path.
-- Dash and Jump still behave exactly as before.
-
-Run existing BUH automation tests and add a focused renderer lifecycle test if possible.
-
-Compile and save affected Blueprints, read back the actual changed graph, and update notes.md and todo.md.
-
-Commit and push to `origin/master` on `HelHeresyDev/BeneathUncountedHeavens`.
-
-Report the commit SHA, confirmed cause, and verification results.
-
-**Success: Walk's green trajectory stays visible throughout an interrupted Walk and disappears only when the movement completes or is abandoned.**
-
-## Status (implementation complete — graphical PIE verification pending)
-
-- **Cause confirmed:** `ExecuteMove` ended with an unconditional `ClearWalkPath`; `EventTick` only drew the Walk line while `State == 0` and `PlayerMove == 6` from the `DestPlayer` actor, so a reaction (`State == 3`) cleared the line and nothing redrew it.
-- **Fix implemented:** new C++ `UBuhCombatSim::UpdateWalkPath(PC, FinalState)` draws the remaining line from the fighter's current `(X, Y)` to the original `WalkTarget` when `FinalState.Fighters[0].Action == 6` and the fighter is not yet at the destination, else clears. `ExecuteMove` now calls `UpdateWalkPath(GetPlayerController 0, _returnvalue_2)` (the `GetFinalState` output) instead of the unconditional `ClearWalkPath`.
-- **Headless-verified:** C++ rebuilt clean; graph edited surgically (node delete/create/wire — `write_graph_dsl` cannot re-emit the bool-set nodes); `compile_blueprint` clean; read-back shows `UpdateWalkPath` with bool-sets intact; `save_assets` succeeded; **22/22 `BUH` automation tests pass**.
-- **Pending (user graphical PIE):** confirm the 8 verification scenarios above — especially that the remaining green line persists through a reaction pause, survives a Continue, shortens on a second reaction, and clears on completion/abandonment, with Dash/Jump unchanged.
-- **Not yet committed:** held for the graphical PIE confirmation per the "no unverified behavior" policy.
+- New `ScrubTimeline` function in `WBP_CombatUI`: reads the slider value, clamps to `0..TimelineLength-1` via `CombatSim|ClampInstantFromFloat`, and on a non-empty timeline calls `CombatSim|MoveGhostsToInstant` (static, Y/Z-capable, tag-based) and writes `TimelineInstantText` = "Instant N / total" and `PredictedOutcomeText` = `GetSnapshotInfoText`. Empty/single-snapshot timelines show "No preview".
+- `OnValueChanged(TimelineSlider)` now calls `ScrubTimeline` (replaced the old X-only ghost handler). `USlider::SetValue` broadcasts `OnValueChanged`, so both drag and LEFT/RIGHT key scrubbing route through it.
+- `RegeneratePredictionPreview` now sets the slider `MaxValue` to the final instant index and `SetValue` (which triggers `ScrubTimeline`); the manual X-only ghost move and the `GetTimelineLengthText` write were removed.
+- `RefreshUI` now routes its timeline-instant text through `ScrubTimeline` instead of writing `GetTimelineLengthText` (surgical node edit: replaced `GetTimelineLengthText` + `ToText` + `SetText(TimelineInstantText)` + the `GetTimelineInstantText` variable-get with a `CallFunction|ScrubTimeline` node in the exec chain).
+- Name collision resolved: `UBUHCombatUI::MoveGhostsToInstant`/`SetupTimelineAndMoveGhosts` renamed to `...XOnly` so the DSL resolves `CombatSim|MoveGhostsToInstant` to the static `UBuhCombatSim` version. The WBP graphs call none of the `UBUHCombatUI` methods (dead code), so the rename is safe.
+- `CombatSim` gained `ClampInstantFromFloat`.
+- Verification: all 4 graphs read back correct and compile clean; 22/22 `BUH` automation tests pass; tag inspection confirms real fighters carry `PlayerFighter`/`OpponentFighter` while ghosts carry `GhostPlayer`/`GhostOpponent`, and `MoveGhostsToInstant` filters only on the ghost tags — so real fighter transforms are provably unchanged during scrubbing.
+- Remaining graphical PIE check: visually drag the slider in a live session to confirm both ghosts track the scrubbed Instant (headless PIE cannot capture the game view).

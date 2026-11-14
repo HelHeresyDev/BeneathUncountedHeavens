@@ -222,6 +222,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetTimelineLength();
 
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 ClampInstantFromFloat(float Value);
+
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static bool bHasTimeline();
 

@@ -17,9 +17,9 @@ public:
 	void ResetTimelineSlider(const FString& NewValueStr);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	void MoveGhostsToInstant(int32 Instant);
+	void MoveGhostsToInstantXOnly(int32 Instant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	void SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant);
+	void SetupTimelineAndMoveGhostsXOnly(int32 PlayerMove, int32 OpponentMove, int32 Instant);
 
 };
