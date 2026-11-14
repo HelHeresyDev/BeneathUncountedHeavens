@@ -470,6 +470,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void ClearWalkPath(APlayerController* PC);
 
+	// After a move resolves, update the persistent green Walk path from the
+	// authoritative final state. If the player is mid-Walk (Action 6) with
+	// remaining distance to WalkTarget, draw the remaining line from the
+	// fighter's current position to the destination (preserving an interrupted
+	// Walk through a reaction pause). Otherwise clear the path. Uses the
+	// fighter's Action and WalkTarget, never PlayerMove or the DestPlayer actor.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void UpdateWalkPath(APlayerController* PC, const FBuhCombatState& FinalState);
+
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static bool GetGroundHitUnderCursor(APlayerController* PC, FVector2D ScreenPos, FVector& OutHitLocation);
 

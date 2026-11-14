@@ -1,134 +1,92 @@
-# Beneath Uncounted Heavens — Restore Known-Good Movement First
+# BUH — Fix Walk Path Disappearing at Reaction Pause
 
-The user tested commit `314b27c`. Movement is STILL broken.
+The user tested restored commit `5ea1e38` in graphical PIE.
 
-Stop making speculative fixes to individual reaction flags.
+**Confirmed working:**
+- Walk execution.
+- Reaction detection.
+- Continue button.
+- Continue movement.
+- Clean startup.
 
-We have a known-good baseline:
+**Remaining bug:** The green Walk path disappears when combat stops for a reaction.
 
-`f53bfc6`
+The screenshot shows a valid reaction with Continue available, but no remaining green movement line.
 
-The user personally confirmed that this version had working Walk, Dash, Jump, Continue, and clean startup.
+## Suspected cause
 
-The regression began after the Tactical Timeline Preview implementation at:
+The known-good `BP_CombatManager.ExecuteMove` graph contains a `ClearWalkPath` call after combat resolution.
 
-`2b155ac`
+Meanwhile, `WBP_CombatUI.EventTick` draws the Walk preview primarily in Planning (`State == 0`).
 
-## Status (completed)
+When a reaction changes the manager to State 3, the existing path is cleared and not restored.
 
-- [x] §1 Inspected `BUH.PIE.WalkContinueReaction`; confirmed it built a separate `MakeState` and did not read the manager's authoritative fields.
-- [x] §2 Restored ONLY `BP_CombatManager.uasset` and `WBP_CombatUI.uasset` from `f53bfc6` (backup branch `backup/timeline-preview-314b27c` preserves the pre-restoration state).
-- [x] §3 Restarted the editor, compiled both Blueprints, ran all 24 `BUH` tests (24 passed, 0 failed), and verified the saved graphs match the known-good implementations.
-- [x] §4 Redesigned the test to read the real manager properties after `ExecuteMove`. Evidence showed a headless limitation: the automation controller ends PIE at test start and Blueprint variable writes do not land in the editor world, so PIE-world manager state and `BtnContinueWalk` visibility are not observable from a headless automation test. The test now proves the three UI functions are callable, logs the observed editor-world values, and reports the limitation explicitly. Walk-vs-Heavy reaction-at-instant-0 is proven by `BUH.CombatFlowTests` / `CombatSimAutomation` Step L; the Continue button is verified by the graphical PIE playtest.
-- [x] §5 Committed and pushed the targeted restoration plus the limitation-reporting test.
-- [ ] §6 Reintroduce timeline features incrementally — pending user confirmation that movement works again in graphical PIE.
+Verify the actual saved graphs before editing.
 
-## 1. The current integration test is insufficient
+## Required behavior
 
-Inspect `BUH.PIE.WalkContinueReaction` in TimelinePreviewAutomation.cpp.
+When Walk is interrupted:
 
-It invokes ResetEncounter, SelectWalkToward, and ExecuteMove, but then builds a separate MakeState and tests ResolveCombat and GetReactionInfo directly.
+- Preserve the fighter's current authoritative position.
+- Preserve the original Walk destination.
+- Display a green line from the current fighter position to that destination.
+- Keep the line visible while the player considers the reaction.
+- Continue remains available.
+- Selecting Continue resumes the existing Walk, not a new movement action.
+- If another reaction happens, update the remaining line again.
+- Once the Walk finishes, remove the line.
+- If the player abandons Walk for another action, remove the old line.
 
-It does not verify that the actual BP_CombatManager's authoritative fields contain the expected result.
+## Implementation
 
-It also explicitly sets bHasCurrentState=false before execution, possibly bypassing an initialization problem introduced by InitCurrentState.
+1. Inspect `BP_CombatManager.ExecuteMove`, especially `ClearWalkPath`, state assignment, and `RefreshUI`.
 
-Therefore, its passing result does NOT establish that movement or Continue works in graphical PIE.
+2. Inspect the current path-rendering branches in `WBP_CombatUI.EventTick`.
 
-Do not describe this as a successful end-to-end gameplay test.
+3. For an active Walk reaction, obtain the actual remaining destination from `CurrentState.Fighters[0].WalkTarget` and `WalkTargetY`.
 
-## 2. Restore the known-good Blueprints
+4. Use `CurrentState.Fighters[0].X/Y` or the authoritative real fighter location for the beginning of the line.
 
-First, ensure the current changes are safely committed or otherwise preserved. Do not discard uncommitted work.
+5. Draw the remaining path using the existing `DrawWalkPath` or `DrawGroundLine` API.
 
-Create a backup branch pointing at the latest committed implementation.
+6. Make sure this happens AFTER any unconditional clearing, or conditionally skip clearing only when preserving a valid interrupted movement.
 
-Close Unreal Editor completely before restoring binary Blueprint assets.
+7. Do not use the yellow `DestPlayer` actor as the authoritative endpoint during a reaction. Its location may be stale or the actor may be hidden.
 
-Restore ONLY these two assets from f53bfc6:
+8. Do not rely on `PlayerMove == 6` during a reaction. The player may have selected Continue (`PlayerMove == 7`), while the active movement remains Walk in `CurrentState`.
 
-```bash
-git restore --source=f53bfc6 -- \
-  Content/BUH/Prototypes/TacticalDuel/Blueprints/BP_CombatManager.uasset \
-  Content/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI.uasset
-```
+9. Avoid redrawing every Tick unless necessary. Prefer updating the persistent PathRenderer when the authoritative movement/reaction state changes.
 
-Do not revert the entire repository.
+10. Preserve Dash and Jump path behavior. Do not modify their coloring, movement timing, or interruption rules.
 
-Preserve:
-- New C++ prediction functions.
-- Timeline tests.
-- Existing movement simulation.
-- Jump physics and reaction detection.
-- notes.md and design documentation.
+## Verification
 
-It is acceptable for the newly added Next Event widget to disappear temporarily. Restoring gameplay takes priority.
+Test in graphical PIE:
 
-## 3. Verify the restored baseline
+- Fresh startup has no path.
+- Selecting Walk displays a green line.
+- Executing Walk moves the fighter correctly.
+- At a reaction pause, the remaining green line persists.
+- Selecting Continue does not erase the remaining path prematurely.
+- A second reaction displays the shorter remaining line.
+- Completing Walk clears the path.
+- Choosing a replacement action clears the abandoned Walk path.
+- Dash and Jump still behave exactly as before.
 
-Restart Unreal Editor so the restored assets are loaded from disk.
+Run existing BUH automation tests and add a focused renderer lifecycle test if possible.
 
-Compile both Blueprints.
+Compile and save affected Blueprints, read back the actual changed graph, and update notes.md and todo.md.
 
-Run all existing BUH automation tests.
+Commit and push to `origin/master` on `HelHeresyDev/BeneathUncountedHeavens`.
 
-Verify that the saved Blueprint graphs correspond to the restored known-good implementations.
+Report the commit SHA, confirmed cause, and verification results.
 
-The new C++ timeline helper added by commit 2b155ac should remain available, but it must not alter authoritative gameplay.
+**Success: Walk's green trajectory stays visible throughout an interrupted Walk and disappears only when the movement completes or is abandoned.**
 
-If the restored assets have compatibility issues with the current C++ module, investigate those directly rather than rebuilding the UI.
+## Status (implementation complete — graphical PIE verification pending)
 
-## 4. Add meaningful regression checks
-
-Do not construct a separate MakeState after invoking the Blueprint and treat that as verification.
-
-For an actual PIE-world combat manager, inspect its properties after ExecuteMove:
-
-- State
-- PlayerMove
-- bHasCurrentState
-- bReactionOpportunity
-- ReactionFighter
-- CurrentState
-- CurrentState.Fighters[0].Action
-- CurrentState.Fighters[0].WalkTarget
-- Actual player actor location
-
-Where possible, inspect the real WBP_CombatUI instance and BtnContinueWalk visibility.
-
-If headless testing cannot reliably observe Blueprint state changes, report that limitation rather than replacing the assertions with unrelated direct C++ tests.
-
-The user's graphical PIE testing remains the decisive verification.
-
-## 5. Commit and push the restoration
-
-Commit the targeted Blueprint restoration and push to origin/master.
-
-Report:
-- Commit SHA.
-- Exact assets restored.
-- Tests passed.
-- Any compatibility issues.
-- Which timeline-preview features are temporarily unavailable.
-
-Do not reintroduce the timeline Blueprint changes in the same commit.
-
-## 6. Reintroduce timeline features incrementally afterward
-
-Only after the user confirms movement works again:
-
-1. Preserve the functioning BP_CombatManager execution and reaction graphs.
-2. Add timeline UI behavior to WBP_CombatUI without changing movement selection or Continue.
-3. Test Walk, Dash, Jump, and Continue after each meaningful Blueprint change.
-4. Reintroduce Next Event only after the slider itself is verified.
-5. Keep hypothetical predictions strictly read-only relative to authoritative combat state.
-
-Do not run another broad write_graph_dsl rewrite of working EventGraphs.
-
-## Success criteria
-
-First milestone: The restored project behaves exactly as it did at f53bfc6, with Walk, Dash, Jump, Continue, and startup working.
-
-Second milestone, undertaken separately: The timeline controls work without changing that behavior.
-
-**Priority: restore the known-good combat system instead of layering another unverified repair onto the broken version.**
+- **Cause confirmed:** `ExecuteMove` ended with an unconditional `ClearWalkPath`; `EventTick` only drew the Walk line while `State == 0` and `PlayerMove == 6` from the `DestPlayer` actor, so a reaction (`State == 3`) cleared the line and nothing redrew it.
+- **Fix implemented:** new C++ `UBuhCombatSim::UpdateWalkPath(PC, FinalState)` draws the remaining line from the fighter's current `(X, Y)` to the original `WalkTarget` when `FinalState.Fighters[0].Action == 6` and the fighter is not yet at the destination, else clears. `ExecuteMove` now calls `UpdateWalkPath(GetPlayerController 0, _returnvalue_2)` (the `GetFinalState` output) instead of the unconditional `ClearWalkPath`.
+- **Headless-verified:** C++ rebuilt clean; graph edited surgically (node delete/create/wire — `write_graph_dsl` cannot re-emit the bool-set nodes); `compile_blueprint` clean; read-back shows `UpdateWalkPath` with bool-sets intact; `save_assets` succeeded; **22/22 `BUH` automation tests pass**.
+- **Pending (user graphical PIE):** confirm the 8 verification scenarios above — especially that the remaining green line persists through a reaction pause, survives a Continue, shortens on a second reaction, and clears on completion/abandonment, with Dash/Jump unchanged.
+- **Not yet committed:** held for the graphical PIE confirmation per the "no unverified behavior" policy.

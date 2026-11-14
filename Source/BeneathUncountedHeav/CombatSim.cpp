@@ -3333,6 +3333,27 @@ void UBuhCombatSim::ClearWalkPath(APlayerController* PC)
 	}
 }
 
+void UBuhCombatSim::UpdateWalkPath(APlayerController* PC, const FBuhCombatState& FinalState)
+{
+	if (!PC) return;
+	if (FinalState.Fighters.Num() > 0)
+	{
+		const FBuhFighterState& F = FinalState.Fighters[0];
+		if (F.Action == 6)
+		{
+			const float RemX = F.WalkTarget - F.X;
+			const float RemY = F.WalkTargetY - F.Y;
+			const float RemDist = FMath::Sqrt(RemX * RemX + RemY * RemY);
+			if (RemDist > 1.0f)
+			{
+				DrawWalkPath(PC, FVector(F.X, F.Y, 90.f), FVector(F.WalkTarget, F.WalkTargetY, 90.f));
+				return;
+			}
+		}
+	}
+	ClearWalkPath(PC);
+}
+
 bool UBuhCombatSim::GetGroundHitUnderCursor(APlayerController* PC, FVector2D ScreenPos, FVector& OutHitLocation)
 {
 	if (!PC) return false;
