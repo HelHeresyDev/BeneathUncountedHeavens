@@ -22,4 +22,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	void SetupTimelineAndMoveGhostsXOnly(int32 PlayerMove, int32 OpponentMove, int32 Instant);
 
+	UFUNCTION(BlueprintCallable, Category = "Diagnostic")
+	FString GetTimelineGeometryDebug();
+
 };

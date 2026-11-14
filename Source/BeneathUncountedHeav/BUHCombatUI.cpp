@@ -73,6 +73,28 @@ void UBUHCombatUI::SetupTimelineAndMoveGhostsXOnly(int32 PlayerMove, int32 Oppon
 	MoveGhostsToInstantXOnly(Instant);
 }
 
+FString UBUHCombatUI::GetTimelineGeometryDebug()
+{
+	FString Out;
+	const TCHAR* Names[] = { TEXT("RootBox"), TEXT("RootCanvas"), TEXT("BottomTimelineContent"), TEXT("SizeBox_3"), TEXT("TimelineSlider") };
+	for (const TCHAR* Name : Names)
+	{
+		UWidget* W = GetWidgetFromName(FName(Name));
+		if (!W)
+		{
+			Out += FString::Printf(TEXT("%s: <not found>\n"), Name);
+			continue;
+		}
+		const FGeometry G = W->GetCachedGeometry();
+		const FVector2D AbsPos = G.GetAbsolutePosition();
+		const FVector2D AbsSize = G.GetAbsoluteSize();
+		Out += FString::Printf(TEXT("%s: size=(%.1f, %.1f) absPos=(%.1f, %.1f) vis=%d opacity=%.2f\n"),
+			Name, AbsSize.X, AbsSize.Y, AbsPos.X, AbsPos.Y,
+			static_cast<int32>(W->GetVisibility()), W->GetRenderOpacity());
+	}
+	return Out;
+}
+
 static FAutoConsoleCommand ScrubTimelineCmd(
 	TEXT("BUH.ScrubTimeline"),
 	TEXT("Scrub the combat timeline slider to the given instant and broadcast OnValueChanged."),
