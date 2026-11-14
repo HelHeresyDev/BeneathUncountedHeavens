@@ -1,131 +1,132 @@
- # BUH — Slider Still Invisible After SizeBox Fix
+# BUH — Stop Guessing: Move Timeline Into Visible RootCanvas
 
- **Status (post-fix):** Confirmed the real cause — `WrapWidgets` makes the wrapper **inherit the wrapped widget's slot**, so `SizeBox_2` inherited the slider's zero-weight `Fill` (`Value=0`) `HorizontalBoxSlot` and still rendered at zero width despite its 550 px `WidthOverride`. Fixed by `MoveWidget`-ing the **existing** `TimelineSlider` directly into `BottomTimelineContent` (it got a fresh `Auto` `HorizontalBoxSlot_4`), deleting the empty `SizeBox_2`, then re-wrapping the same slider in `SizeBox_3` (which inherits the `Auto` slot) with `WidthOverride=550`, `HeightOverride=40`. An `Auto` slot honors the explicit desired width, so the slider now gets a guaranteed 550×40. The `OnValueChanged(TimelineSlider) → ScrubTimeline` binding is intact (same widget instance). Compile clean, 22/22 `BUH` tests pass, WBP saved. **Graphical PIE drag verification still pending** (headless cannot capture the viewport or drive a drag) — the user must confirm the slider is visible and draggable in a fresh graphical PIE. See notes.md §9.47.
+## Status (this pass)
+- **§1 done:** `BottomTimelineContent` moved out of the `BottomTimeline` Border into `RootCanvas` as a direct child (fresh `CanvasPanelSlot_1`). No second slider created.
+- **§1 done:** `CanvasPanelSlot_1` configured via whole-object `layoutData` — anchors min/max `(0.5,1.0)`, offsets `left=-450, top=-95, right=450, bottom=-25`, alignment `(0.5,1.0)` → bottom-center 900×70, 25 px above the viewport bottom; `bAutoSize=false`, `zOrder=10`.
+- **§1 done:** existing `TimelineSlider` stays inside `BottomTimelineContent` → `SizeBox_3`; `OnValueChanged(TimelineSlider) → ScrubTimeline` binding intact (same widget instance).
+- **§4 done:** no gameplay/`BP_CombatManager`/`ExecuteMove`/`EventTick`/`RefreshUI` changes; walk/dash/jump/continue untouched.
+- **§5 done:** `compile_blueprint` clean; WidgetTree + `CanvasPanelSlot_1` read back with the exact values; 22/22 `BUH` automation tests pass; `save_assets` succeeded.
+- **§5 pending (limitation, not resolved):** graphical PIE on-screen visibility + slider drag. Headless `-nullrhi` cannot capture the viewport or drive a drag, so this must be confirmed by the user's fresh graphical PIE. Per §5, this is reported as a limitation, **not** called resolved.
+- Root cause recorded in `notes.md` §9.48: the absent area was the `BottomTimeline` Border ancestor chain, not the slider slot; the fix bypasses it by reparenting `BottomTimelineContent` directly under `RootCanvas`. `RootBox` has exactly one child (`RootCanvas`), so `RootCanvas` is the sole `Fill` child and gets full height, making the bottom anchor valid.
 
- The user tested commit `5e10bf9` in graphical PIE.
+The user tested commit b91b499 in graphical PIE.
 
- The timeline slider is STILL completely invisible.
+**The timeline is STILL completely invisible.**
 
-The "No preview" text now displays correctly, confirming that the updated WBP is loading. However, there is no visible slider track, thumb, or bottom timeline area.
+Two attempted fixes have failed:
+- SizeBox_2 with WidthOverride=550.
+- SizeBox_3 with a fresh Auto HorizontalBoxSlot and WidthOverride=550.
 
-Stop adjusting the slider's own WidthOverride without proving its parent has usable layout space.
+Both compiled and passed automation, but neither made the timeline appear.
 
-## 1. Investigate the likely remaining zero-width slot
+The screenshot shows that the entire bottom timeline area is absent, while normal combat UI controls render correctly.
 
-Your last fix wrapped TimelineSlider in:
+Do not make a third change to the slider's width or Fill coefficient.
 
-`SizeBox_2 (WidthOverride=550, HeightOverride=40)`
+## 1. Bypass the broken ancestor layout
 
-But your notes say the new SizeBox is still the only **Fill** child of `BottomTimelineContent`, a HorizontalBox.
+Inspect the actual saved WBP_CombatUI WidgetTree.
 
-The original slider's HorizontalBoxSlot had:
+Locate:
+- RootCanvas
+- BottomTimelinePanel
+- BottomTimelineContent
+- SizeBox_3
+- TimelineSlider
+- TimelineInstantText
 
-`SizeRule=Fill, Value=0`
+**Move the existing BottomTimelineContent into RootCanvas as a direct child**, bypassing its previous parent containers.
 
-Check whether `SizeBox_2` inherited that same zero-weight Fill slot.
+Do not create a second slider.
 
-A SizeBox with a 550-pixel desired width can still receive zero arranged width when its parent HorizontalBox assigns zero space to its Fill slot.
+Give BottomTimelineContent an explicit CanvasPanelSlot:
 
-**First attempt:** Give the wrapper's HorizontalBoxSlot `SizeRule=Auto`, allowing its explicit desired width to determine the allocation.
+- Anchored to bottom center of RootCanvas.
+- Approximately 900 px wide and 70 px tall.
+- Alignment (0.5, 1.0).
+- Positioned approximately 25 px above the bottom of the gameplay viewport.
+- Suitable positive Z-order so it displays above the arena and any background panels.
 
-Alternatively, use `Fill` with a positive coefficient, such as 1, and verify its parent has sufficient width.
+Ensure the existing slider remains inside BottomTimelineContent and keeps its OnValueChanged binding.
 
-Do not assume that being the only Fill child guarantees allocation.
+Make the timeline readable and clickable.
 
-## 2. Inspect the COMPLETE ancestor chain
+If this specific reparenting would break another essential child relationship, position the existing timeline widgets directly in RootCanvas instead. Preserve widget identities and event bindings.
 
-Inspect actual saved WidgetTree properties for:
+## 2. Prove the layout is actually on screen
 
-`RootBox → RootCanvas → BottomTimelinePanel → BottomTimelineContent → SizeBox_2 → TimelineSlider`
+The saved widget hierarchy alone has repeatedly failed to predict graphical visibility.
 
-Adjust the chain to match the actual saved hierarchy if necessary.
+After Slate layout is performed, inspect in a GRAPHICAL PIE world:
 
-For every ancestor, report:
-- Class.
-- Visibility and render opacity.
-- Parent and slot class.
-- Size rule and coefficient.
-- Canvas anchors and offsets, where applicable.
-- Desired width/height.
-- Available arranged space.
-- Clipping.
-- Z-order.
+- RootCanvas cached size.
+- BottomTimelineContent cached size.
+- SizeBox_3 cached size.
+- TimelineSlider cached size.
+- Slider screen-space bounds.
+- Effective visibility.
+- Hit-testability.
 
-Check the actual bottom panel's position relative to the gameplay viewport.
+The slider must have positive width and height, and its bounds must intersect the actual gameplay viewport.
 
-The screenshot has a large unused lower area, yet no slider or Instant text. Determine whether the entire timeline container is offscreen, clipped, collapsed, or obscured.
+If the layout is still invisible, add one temporary, high-contrast diagnostic TextBlock reading "TIMELINE HERE" directly to RootCanvas at the intended position.
 
-## 3. Establish one definitely visible layout
+If that diagnostic appears but the timeline does not, isolate the faulty widget or container.
 
-If the existing bottom layout cannot be fixed through one or two targeted slot edits, position the existing timeline container explicitly in RootCanvas.
+If the diagnostic also fails, investigate RootCanvas sizing, viewport coordinates, clipping, and Z-order.
 
-Suggested temporary layout:
+Remove the diagnostic after fixing the actual cause.
 
-- Bottom-center anchor.
-- Approximately 650 px wide and 75 px tall.
-- Position it 20–30 px above the bottom of the viewport.
-- Clearly visible slider track.
-- 550 px slider width.
-- "Instant 0 / N" text directly above the slider.
-- Clearly visible thumb and hit-test area.
+## 3. Keep the control visible without a prediction
 
-A CanvasPanelSlot with a real size and bottom-center anchoring is preferable to repeatedly adding SizeBoxes inside a broken container.
+At clean startup:
 
-Do not create another TimelineSlider.
+- Slider is visible but disabled.
+- Text reads "No preview".
+- No prediction ghosts are visible.
 
-If necessary, add a temporary contrasting panel to establish the container's exact visible position, then remove that diagnostic once the slider is working.
+With a valid hypothetical prediction:
 
-## 4. Verify actual graphical geometry
+- Slider becomes enabled.
+- Text displays the correct Instant.
+- The thumb can be dragged.
+- Cyan/orange ghosts update to the selected snapshot.
 
-Do not claim success solely because GetWidgetDescription reports Visibility=Visible or because WBP compiles.
+Do not hide the entire timeline panel when the prediction is empty.
 
-If possible, use the existing graphical PIE test runner to inspect the visible result.
+## 4. Do not disturb gameplay
 
-A graphical-only diagnostic can also report:
-
-- TimelineSlider.GetCachedGeometry().GetAbsoluteSize().
-- SizeBox_2.GetCachedGeometry().GetAbsoluteSize().
-- BottomTimelineContent.GetCachedGeometry().GetAbsoluteSize().
-- BottomTimelinePanel.GetCachedGeometry().GetAbsoluteSize().
-- Slider absolute screen position.
-- Effective visibility for the whole ancestor chain.
-
-Do not rely on cached geometry in headless `-nullrhi` tests; it can report zero for otherwise valid widgets.
-
-The slider needs actual positive screen dimensions and must be inside the visible viewport.
-
-## 5. Handle empty predictions correctly
-
-"No preview" is the correct text when no hypothetical timeline exists.
-
-But the timeline control should still be visible, even if disabled, so the player knows where timeline scrubbing will occur.
-
-When a player action and hypothetical opponent action produce a valid timeline:
-- Enable the slider.
-- Set its range to valid snapshot indices.
-- Show the current Instant.
-- Allow mouse dragging.
-- Move only the cyan/orange prediction ghosts.
-
-Confirm actual dragging works, not merely the OnValueChanged binding.
-
-## 6. Preserve working combat
-
-Do not modify:
-- BP_CombatManager.
-- ExecuteMove.
-- ResetEncounter.
-- Walk, Dash, Jump.
-- Continue/reactions.
+Preserve the working:
+- Walk.
+- Dash.
+- Jump.
+- Continue.
+- Reaction pauses.
 - Movement path rendering.
-- CombatSim movement rules.
+- Clean startup.
 
-Limit the implementation to WBP_CombatUI widget layout and the minimum necessary visibility handling.
+Do not modify BP_CombatManager, ExecuteMove, movement simulation, or the reaction rules.
 
-Run the BUH tests, compile and save the Blueprint, and read back the modified WidgetTree/slot properties.
+Do not rewrite WBP_CombatUI.EventTick or RefreshUI as part of this layout fix.
+
+## 5. Verification
+
+Compile and save WBP_CombatUI.
+
+Read back the actual CanvasPanelSlot and WidgetTree hierarchy.
+
+Verify event bindings still reference the same TimelineSlider.
+
+Run all BUH automation tests.
+
+If the graphical test runner is available, launch graphical PIE and capture a screenshot demonstrating the visible timeline.
+
+If graphical verification cannot be performed automatically, explicitly report that limitation rather than calling the visual issue resolved.
+
+Update notes.md and todo.md with the actual measured layout cause.
 
 Commit and push to origin/master.
 
-Report the commit SHA and the actual confirmed cause. Do not label graphical verification complete until it has been performed.
+Report the SHA, exact final hierarchy, and what evidence confirms the widget is on screen.
 
-**Success:** I can clearly see a timeline slider near the bottom of the game, even when there is no preview, and drag it when a hypothetical timeline is available.
+**Success: A clearly visible slider and Instant readout near the bottom center of the gameplay viewport. No more changes to width overrides without measured graphical evidence.**
