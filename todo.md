@@ -1,45 +1,119 @@
-# Beneath Uncounted Heavens — Phase 1: Restore Timeline Scrubbing Safely
+ # BUH — Timeline Slider Is Invisible in Graphical PIE
 
-Stable baseline: commit ed2596e.
+ **Status (post-fix):** Inspected the full UMG hierarchy — the slider's own state was fine (`Visible`, opacity 1, `Value 0 / Min 0 / Max 30`, horizontal) and `RootCanvas` was **not** zero-height (panels render), so the §4.2 bug is not active. The slider's `HorizontalBoxSlot` was `Fill coeff 0` with no explicit size, so it rendered at zero width. Wrapped `TimelineSlider` in a `SizeBox` (`SizeBox_2`, `WidthOverride=550`, `HeightOverride=40`) via `UMGToolSet.WrapWidgets` + `ObjectTools.set_properties`, matching the existing Left/Right panel convention. Rewrote `ScrubTimeline` to guard on `CombatSim|bHasTimeline` (not `GetTimelineLength<=0`), so an empty timeline shows "No preview" instead of the garbage `0/134743044`. Compile clean, 22/22 `BUH` tests pass, WBP saved. **Graphical PIE drag verification still pending** (headless cannot capture the viewport or drive a drag) — the user must confirm the slider is visible and draggable in a fresh graphical PIE. See notes.md §9.46.
 
-The user has confirmed Walk, Dash, Jump, Continue, reaction paths, and clean startup are working in graphical PIE.
+ The user tested commit 3ae8de0. The slider is NOT visible anywhere in graphical PIE.
 
-Implement ONE feature: let the player scrub through hypothetical combat Instants using the existing timeline slider.
+The latest commit changed ScrubTimeline, OnValueChanged, RefreshUI, and RegeneratePredictionPreview, but it did not verify the widget's visual layout.
 
-Requirements:
+The screenshot shows player/opponent controls and faint prediction text, but no visible slider track or draggable thumb.
 
-1. Inspect the current WBP_CombatUI timeline controls and existing CombatSim timeline APIs.
-2. Reuse GenerateTimeline, GetSnapshotAt, and MoveGhostsToInstant where appropriate.
-3. Bind the timeline slider to a valid snapshot index, clamped to 0 through TimelineLength-1.
-4. Move only the cyan and orange prediction ghosts to the selected snapshot positions, including correct airborne Z.
-5. Show the currently selected Instant and total available Instants.
-6. Changing hypothetical opponent actions should regenerate the preview and update the slider's range.
-7. Handle empty and single-snapshot timelines safely.
-8. Preserve a clean initial encounter without visible ghosts.
+## 1. Inspect the actual UMG widget hierarchy
 
-**Critical restriction:** Do not modify BP_CombatManager.ExecuteMove, ResetEncounter, movement targeting, reaction detection, Continue, Jump playback, or movement rules.
+Open WBP_CombatUI and inspect:
 
-Hypothetical previews must never modify authoritative CurrentState or actual fighter transforms.
+- TimelineSlider
+- TimelineInstantText
+- BottomTimelineContent
+- BottomTimelinePanel and its ancestors, if present
+- RootCanvas
+- RootBox
 
-Do not implement Next Event, new tactical information panels, or UI restyling during this phase.
+Use UMGToolSet.GetWidgetDescription and available ObjectTools properties.
 
-After implementation:
-- Run the existing BUH tests.
-- Compile and save modified Blueprints.
-- Export actual Blueprint graph readback.
-- Verify real fighter transforms are unchanged during scrubbing.
-- Commit and push to origin/master.
-- Report the commit SHA and any graphical PIE checks still required.
+For the slider and each ancestor, report:
+- Widget class and parent
+- Visibility
+- Render opacity
+- IsEnabled
+- Slot type
+- Anchors, offsets, alignment
+- Desired dimensions
+- SizeBox or container constraints
+- Clipping
+- Z-order where relevant
 
-**Success:** The player can scrub through a hypothetical encounter and see both prediction ghosts move correctly without breaking any existing gameplay.
+Review notes.md §4.2: this project previously had a zero-height RootCanvas issue that hid the entire bottom timeline.
 
-## Status: COMPLETE
+Also check whether the bottom timeline is positioned outside the viewport or behind another widget.
 
-- New `ScrubTimeline` function in `WBP_CombatUI`: reads the slider value, clamps to `0..TimelineLength-1` via `CombatSim|ClampInstantFromFloat`, and on a non-empty timeline calls `CombatSim|MoveGhostsToInstant` (static, Y/Z-capable, tag-based) and writes `TimelineInstantText` = "Instant N / total" and `PredictedOutcomeText` = `GetSnapshotInfoText`. Empty/single-snapshot timelines show "No preview".
-- `OnValueChanged(TimelineSlider)` now calls `ScrubTimeline` (replaced the old X-only ghost handler). `USlider::SetValue` broadcasts `OnValueChanged`, so both drag and LEFT/RIGHT key scrubbing route through it.
-- `RegeneratePredictionPreview` now sets the slider `MaxValue` to the final instant index and `SetValue` (which triggers `ScrubTimeline`); the manual X-only ghost move and the `GetTimelineLengthText` write were removed.
-- `RefreshUI` now routes its timeline-instant text through `ScrubTimeline` instead of writing `GetTimelineLengthText` (surgical node edit: replaced `GetTimelineLengthText` + `ToText` + `SetText(TimelineInstantText)` + the `GetTimelineInstantText` variable-get with a `CallFunction|ScrubTimeline` node in the exec chain).
-- Name collision resolved: `UBUHCombatUI::MoveGhostsToInstant`/`SetupTimelineAndMoveGhosts` renamed to `...XOnly` so the DSL resolves `CombatSim|MoveGhostsToInstant` to the static `UBuhCombatSim` version. The WBP graphs call none of the `UBUHCombatUI` methods (dead code), so the rename is safe.
-- `CombatSim` gained `ClampInstantFromFloat`.
-- Verification: all 4 graphs read back correct and compile clean; 22/22 `BUH` automation tests pass; tag inspection confirms real fighters carry `PlayerFighter`/`OpponentFighter` while ghosts carry `GhostPlayer`/`GhostOpponent`, and `MoveGhostsToInstant` filters only on the ghost tags — so real fighter transforms are provably unchanged during scrubbing.
-- Remaining graphical PIE check: visually drag the slider in a live session to confirm both ghosts track the scrubbed Instant (headless PIE cannot capture the game view).
+A widget existing in the WidgetTree does not prove that it is visible or usable.
+
+## 2. Repair the layout, not the simulation
+
+Make the existing TimelineSlider clearly visible near the bottom center of the gameplay viewport.
+
+Suggested first-playable presentation:
+- Slider track approximately 500–650 px wide.
+- Adequate clickable height.
+- Clearly visible thumb.
+- Distinct contrast against the arena.
+- Readable "Instant N / N" display beside or above it.
+- No overlap with the Execute button.
+- No overlap with the opponent-action buttons.
+
+Use correct slot geometry and anchors so the slider remains visible when the PIE viewport is resized.
+
+Ensure the widget is enabled and hit-testable.
+
+Preserve the existing player and opponent menu layouts as much as possible.
+
+Do not create another slider if TimelineSlider already exists.
+
+## 3. Check the displayed Instant value
+
+The screenshot contains a suspicious prediction readout resembling "0/134743044".
+
+Verify:
+- Actual GetTimelineLength.
+- Actual selected snapshot index.
+- TimelineSlider MinValue and MaxValue.
+- TimelineInstantText's final displayed value.
+- Whether another Blueprint handler overwrites that text.
+
+For N snapshots, valid indices are 0 through N-1.
+
+Do not display an uninitialized or invalid timeline length.
+
+An empty timeline should display "No preview".
+
+## 4. Verify real scrubbing
+
+Once visible:
+
+1. Select Quick.
+2. Select hypothetical opponent Heavy.
+3. Confirm the timeline has multiple snapshots.
+4. Drag the slider to the first, middle, and final snapshots.
+5. Confirm the cyan and orange ghosts change positions appropriately.
+6. Confirm the real blue and red fighters remain stationary.
+7. Confirm the displayed Instant matches the snapshot.
+8. Confirm the thumb is actually draggable and not obstructed by an overlapping widget.
+
+For Jump predictions, verify the cyan ghost's airborne Z.
+
+If the available headless MCP environment cannot verify widget geometry or mouse dragging, explicitly report that limitation. Do not call the feature visually verified until graphical PIE confirms it.
+
+## 5. Preserve the stable combat system
+
+Do not modify:
+- BP_CombatManager.ExecuteMove
+- Walk, Dash, or Jump simulation
+- Reaction/Continue logic
+- ResetEncounter
+- Combat balance
+- Movement path renderers
+
+Do not rewrite WBP_CombatUI.EventTick or RefreshUI merely to solve widget geometry.
+
+Prefer a small, targeted WidgetTree or slot-property correction.
+
+Compile and save WBP_CombatUI, then read back the corrected widget properties.
+
+Run all BUH automation tests.
+
+Update notes.md and todo.md with the actual visibility cause.
+
+Commit and push to origin/master and report the SHA.
+
+**Success:** The slider is unmistakably visible and draggable at the bottom of graphical PIE, shows a valid Instant number, and moves prediction ghosts without disturbing real combat.
