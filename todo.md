@@ -1,132 +1,98 @@
-# BUH — Stop Guessing: Move Timeline Into Visible RootCanvas
+# BUH — Found Exact Cause of Invisible Timeline Slider
 
 ## Status (this pass)
-- **§1 done:** `BottomTimelineContent` moved out of the `BottomTimeline` Border into `RootCanvas` as a direct child (fresh `CanvasPanelSlot_1`). No second slider created.
-- **§1 done:** `CanvasPanelSlot_1` configured via whole-object `layoutData` — anchors min/max `(0.5,1.0)`, offsets `left=-450, top=-95, right=450, bottom=-25`, alignment `(0.5,1.0)` → bottom-center 900×70, 25 px above the viewport bottom; `bAutoSize=false`, `zOrder=10`.
-- **§1 done:** existing `TimelineSlider` stays inside `BottomTimelineContent` → `SizeBox_3`; `OnValueChanged(TimelineSlider) → ScrubTimeline` binding intact (same widget instance).
-- **§4 done:** no gameplay/`BP_CombatManager`/`ExecuteMove`/`EventTick`/`RefreshUI` changes; walk/dash/jump/continue untouched.
-- **§5 done:** `compile_blueprint` clean; WidgetTree + `CanvasPanelSlot_1` read back with the exact values; 22/22 `BUH` automation tests pass; `save_assets` succeeded.
-- **§5 pending (limitation, not resolved):** graphical PIE on-screen visibility + slider drag. Headless `-nullrhi` cannot capture the viewport or drive a drag, so this must be confirmed by the user's fresh graphical PIE. Per §5, this is reported as a limitation, **not** called resolved.
-- Root cause recorded in `notes.md` §9.48: the absent area was the `BottomTimeline` Border ancestor chain, not the slider slot; the fix bypasses it by reparenting `BottomTimelineContent` directly under `RootCanvas`. `RootBox` has exactly one child (`RootCanvas`), so `RootCanvas` is the sole `Fill` child and gets full height, making the bottom anchor valid.
+- **Root cause accepted:** for a non-stretched `CanvasPanelSlot` (min=max anchors), `FMargin` offsets are `Left`=X, `Top`=Y, `Right`=WIDTH, `Bottom`=HEIGHT. The §9.48 `bottom=-25` assigned a **negative height** → invisible.
+- **Fix applied:** `CanvasPanelSlot_1` re-set via whole-object `layoutData` — anchors min=max `(0.5,1.0)`, alignment `(0.5,1.0)`, offsets `left=0, top=-25, right=900, bottom=70`, `bAutoSize=false`, `zOrder=10` → 900×70 panel, centered, 25 px above the canvas bottom. No second slider, no hierarchy rebuild.
+- **Verified:** slot readback returns the exact corrected `layoutData`; visibility chain clean (`BottomTimelineContent`/`SizeBox_3` = `SelfHitTestInvisible`, `TimelineSlider` = `Visible`, none `Collapsed`/`Hidden`); `SizeBox_3` inside `BottomTimelineContent`, `TimelineSlider` inside `SizeBox_3`; `OnValueChanged(TimelineSlider) → ScrubTimeline` binding intact; `compile_blueprint` clean; 22/22 `BUH` tests pass; WBP saved.
+- **Limitation (reported, not resolved):** the native `GetPosition`/`GetSize`/`GetAutoSize`/`GetAnchors` getters are non-UFUNCTION C++ virtuals with no MCP method-invoker, so they were not called directly; geometry verified via the `layoutData` readback under the documented non-stretched semantics. Final on-screen proof requires the user's fresh graphical PIE.
+- Recorded in `notes.md` §9.49 (with a correction note added to §9.48).
 
-The user tested commit b91b499 in graphical PIE.
+The user tested commit 512a9e3. The timeline remains completely invisible.
 
-**The timeline is STILL completely invisible.**
+I've identified a concrete error in the CanvasPanelSlot configuration.
 
-Two attempted fixes have failed:
-- SizeBox_2 with WidthOverride=550.
-- SizeBox_3 with a fresh Auto HorizontalBoxSlot and WidthOverride=550.
+## Root cause
 
-Both compiled and passed automation, but neither made the timeline appear.
+You configured `BottomTimelineContent` with:
 
-The screenshot shows that the entire bottom timeline area is absent, while normal combat UI controls render correctly.
+- Anchors min=max=(0.5, 1.0)
+- Left=-450
+- Top=-95
+- Right=450
+- Bottom=-25
+- Alignment=(0.5, 1.0)
+- bAutoSize=false
 
-Do not make a third change to the slider's width or Fill coefficient.
+You described these offsets as producing a 900×70 panel.
 
-## 1. Bypass the broken ancestor layout
+That is incorrect for a non-stretched CanvasPanelSlot.
 
-Inspect the actual saved WBP_CombatUI WidgetTree.
+When the min/max anchors are identical, FMargin offsets represent:
 
-Locate:
-- RootCanvas
-- BottomTimelinePanel
-- BottomTimelineContent
-- SizeBox_3
-- TimelineSlider
-- TimelineInstantText
+- Left = position X
+- Top = position Y
+- Right = WIDTH
+- Bottom = HEIGHT
 
-**Move the existing BottomTimelineContent into RootCanvas as a direct child**, bypassing its previous parent containers.
+You accidentally assigned the panel a NEGATIVE height of -25.
 
-Do not create a second slider.
+This explains why it remains invisible even after bypassing the old parent container.
 
-Give BottomTimelineContent an explicit CanvasPanelSlot:
+## Exact fix
 
-- Anchored to bottom center of RootCanvas.
-- Approximately 900 px wide and 70 px tall.
-- Alignment (0.5, 1.0).
-- Positioned approximately 25 px above the bottom of the gameplay viewport.
-- Suitable positive Z-order so it displays above the arena and any background panels.
+Retain the existing `BottomTimelineContent` as a direct child of `RootCanvas`.
 
-Ensure the existing slider remains inside BottomTimelineContent and keeps its OnValueChanged binding.
+Configure `CanvasPanelSlot_1` as follows:
 
-Make the timeline readable and clickable.
+- Anchors min=(0.5, 1.0), max=(0.5, 1.0)
+- Alignment=(0.5, 1.0)
+- Offsets.Left=0
+- Offsets.Top=-25
+- Offsets.Right=900
+- Offsets.Bottom=70
+- bAutoSize=false
+- ZOrder=10
 
-If this specific reparenting would break another essential child relationship, position the existing timeline widgets directly in RootCanvas instead. Preserve widget identities and event bindings.
+This produces a 900×70 panel, centered horizontally and positioned 25 pixels above the canvas bottom.
 
-## 2. Prove the layout is actually on screen
+Set the complete `layoutData` object using ObjectTools if individual offset fields cannot be modified.
 
-The saved widget hierarchy alone has repeatedly failed to predict graphical visibility.
+## Verify immediately
 
-After Slate layout is performed, inspect in a GRAPHICAL PIE world:
+After saving, use the actual CanvasPanelSlot getters:
 
-- RootCanvas cached size.
-- BottomTimelineContent cached size.
-- SizeBox_3 cached size.
-- TimelineSlider cached size.
-- Slider screen-space bounds.
-- Effective visibility.
-- Hit-testability.
+- GetPosition should return (0, -25).
+- GetSize should return (900, 70).
+- GetAutoSize should return false.
+- GetAnchors should return the bottom-center fixed anchor.
 
-The slider must have positive width and height, and its bounds must intersect the actual gameplay viewport.
+Do not infer dimensions by subtracting offsets.
 
-If the layout is still invisible, add one temporary, high-contrast diagnostic TextBlock reading "TIMELINE HERE" directly to RootCanvas at the intended position.
-
-If that diagnostic appears but the timeline does not, isolate the faulty widget or container.
-
-If the diagnostic also fails, investigate RootCanvas sizing, viewport coordinates, clipping, and Z-order.
-
-Remove the diagnostic after fixing the actual cause.
-
-## 3. Keep the control visible without a prediction
-
-At clean startup:
-
-- Slider is visible but disabled.
-- Text reads "No preview".
-- No prediction ghosts are visible.
-
-With a valid hypothetical prediction:
-
-- Slider becomes enabled.
-- Text displays the correct Instant.
-- The thumb can be dragged.
-- Cyan/orange ghosts update to the selected snapshot.
-
-Do not hide the entire timeline panel when the prediction is empty.
-
-## 4. Do not disturb gameplay
-
-Preserve the working:
-- Walk.
-- Dash.
-- Jump.
-- Continue.
-- Reaction pauses.
-- Movement path rendering.
-- Clean startup.
-
-Do not modify BP_CombatManager, ExecuteMove, movement simulation, or the reaction rules.
-
-Do not rewrite WBP_CombatUI.EventTick or RefreshUI as part of this layout fix.
-
-## 5. Verification
+Verify:
+- `BottomTimelineContent` has positive dimensions.
+- `SizeBox_3` remains inside it.
+- The original `TimelineSlider` remains inside `SizeBox_3`.
+- Slider OnValueChanged binding is intact.
+- Visibility is not Collapsed or Hidden anywhere along the chain.
 
 Compile and save WBP_CombatUI.
 
-Read back the actual CanvasPanelSlot and WidgetTree hierarchy.
+If the slider still cannot appear with this corrected layout, capture actual runtime Slate geometry and investigate effective visibility. Do not guess another set of offsets.
 
-Verify event bindings still reference the same TimelineSlider.
+## Preserve gameplay
 
-Run all BUH automation tests.
+No modifications to:
+- BP_CombatManager
+- ExecuteMove
+- Movement mechanics
+- Reaction/Continue
+- CombatSim
+- The existing slider event logic
 
-If the graphical test runner is available, launch graphical PIE and capture a screenshot demonstrating the visible timeline.
+Do not add another slider or rebuild the widget hierarchy.
 
-If graphical verification cannot be performed automatically, explicitly report that limitation rather than calling the visual issue resolved.
+Run the BUH tests, update notes.md and todo.md with the corrected offset semantics, then commit and push to origin/master.
 
-Update notes.md and todo.md with the actual measured layout cause.
+Report the commit SHA and actual CanvasPanelSlot.GetSize result.
 
-Commit and push to origin/master.
-
-Report the SHA, exact final hierarchy, and what evidence confirms the widget is on screen.
-
-**Success: A clearly visible slider and Instant readout near the bottom center of the gameplay viewport. No more changes to width overrides without measured graphical evidence.**
+**Success: The timeline control becomes visible near the bottom center of graphical PIE.**
