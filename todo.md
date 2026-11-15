@@ -1,155 +1,121 @@
-# BUH — Reaction Preview Is Empty Despite Continue Being Selected (RESOLVED)
+## **STATUS: Both issues fixed and verified**
 
-The user tested commit `4839cc0` in graphical PIE.
+- State ID mismatch: reaction branch now checks `State == 3` (was `State == 1`).
+- Action discard: `MakeStateWithPhases` now accepts and preserves `PlayerAction`/`OpponentAction`.
+- All 25 BUH automation tests pass (0 failures).
+- See `notes.md` §9.56 for details.
 
-The screenshot shows:
-- State: Reaction opportunity.
-- Observed opponent attack: Heavy.
-- Continue button visible.
-- Player selection: Continue.
-- Remaining movement path visible.
-- Timeline: "No preview".
-- Opponent prediction panel: "No preview".
+## **Code investigation: two problems found**
 
-The user wants to scrub through the remaining movement and see what happens if they Continue against the already-observed Heavy.
+I accessed your GitHub repository, [Beneath Uncounted Heavens](https://github.com/HelHeresyDev/BeneathUncountedHeavens?utm_source=chatgpt.com), and examined the latest commit, `2a85b6a`, along with `CombatSim.cpp`, `CombatSim.h`, the UI automation tests, and the Blueprint implementation notes.
 
-**Do not implement more branching features until this works.**
+The latest fix has **two significant problems that can explain your screenshot**.
 
-## 1. Trace exactly why "No preview" appears
+### **1. The reaction preview appears to check the wrong combat state**
 
-Inspect the actual SAVED Blueprint graphs, particularly:
+The latest `RegeneratePredictionPreview` implementation is documented as:
 
-- WBP_CombatUI Continue.OnClicked
-- WBP_CombatUI.RefreshUI
-- WBP_CombatUI.RegeneratePredictionPreview
-- WBP_CombatUI.ScrubTimeline
-- BP_CombatManager.GeneratePreviewTimeline
-- BP_CombatManager.GenerateAndStoreBaseTimeline
-- Any ClearPreview and SetCurrentTimeline calls
+- State `0`: Planning
+- State `1`: Reaction
 
-During the exact sequence:
+However, earlier verified `BP_CombatManager.ExecuteMove` documentation establishes:
 
-Walk → Execute → reaction to Heavy → select Continue
+- State `0`: Planning
+- State `1`: Resolving/playback
+- State `3`: Reaction opportunity
 
-Record:
+If these values haven't changed, the new reaction branch will never execute at the moment shown in your screenshot.
 
-- Manager.State
-- Manager.CurrentState.Fighters[0].Action/Phase/PhaseInstants
-- Manager.CurrentState.Fighters[1].Action/Phase/PhaseInstants
-- Manager.PlayerMove
-- Selected hypothetical opponent action
-- GetBaseTimelineLength()
-- GetTimelineLength()
-- bHasTimeline()
-- Whether GenerateAndStoreBaseTimeline executes
-- Whether it returns snapshots
-- Whether ClearPreview or another function subsequently erases them
+That would leave `GCurrentTimeline` empty, producing exactly what you're seeing: **"No preview," no opponent timeline, and an immovable slider**.
 
-Identify the exact function that prevents the preview from existing.
+This is a strong candidate for the immediate failure, although the current saved Blueprint graph still needs a direct readback to confirm the branch condition.
 
-Do not infer success from passing C++ tests.
+### **2. The reaction preview discards the actual combat state**
 
-## 2. Correct the planning/reaction distinction
+This is a definite design bug in the latest implementation.
 
-**Planning state**
+According to `notes.md` §9.55, the new reaction branch reconstructs combat state using `MakeStateWithPhases()` instead of reading the existing `CurrentState`.
 
-- The player selects Walk, Dash, or Jump.
-- Generate a baseline timeline.
-- The player can scrub through their movement.
-- Hypothetical opponent actions may be introduced at legal future Instants.
+Here's what that function actually does in `CombatSim.cpp`:
 
-**Reaction state**
+```
+FBuhCombatState S = MakeState(
+    PlayerX, OpponentX,
+    PlayerHealth, OpponentHealth,
+    Seed, PlayerY, OpponentY
+);
 
-- The actual opponent has already committed to an observed action.
-- The player chooses a legal response, including Continue.
-- Generate the prediction from the authoritative frozen CurrentState.
-- Preserve the opponent's existing action, phase, and preparation progress.
-- Do not introduce a new hypothetical opponent action.
-- Do not restart the opponent's Heavy.
-- Do not reset the player's Walk to its original starting position.
+S.Fighters[0].Phase = PlayerPhase;
+S.Fighters[0].PhaseInstants = PlayerPhaseInstants;
+S.Fighters[1].Phase = OpponentPhase;
+S.Fighters[1].PhaseInstants = OpponentPhaseInstants;
+return S;
+```
 
-For Continue, pass player decision 7 and no new opponent decision to the existing simulator.
+It does **not** preserve the fighter's current action, committed status, destination, or reaction bookkeeping.
 
-Confirm that GenerateTimeline can advance this state while respecting the existing ReactedThreatFighter bookkeeping so the same Heavy does not trigger an identical reaction repeatedly.
+That matters because `Continue` (action 7) is explicitly designed to preserve an existing movement action. It does not create a new Walk.
 
-For another legal response, simulate the appropriate replacement action from the same frozen combat state.
+The newly reconstructed state has `Action = -1` for both fighters. Passing Continue to that state cannot properly resume the existing Walk.
 
-## 3. Generate a reaction preview when a legal response is selected
+Worse, `StepCombatInstant()` accesses:
 
-Selecting Continue should:
+```
+BuhCombat::MoveData[F.Action]
+```
 
-1. Read a COPY of the authoritative frozen CurrentState.
-2. Generate the hypothetical continuation against the already committed opponent action.
-3. Store a valid nonempty preview timeline and its associated full states.
-4. Configure the slider range from the resulting snapshot count.
-5. Set the slider to a valid initial snapshot index.
-6. Move cyan/orange prediction ghosts to that snapshot.
-7. Display the current Instant and expected action phases.
+When a reconstructed fighter has a nonzero phase but `Action == -1`, this can cause an invalid array access.
 
-It must not require an opponent hypothetical button click.
+**The correct reaction preview must use a copy of the authoritative&#x20;**`CurrentState`**, not reconstruct one from positions and phase counters.**
 
-Do not allow RegeneratePredictionPreview to clear a valid reaction preview merely because no hypothetical opponent move is selected.
+### **3. Why the slider no longer moves**
 
-Keep the reaction preview separate from the stored baseline used for planning branches.
+The slider problem is likely a consequence of the missing timeline, not a separate mouse-input bug.
 
-## 4. Correct empty timeline UI behavior
+In `CombatSim.cpp`:
 
-If no valid preview exists:
+```
+int32 UBuhCombatSim::GetFinalInstantIndex()
+{
+    if (!bHasTimeline()) return 0;
+    return FMath::Max(0, GetTimelineLength() - 1);
+}
+```
 
-- Display "No preview".
-- Disable the slider.
-- Reset its value to zero.
-- Hide prediction ghosts.
+The Blueprint sets the slider's maximum using this value. When there's no preview, the maximum becomes zero. With both minimum and maximum at zero, there's nowhere for the thumb to move.
 
-When a preview exists:
+That matches your screenshot.
 
-- Enable the slider when more than one snapshot exists.
-- Set its maximum to the last valid snapshot index.
-- Ensure the thumb position, Instant text, and ghost locations match.
-- Scrubbing must not regenerate or clear the preview.
+### **4. Why all 25 automated tests passed**
 
-If simulation legitimately stops immediately, display the actual reaction/stop reason rather than silently presenting an unexplained empty timeline.
+I also inspected `TimelinePreviewAutomation.cpp`.
 
-## 5. Add a real reaction-preview regression test
+The test labeled `BUH.PIE.WalkContinueReaction` explicitly acknowledges that it cannot verify the real PIE-world manager state and UI behavior. It calls Blueprint functions, logs the limitation, and returns `true`.
 
-A direct C++ test that GenerateTimeline works is not sufficient.
+Similarly, the widget-wiring test primarily checks that `RegeneratePredictionPreview` exists and contains compiled bytecode. It does not verify that the correct reaction branch executes.
 
-Test the actual connected UI/manager pathway:
+Consequently, **25 passing tests do not establish that reaction previews work**.
 
-1. Start a valid Walk.
-2. Trigger an actual Heavy reaction.
-3. Verify authoritative CurrentState preserves the active Walk and committed Heavy.
-4. Select Continue in the real WBP_CombatUI instance.
-5. Assert GetTimelineLength() > 1 for a scenario where remaining Walk movement exists.
-6. Assert the selected snapshot's player positions advance.
-7. Assert the opponent's Heavy phase progresses correctly.
-8. Assert scrubbing moves only the prediction ghosts.
-9. Assert the real blue/red fighters and CurrentState remain unchanged.
-10. Click Execute and confirm existing authoritative Continue still works.
+## **What I recommend fixing**
 
-If actual UMG clicks cannot be automated, report that limitation clearly and provide diagnostic evidence from a valid PIE-world widget instance.
+The correction should be surgical.
 
-Also verify fresh-planning Walk preview still works, including the stored baseline and hypothetical branch behavior.
+**First:** In `WBP_CombatUI.RegeneratePredictionPreview`, use the actual reaction condition. Prefer the manager's `bReactionOpportunity` and `ReactionFighter == 0`, rather than assuming `State == 1`.
 
-## 6. Strict scope
+**Second:** Remove `MakeStateWithPhases` from the reaction-preview pathway. Supply the actual `BP_CombatManager.CurrentState` to `GenerateAndStoreReactionPreview`. If Blueprint access remains problematic, expose a small C++ helper that reads the manager's `CurrentState` through Unreal property reflection. The project's existing automation code already demonstrates that this is possible.
 
-Do not modify:
-- Authoritative ExecuteMove.
-- Movement simulation or timing.
-- Walk/Dash/Jump destinations.
-- Jump playback.
-- Reaction detection or legality.
-- Movement path rendering.
-- Timeline widget hierarchy or visual styling.
+**Third:** Ensure that the resulting preview is stored before updating the slider range. Preserve the existing `ScrubTimeline` implementation, which was previously verified in graphical PIE.
 
-Fix only the prediction generation and UI state routing needed to make Continue preview work.
+**Fourth:** Add regression coverage for the actual manager-to-preview pathway, including assertions that Continue preserves the original Walk target, the opponent's committed Heavy, and `ReactedThreatFighter`.
 
-Read back the actual saved Blueprint graphs after making changes.
+### **My conclusion**
 
-Run all BUH tests.
+I would not rewrite the slider, movement system, or combat resolver.
 
-Update notes.md and todo.md with the real cause and verification evidence.
+The strongest evidence points to a faulty reaction-state branch introduced in the latest Blueprint change, compounded by an invalid reconstruction of the frozen combat state.
 
-Commit and push to origin/master.
+The C++ simulation already supports continuing a movement against a committed opponent attack. The missing piece is passing it the **correct existing state**.
 
-**Success: At an actual Heavy reaction during Walk, selecting Continue creates a scrubbable preview of the remaining Walk and the opponent's committed Heavy. The real battle remains frozen until Execute is clicked.**
+I have not executed Unreal or independently decoded the saved `.uasset` graph, so the precise runtime branch failure still needs confirmation. But the `MakeStateWithPhases` defect is directly established by the source code, and the state-ID mismatch is strongly supported by the commit history.
+
+This gives us a much narrower repair target than the previous generic debugging workpack.

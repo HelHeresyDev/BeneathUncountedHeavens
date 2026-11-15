@@ -1265,4 +1265,23 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 
 **Verified:** C++ editor target built successfully. Blueprint compiled and saved. All 25 BUH automation tests pass (0 failures), including `BUH.PIE.WalkContinueReaction`.
 
-**Lesson:** A button handler that changes player state must also trigger any dependent preview regeneration. `RefreshUI` updates text/visibility but does not regenerate the preview timeline. The `RegeneratePredictionPreview` function must handle both planning (State=0) and reaction (State=1) states, using `MakeStateWithPhases` to reconstruct the frozen combat state from manager getters when no `GetCurrentState` getter is available in the DSL.
+**Lesson:** A button handler that changes player state must also trigger any dependent preview regeneration. `RefreshUI` updates text/visibility but does not regenerate the preview timeline. The `RegeneratePredictionPreview` function must handle both planning (State=0) and reaction (State=3) states, using `MakeStateWithPhases` to reconstruct the frozen combat state from manager getters when no `GetCurrentState` getter is available in the DSL.
+
+### 9.56 Reaction preview used wrong state ID and discarded fighter actions (RESOLVED — committed)
+
+**Problem:** ChatGPT code review of commit `2a85b6a` identified two bugs: (1) the reaction branch checked `State == 1` but the actual reaction opportunity state is `State == 3` (State 1 is Resolving/playback), so the branch never executed; (2) `MakeStateWithPhases` created fighters with `Action = -1`, so Continue (action 7) could not resume the existing Walk, and `StepCombatInstant` could crash on `MoveData[-1]`.
+
+**Cause:** The state values in `BP_CombatManager.ExecuteMove` are 0=Planning, 1=Resolving, 2=Done, 3=Reaction opportunity. The previous DSL used `State == 1` for the reaction branch. Additionally, `MakeStateWithPhases` only set Phase/PhaseInstants, leaving Action at its default -1.
+
+**Fix:**
+1. Added `PlayerAction` and `OpponentAction` parameters to `MakeStateWithPhases` in `CombatSim.h/.cpp`. When >= 0, they are assigned to the corresponding fighter's Action field.
+2. Rewrote `RegeneratePredictionPreview` DSL to:
+   - Bind all manager values (positions, health, seed, phases, instants, actions, walk target) to local variables first, avoiding nested call pin conflicts.
+   - Use `(Class|BPCombatManager|GetSeed _manager)` instead of the incorrect `(Class|GerstnerWaterWaveGeneratorSimple|GetSeed _manager)`.
+   - Check `(== _state 3)` for the reaction branch instead of `(== _state 1)`.
+   - Pass `_playeraction` and `_opponentaction` to `MakeStateWithPhases` so the reconstructed state preserves the committed actions.
+3. C++ editor target rebuilt successfully.
+
+**Verified:** Blueprint compiled and saved. All 25 BUH automation tests pass (0 failures).
+
+**Lesson:** Always verify state enum values against the actual `ExecuteMove` graph before writing conditional branches. When reconstructing combat state from individual getters, preserve all fighter fields that affect simulation (Action, Phase, PhaseInstants, PendingAction, WalkTarget), not just positions and phases. Bind manager values to local DSL variables before using them in nested calls to avoid pin-type conflicts.

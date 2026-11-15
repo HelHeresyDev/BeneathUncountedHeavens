@@ -100,13 +100,15 @@ FBuhCombatState UBuhCombatSim::MakeState(int32 PlayerX, int32 OpponentX, int32 P
 	return S;
 }
 
-FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants, float PlayerY, float OpponentY)
+FBuhCombatState UBuhCombatSim::MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants, float PlayerY, float OpponentY, int32 PlayerAction, int32 OpponentAction)
 {
 	FBuhCombatState S = MakeState(PlayerX, OpponentX, PlayerHealth, OpponentHealth, Seed, PlayerY, OpponentY);
 	S.Fighters[0].Phase = PlayerPhase;
 	S.Fighters[0].PhaseInstants = PlayerPhaseInstants;
 	S.Fighters[1].Phase = OpponentPhase;
 	S.Fighters[1].PhaseInstants = OpponentPhaseInstants;
+	if (PlayerAction >= 0) S.Fighters[0].Action = PlayerAction;
+	if (OpponentAction >= 0) S.Fighters[1].Action = OpponentAction;
 	return S;
 }
 

@@ -132,7 +132,7 @@ public:
 	static FBuhCombatState MakeState(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, float PlayerY = 0.f, float OpponentY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static FBuhCombatState MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants, float PlayerY = 0.f, float OpponentY = 0.f);
+	static FBuhCombatState MakeStateWithPhases(int32 PlayerX, int32 OpponentX, int32 PlayerHealth, int32 OpponentHealth, int32 Seed, int32 PlayerPhase, int32 PlayerPhaseInstants, int32 OpponentPhase, int32 OpponentPhaseInstants, float PlayerY = 0.f, float OpponentY = 0.f, int32 PlayerAction = -1, int32 OpponentAction = -1);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
