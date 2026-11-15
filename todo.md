@@ -1,116 +1,119 @@
-# Beneath Uncounted Heavens — Interactive Tactical Timeline
+# BUH — Fix Hypothetical Timeline Branching and One-Snapshot Preview
 
-The user has clarified the intended design of the timeline.
+**Status: Fixed and verified.** All 25 BUH tests pass.
 
-It is NOT simply a way to display final combat outcomes.
+## Root Cause
 
-It should let the player examine the future Instant by Instant and introduce hypothetical opponent actions at selected times to explore possible reactions.
+`RegeneratePredictionPreview` called `GenerateAndStoreBaseTimeline` unconditionally on every invocation, overwriting the stored base timeline. During a reaction (State=1), the base was regenerated from the current non-planning combat state, producing a one-snapshot base. Branching at Instant 0 of that base yielded a one-snapshot combined timeline. Additionally, `GetBaseTimelineLength` was called before the generation, so the slider max was set to the stale/zero length.
 
-Current baseline: commit 8f27344.
+## Fix Applied
 
-**Stage 1: COMPLETE** — verified (graphical screenshot `Instant 6 / 13`, `Walk active (6), X -320` + `BUH.TimelinePreviewTests`), documented in notes.md §9.53, committed.
+Rewrote `RegeneratePredictionPreview` DSL in `WBP_CombatUI`:
+- Only call `GenerateAndStoreBaseTimeline` when `GetBaseTimelineLength == 0` (no base exists yet).
+- Call `GetBaseTimelineLength` after the conditional generation.
+- Set slider max to the base length, then branch if a hypothetical opponent move is selected and the opponent snapshot phase is 0.
+- Finally set slider max/value to the final `GetTimelineLength` and `ClampInstantFromFloat`.
 
-## Stage 1 — Verify movement scrubbing
+The baseline Walk history is preserved across hypothetical branch selections.
 
-The timeline slider now appears near the bottom of graphical PIE.
+## 1. Diagnose the one-snapshot timeline
 
-The screenshot shows "Instant 6 / 13" and "Player: Walk active (6), X -320".
+Trace the exact sequence that generated it.
 
-Verify that dragging the slider through a Walk prediction:
+Log:
+- Authoritative combat state and current Instant.
+- Selected preview branch Instant.
+- Player's active action and phase.
+- Opponent's active action and phase.
+- Hypothetical opponent action.
+- Whether the opponent is legally able to start it.
+- Generated prefix snapshot count.
+- Generated branch snapshot count.
+- First reaction Instant.
+- StoppedReason.
+- Final merged preview length.
 
-- Changes the selected Instant.
-- Moves the cyan predicted player through each simulated position.
-- Shows intermediate positions, not only the destination.
-- Updates the displayed movement phase and coordinates.
-- Allows scrubbing backward.
-- Leaves the actual fighter stationary.
+A hypothetical attack that creates an immediate reaction may legitimately produce only one branch snapshot.
 
-Use the existing `GenerateTimeline`, snapshot getters, and ghost actors.
+However, branching at Instant 6 must not discard the six earlier Instants of movement history.
 
-The prediction should use actual combat snapshots, not visual interpolation invented independently of the simulation.
+## 2. Separate the baseline timeline from the branch
 
-If this already works, document the graphical checks and do not rewrite it.
+The intended workflow is:
 
-Commit and push Stage 1 independently.
+1. Select Walk and a destination.
+2. Generate a baseline timeline with no hypothetical opponent attack.
+3. Scrub through the Walk's actual simulated positions.
+4. Stop at an Instant, such as Instant 6.
+5. Select hypothetical opponent Heavy.
+6. Preserve the preview history leading up to Instant 6.
+7. Start Heavy only if the opponent is legally ready.
+8. Simulate forward to the next reaction or decision boundary.
 
-## Stage 2 — Schedule hypothetical opponent actions at selected Instants
+Do not automatically replace the whole timeline with a fresh simulation beginning at Instant 0.
 
-The user wants this sequence:
+Preserve the original combat state at every branch point through deterministic replay or complete simulated state checkpoints. Do not reconstruct authoritative internal state from display-only snapshot fields.
 
-1. Select Walk to a destination.
-2. Scrub forward and watch the predicted Walk.
-3. Stop at a chosen Instant, such as Instant 6.
-4. Select hypothetical opponent Quick Strike.
-5. See a new hypothetical timeline in which the opponent begins Quick Strike at Instant 6.
-6. See the player's predicted movement advance until a valid reaction opportunity.
-7. At that point, preview possible player responses or Continue.
+## 3. Handle existing reaction states correctly
 
-**Important:** The current GenerateTimeline applies both decisions at the beginning. Changing the slider before choosing an opponent action must not be treated as merely changing the display index.
+This screenshot was captured during an actual reaction to Heavy.
 
-Implement a true hypothetical branch at the selected Instant.
+The opponent may already be committed to Heavy. Do not allow a hypothetical Heavy selection to overwrite that commitment unless the combat rules explicitly permit a new action.
 
-### Simulation rules
+Separate two contexts:
 
-- The opponent can begin a new action only when legally able to act at that Instant.
-- If the opponent is in startup, active, or recovery, show that the action cannot begin yet.
-- Preserve all simulation history leading to the selected Instant.
-- Continue simulation deterministically from the correct state at the branch.
-- Preserve existing preparation times, movement rules, and reaction restrictions.
-- A hypothetical attack does not automatically land or cause a reaction merely because its button was clicked.
-- Reuse the existing combat reaction detection.
-- Stop at a legitimate reaction opportunity and offer legal responses.
-- Do not automatically choose a response for the player.
-- Do not reveal or modify the real opponent's hidden committed action.
+- Planning: investigate hypothetical future opponent actions.
+- Reaction: investigate legal player responses to an already-observed threat.
 
-### Technical requirements
+At a reaction, preview Continue, Guard, Dodge, Quick, or Heavy as permitted by GetReactionInfo.
 
-The existing FBuhTimelineSnapshot primarily contains presentation data. It is not necessarily sufficient to resume combat with all internal action commitments and bookkeeping intact.
+Do not restart the opponent's already committed attack merely because its hypothetical button was selected.
 
-Do not reconstruct a complete combat state using only visible snapshot fields.
+## 4. Fix the slider when timeline length changes
 
-Instead, maintain or deterministically reconstruct a full simulated combat state at each potential branch point.
+For N snapshots:
+- Clamp selected index to 0 through N-1.
+- Update the actual TimelineSlider.Value, not merely the displayed Instant text.
+- If N=1, show Instant 0 and disable dragging.
+- If N=0, show No preview.
+- Preserve the selected branch point appropriately when the preview is regenerated.
 
-Use copies of authoritative combat state. Never mutate CurrentState while exploring predictions.
+The slider thumb, displayed Instant, and ghost positions must correspond to the same snapshot.
 
-Do not make arbitrary snapshots into legal decision points if the fighter is still committed.
+## 5. Verify using a controlled scenario
 
-### UI behavior
+Start a fresh planning encounter, not an already triggered reaction.
 
-The slider controls which Instant the player is inspecting.
+Select Walk toward a destination.
 
-When the player selects a hypothetical opponent action, show clearly:
+Use a hypothetical opponent who remains idle during the baseline preview.
 
-"Opponent Quick Strike begins at Instant 6"
+Verify:
 
-The preview timeline then branches from that point.
+- Slider moves cyan ghost progressively through Walk.
+- Instant 0 and Instant 6 show different predicted positions.
+- Select hypothetical Heavy at Instant 6.
+- The prefix up to Instant 6 is unchanged.
+- Heavy starts at Instant 6 if legal.
+- Reaction detection uses the existing combat rules.
+- Scrubbing backward still shows the original Walk history.
+- The new branch displays its actual reaction event.
+- Real fighters remain stationary throughout prediction.
 
-Keep the branch point identifiable when scrubbing backward.
+Then separately test an existing real reaction with Continue.
 
-When the predicted sequence reaches a player reaction opportunity, show:
+## 6. Protect the working movement system
 
-"Reaction available at Instant N"
+Do not modify BP_CombatManager.ExecuteMove, Walk/Dash/Jump movement, reaction timing, or Continue playback.
 
-Allow the player to examine the legal responses and Continue without executing an actual move.
+Limit changes to hypothetical preview state, branching, timeline selection, and their UI integration.
 
-A reaction choice may generate another hypothetical branch, but should not modify the real encounter.
+Add regression tests covering actual branch preservation and legal decision timing, not just GenerateTimeline returning a nonempty array.
 
-### Testing
+Compile, save, read back relevant Blueprints, run all BUH tests, and update notes.md and todo.md.
 
-Test:
+Commit and push the changes to origin/master.
 
-- Walk with no opponent action, showing all movement Instants.
-- Opponent Quick selected at Instant 0.
-- Opponent Quick selected at Instant 6.
-- The two scenarios produce appropriately different timelines.
-- Attempting a new action while the opponent is busy is rejected.
-- A valid attack produces the expected startup and reaction opportunities.
-- Continue preserves the remaining Walk.
-- Scrubbing before and after a branch shows the correct positions.
-- The actual fighters never move during preview.
-- Existing Walk, Dash, Jump, Execute, and Continue remain working.
+Report the commit SHA, one-snapshot cause, branching behavior, and any graphical checks requiring user confirmation.
 
-Complete Stage 1 and establish its actual graphical result before implementing Stage 2.
-
-Update notes.md and todo.md, run all BUH tests, and commit/push each completed stage to origin/master.
-
-**Success: The player can watch a hypothetical Walk unfold Instant by Instant, introduce an opponent action at a legal chosen Instant, and explore how the combat situation changes before committing any real action.**
+**Success: The player can watch a Walk unfold, choose a hypothetical opponent action at a later legal Instant, and inspect the resulting reaction without losing the earlier movement history or altering real combat.**

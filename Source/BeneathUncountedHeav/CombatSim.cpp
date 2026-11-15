@@ -1890,9 +1890,16 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	return Info;
 }
 
-TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak, bool bStopAtDecisionBoundary)
+// Stage 2: the full authoritative FBuhCombatState at each snapshot index, stored
+// in parallel with GCurrentTimeline. FBuhTimelineSnapshot is presentation-only and
+// cannot resume combat; branching at an Instant requires this complete state (all
+// action commitments, Walk/Dash/Jump bookkeeping, healths, phases).
+static TArray<FBuhCombatState> GCurrentTimelineStates;
+
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak, bool bStopAtDecisionBoundary, bool bOpponentNoAction)
 {
 	TArray<FBuhTimelineSnapshot> Snapshots;
+	TArray<FBuhCombatState> States;
 	FBuhCombatState S = InState;
 	float PreDodgeDist[2] = { 1e9f, 1e9f };
 	int32 PendingAttackStart[2] = { -1, -1 };
@@ -1966,6 +1973,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.ObservedThreatAction = S.Fighters[1 - ReactionEvent.Fighter].Action;
 			Snap.Events.Add(ReactionEvent);
 			Snapshots.Add(Snap);
+			States.Add(S);
 			Snapshots.Last().StoppedReason = 5;
 			break;
 		}
@@ -2034,6 +2042,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 			Snap.bOpponentReady = (S.Fighters[1].Phase == 0);
 			Snap.Events = InstEvents;
 			Snapshots.Add(Snap);
+			States.Add(S);
 			Snapshots.Last().StoppedReason = 3;
 			break;
 		}
@@ -2063,21 +2072,26 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateTimeline(const FBuhCombatSta
 		Snap.bOpponentReady = bOpponentReady;
 		Snap.Events = InstEvents;
 		Snapshots.Add(Snap);
+		States.Add(S);
 
 		if (bPlayerReady && bOpponentReady) { Snapshots.Last().StoppedReason = 2; break; }
 		if (bPlayerReady && !bSuppressPlayerReadyBreak) { Snapshots.Last().StoppedReason = 1; break; }
 		if (bOpponentReady)
 		{
 			if (bStopAtDecisionBoundary) { Snapshots.Last().StoppedReason = 2; break; }
-			S.Fighters[1].Action = BuhCombat::AI_MOVE;
-			S.Fighters[1].Phase = 1;
-			S.Fighters[1].PhaseInstants = 0;
-			S.Fighters[1].bCommitted = true;
-			if (BuhCombat::AI_MOVE == 0 || BuhCombat::AI_MOVE == 1) PendingAttackStart[1] = 1;
+			if (!bOpponentNoAction)
+			{
+				S.Fighters[1].Action = BuhCombat::AI_MOVE;
+				S.Fighters[1].Phase = 1;
+				S.Fighters[1].PhaseInstants = 0;
+				S.Fighters[1].bCommitted = true;
+				if (BuhCombat::AI_MOVE == 0 || BuhCombat::AI_MOVE == 1) PendingAttackStart[1] = 1;
+			}
 		}
 	}
 
 	if (Snapshots.Num() > 0 && Snapshots.Last().StoppedReason == 0) Snapshots.Last().StoppedReason = 4;
+	GCurrentTimelineStates = States;
 	return Snapshots;
 }
 
@@ -2088,6 +2102,235 @@ void UBuhCombatSim::SetCurrentTimeline(const TArray<FBuhTimelineSnapshot>& InTim
 {
 	GCurrentTimeline = InTimeline;
 	bGHasTimeline = InTimeline.Num() > 0;
+	// Keep the parallel full-state array in sync. When the timeline is cleared
+	// (reset) the states must be cleared too so a stale branch point is never used.
+	// A non-empty timeline's states were already stored by GenerateTimeline.
+	if (InTimeline.Num() == 0)
+	{
+		GCurrentTimelineStates.Reset();
+	}
+}
+
+FBuhCombatState UBuhCombatSim::GetStateAt(int32 Index)
+{
+	if (Index >= 0 && Index < GCurrentTimelineStates.Num())
+	{
+		return GCurrentTimelineStates[Index];
+	}
+	return FBuhCombatState();
+}
+
+static int32 GBranchInstant = -1;
+
+void UBuhCombatSim::SetCurrentTimelineWithStates(const TArray<FBuhTimelineSnapshot>& InTimeline, const TArray<FBuhCombatState>& InStates)
+{
+	GCurrentTimeline = InTimeline;
+	bGHasTimeline = InTimeline.Num() > 0;
+	GCurrentTimelineStates = InStates;
+}
+
+static TArray<FBuhTimelineSnapshot> GBaseTimeline;
+static TArray<FBuhCombatState> GBaseTimelineStates;
+static bool bGHasBaseTimeline = false;
+
+void UBuhCombatSim::SetBaseTimeline(const TArray<FBuhTimelineSnapshot>& InTimeline, const TArray<FBuhCombatState>& InStates)
+{
+	GBaseTimeline = InTimeline;
+	GBaseTimelineStates = InStates;
+	bGHasBaseTimeline = InTimeline.Num() > 0;
+}
+
+void UBuhCombatSim::ClearBaseTimeline()
+{
+	GBaseTimeline.Reset();
+	GBaseTimelineStates.Reset();
+	bGHasBaseTimeline = false;
+}
+
+bool UBuhCombatSim::bHasBaseTimeline()
+{
+	return bGHasBaseTimeline;
+}
+
+int32 UBuhCombatSim::GetBaseTimelineLength()
+{
+	return GBaseTimeline.Num();
+}
+
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GetBaseTimeline()
+{
+	return GBaseTimeline;
+}
+
+TArray<FBuhCombatState> UBuhCombatSim::GetBaseTimelineStates()
+{
+	return GBaseTimelineStates;
+}
+
+void UBuhCombatSim::RestoreBaseTimeline()
+{
+	if (!bGHasBaseTimeline) return;
+	SetCurrentTimelineWithStates(GBaseTimeline, GBaseTimelineStates);
+	GBranchInstant = -1;
+}
+
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreBaseTimeline(const FBuhCombatState& InState, int32 PlayerMove, int32 MaxInstants)
+{
+	TArray<FBuhTimelineSnapshot> BaseSnaps = GenerateTimeline(InState, PlayerMove, -1, MaxInstants, true, false, true);
+	TArray<FBuhCombatState> BaseStates = GCurrentTimelineStates; // side effect of GenerateTimeline
+	SetBaseTimeline(BaseSnaps, BaseStates);
+	SetCurrentTimelineWithStates(BaseSnaps, BaseStates);
+	GBranchInstant = -1;
+	return BaseSnaps;
+}
+
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchFromBase(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason)
+{
+	OutBranchInstant = -1;
+	bLegal = false;
+
+	if (!bGHasBaseTimeline)
+	{
+		OutReason = TEXT("No base timeline is stored; select a player move first");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+	if (BranchIndex < 0 || BranchIndex >= GBaseTimeline.Num())
+	{
+		OutReason = TEXT("Branch index is out of range for the base timeline");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+	if (BranchIndex >= GBaseTimelineStates.Num())
+	{
+		OutReason = TEXT("No full combat state is stored at that base branch index");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+
+	const FBuhCombatState BranchState = GBaseTimelineStates[BranchIndex];
+	if (BranchState.Fighters.Num() < 2)
+	{
+		OutReason = TEXT("No full combat state is stored at that branch index");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+
+	const FBuhFighterState& Opp = BranchState.Fighters[1];
+	if (Opp.Phase != 0)
+	{
+		OutReason = FString::Printf(TEXT("The opponent is already mid-action (phase %d) at Instant %d and cannot begin a new move there"), Opp.Phase, BranchState.Instant);
+		return TArray<FBuhTimelineSnapshot>();
+	}
+	if (NewOpponentAction < 0 || NewOpponentAction >= 10)
+	{
+		OutReason = TEXT("Hypothetical opponent action is not a valid move");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+
+	const int32 BranchInstant = BranchState.Instant;
+	TArray<FBuhTimelineSnapshot> BranchSnaps = GenerateTimeline(BranchState, -1, NewOpponentAction, 30, false, false);
+	TArray<FBuhCombatState> BranchStates = GCurrentTimelineStates; // side effect of GenerateTimeline
+
+	for (FBuhTimelineSnapshot& S : BranchSnaps)
+	{
+		S.Instant += BranchInstant;
+		for (FBuhCombatEvent& E : S.Events) E.Instant += BranchInstant;
+	}
+	for (FBuhCombatState& St : BranchStates) St.Instant += BranchInstant;
+
+	TArray<FBuhTimelineSnapshot> Combined;
+	for (int32 i = 0; i < BranchIndex; ++i) Combined.Add(GBaseTimeline[i]);
+	for (const FBuhTimelineSnapshot& S : BranchSnaps) Combined.Add(S);
+
+	TArray<FBuhCombatState> CombinedStates;
+	for (int32 i = 0; i < BranchIndex; ++i) CombinedStates.Add(GBaseTimelineStates[i]);
+	for (const FBuhCombatState& St : BranchStates) CombinedStates.Add(St);
+
+	SetCurrentTimelineWithStates(Combined, CombinedStates);
+	GBranchInstant = BranchInstant;
+	OutBranchInstant = BranchInstant;
+	bLegal = true;
+	OutReason = FString::Printf(TEXT("Opponent %s begins at Instant %d"), BuhCombat::MoveName(NewOpponentAction), BranchInstant);
+	return Combined;
+}
+
+void UBuhCombatSim::ClearPreview()
+{
+	ClearBaseTimeline();
+	SetCurrentTimeline(TArray<FBuhTimelineSnapshot>());
+	GBranchInstant = -1;
+}
+
+TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchTimeline(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason)
+{
+	OutBranchInstant = -1;
+	bLegal = false;
+
+	// The branch point must be a valid snapshot index with a stored full state.
+	if (BranchIndex < 0 || BranchIndex >= GCurrentTimeline.Num())
+	{
+		OutReason = TEXT("Branch index is out of range for the current timeline");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+	FBuhCombatState BranchState = GetStateAt(BranchIndex);
+	if (BranchState.Fighters.Num() < 2)
+	{
+		OutReason = TEXT("No full combat state is stored at that branch index");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+
+	// The opponent may only begin a new action when legally ready (Phase 0). If the
+	// opponent is in startup/active/recovery, the branch is illegal and rejected.
+	const FBuhFighterState& Opp = BranchState.Fighters[1];
+	if (Opp.Phase != 0)
+	{
+		OutReason = FString::Printf(TEXT("The opponent is already mid-action (phase %d) at Instant %d and cannot begin a new move there"), Opp.Phase, BranchState.Instant);
+		return TArray<FBuhTimelineSnapshot>();
+	}
+	if (NewOpponentAction < 0 || NewOpponentAction >= 10)
+	{
+		OutReason = TEXT("Hypothetical opponent action is not a valid move");
+		return TArray<FBuhTimelineSnapshot>();
+	}
+
+	// Save the original full states before GenerateTimeline overwrites the static.
+	TArray<FBuhCombatState> OrigStates = GCurrentTimelineStates;
+
+	// Re-simulate from the exact full state at the branch point. The player keeps
+	// their in-progress action (Decision -1 = no new player decision) and the
+	// opponent begins the hypothetical move. The existing reaction detection stops
+	// the branch at the first legitimate reaction opportunity.
+	const int32 BranchInstant = BranchState.Instant;
+	TArray<FBuhTimelineSnapshot> BranchSnaps = GenerateTimeline(BranchState, -1, NewOpponentAction, 30, false, false);
+	TArray<FBuhCombatState> BranchStates = GCurrentTimelineStates; // side effect of GenerateTimeline
+
+	// GenerateTimeline restarts its Instant counter at 0; shift every snapshot,
+	// event, and state forward by the branch Instant so the branch continues it.
+	for (FBuhTimelineSnapshot& S : BranchSnaps)
+	{
+		S.Instant += BranchInstant;
+		for (FBuhCombatEvent& E : S.Events) E.Instant += BranchInstant;
+	}
+	for (FBuhCombatState& St : BranchStates) St.Instant += BranchInstant;
+
+	// Combine: the unchanged history before the branch point, then the branch. The
+	// branch replaces the original "no opponent action" continuation from that Instant.
+	TArray<FBuhTimelineSnapshot> Combined;
+	for (int32 i = 0; i < BranchIndex; ++i) Combined.Add(GCurrentTimeline[i]);
+	for (const FBuhTimelineSnapshot& S : BranchSnaps) Combined.Add(S);
+
+	TArray<FBuhCombatState> CombinedStates;
+	for (int32 i = 0; i < BranchIndex; ++i) CombinedStates.Add(OrigStates[i]);
+	for (const FBuhCombatState& St : BranchStates) CombinedStates.Add(St);
+
+	SetCurrentTimelineWithStates(Combined, CombinedStates);
+	GBranchInstant = BranchInstant;
+	OutBranchInstant = BranchInstant;
+	bLegal = true;
+	OutReason = FString::Printf(TEXT("Opponent %s begins at Instant %d"), BuhCombat::MoveName(NewOpponentAction), BranchInstant);
+	return Combined;
+}
+
+int32 UBuhCombatSim::GetBranchInstant()
+{
+	return GBranchInstant;
 }
 
 FBuhTimelineSnapshot UBuhCombatSim::GetSnapshotAt(int32 Instant)
@@ -2223,6 +2466,14 @@ FString UBuhCombatSim::GetSnapshotInfoText(int32 Index)
 	}
 	const FBuhTimelineSnapshot& Snap = GCurrentTimeline[Index];
 	FString Out;
+	if (Index == GBranchInstant)
+	{
+		Out += TEXT("Branch point: hypothetical opponent action begins here\n");
+	}
+	if (Snap.bReactionOpportunity)
+	{
+		Out += FString::Printf(TEXT("Reaction available at Instant %d\n"), Snap.Instant);
+	}
 	Out += FString::Printf(TEXT("Instant %d\n"), Snap.Instant);
 	Out += FString::Printf(TEXT("Player: %s %s (%d) HP %d X %.0f Y %.0f %s\n"),
 		BuhCombat::MoveName(Snap.PlayerAction), BuhPhaseName(Snap.PlayerPhase),

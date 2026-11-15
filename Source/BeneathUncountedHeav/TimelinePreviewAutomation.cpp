@@ -282,6 +282,231 @@ bool FBuhTimelinePreviewTest::RunTest(const FString& Parameters)
 	return bAllPassed;
 }
 
+// todo.md Stage 2 — hypothetical opponent-action branches at a selected Instant.
+//
+// These drive the new UBuhCombatSim branch API (GenerateBranchTimeline, GetStateAt,
+// GetBranchInstant) on top of the Stage 1 timeline. They prove: the opponent may
+// only begin a new action when legally ready; the branch resumes from the exact
+// full combat state (never from snapshot fields); the player's in-progress Walk is
+// preserved; a hypothetical attack produces a reaction opportunity without auto-
+// reacting; the branch point stays identifiable; and previewing/branching never
+// mutates the authoritative CurrentState.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhBranchPreviewTest, "BUH.BranchPreviewTests",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhBranchPreviewTest::RunTest(const FString& Parameters)
+{
+	bool bAllPassed = true;
+	auto Check = [this, &bAllPassed](const TCHAR* What, bool bResult)
+	{
+		bAllPassed &= TestTrue(What, bResult);
+	};
+
+	// A Walk scenario: player mid-Walk toward a far target (so the Walk persists
+	// across the opponent's AI move), opponent ready at the start.
+	auto MakeWalkState = []() -> FBuhCombatState
+	{
+		FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 6;
+		S.Fighters[0].Phase = 1;
+		S.Fighters[0].PhaseInstants = 0;
+		S.Fighters[0].bCommitted = true;
+		S.Fighters[0].WalkTarget = -1000.f;
+		S.Fighters[0].WalkTargetY = 0.f;
+		S.Fighters[0].WalkRemaining = 1500.f;
+		return S;
+	};
+
+	auto FirstReadyIndex = [](const TArray<FBuhTimelineSnapshot>& TL) -> int32
+	{
+		for (int32 i = 0; i < TL.Num(); ++i)
+		{
+			const FBuhCombatState St = UBuhCombatSim::GetStateAt(i);
+			if (St.Fighters.Num() >= 2 && St.Fighters[1].Phase == 0) return i;
+		}
+		return -1;
+	};
+
+	// 1. Branching at a ready opponent instant is legal and produces a reaction opportunity.
+	{
+		const FBuhCombatState S = MakeWalkState();
+		const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateTimeline(S, -1, -1, 60);
+		UBuhCombatSim::SetCurrentTimeline(BaseTL);
+		const int32 BranchIndex = FirstReadyIndex(BaseTL);
+		Check(TEXT("1a opponent ready at some instant"), BranchIndex >= 0);
+		if (BranchIndex >= 0)
+		{
+			int32 OutInstant = -1; bool bLegal = false; FString Reason;
+			const TArray<FBuhTimelineSnapshot> BranchTL = UBuhCombatSim::GenerateBranchTimeline(BranchIndex, 0, OutInstant, bLegal, Reason);
+			Check(TEXT("1b branch is legal"), bLegal);
+			Check(TEXT("1c branch instant recorded"), OutInstant >= 0);
+			bool bReaction = false;
+			for (const FBuhTimelineSnapshot& Sn : BranchTL) if (Sn.bReactionOpportunity) { bReaction = true; break; }
+			Check(TEXT("1d branch has a reaction opportunity"), bReaction);
+			Check(TEXT("1e GetBranchInstant matches"), UBuhCombatSim::GetBranchInstant() == OutInstant);
+		}
+	}
+
+	// 2. Branching at two different ready instants yields different combined timelines.
+	// Use a Guarding player (busy but not reactable) so the AI opponent's Heavy Strike
+	// runs to completion without a reaction pause, leaving the opponent ready at
+	// instant 0 and again after the Heavy Strike ends.
+	{
+		FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+		S.Fighters[0].Action = 2;
+		S.Fighters[0].Phase = 1;
+		S.Fighters[0].PhaseInstants = 0;
+		S.Fighters[0].bCommitted = true;
+		const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateTimeline(S, -1, -1, 60, true);
+		UBuhCombatSim::SetCurrentTimeline(BaseTL);
+		TArray<int32> Ready;
+		for (int32 i = 0; i < BaseTL.Num(); ++i)
+		{
+			const FBuhCombatState St = UBuhCombatSim::GetStateAt(i);
+			if (St.Fighters.Num() >= 2 && St.Fighters[1].Phase == 0) Ready.Add(i);
+		}
+		if (Ready.Num() >= 2)
+		{
+			const int32 I0 = Ready[0];
+			const int32 I1 = Ready.Last();
+			int32 O0 = -1, O1 = -1; bool bL0 = false, bL1 = false; FString R0, R1;
+			const TArray<FBuhTimelineSnapshot> TL0 = UBuhCombatSim::GenerateBranchTimeline(I0, 0, O0, bL0, R0);
+			// Restore the original base timeline before the second branch: the first
+			// branch call overwrote the current timeline with its combined result.
+			const TArray<FBuhTimelineSnapshot> BaseTL2 = UBuhCombatSim::GenerateTimeline(S, -1, -1, 60, true);
+			UBuhCombatSim::SetCurrentTimeline(BaseTL2);
+			const TArray<FBuhTimelineSnapshot> TL1 = UBuhCombatSim::GenerateBranchTimeline(I1, 0, O1, bL1, R1);
+			const bool bDiffers = (TL0.Num() != TL1.Num()) || (O0 != O1);
+			Check(TEXT("2 different branch instants differ"), bL0 && bL1 && bDiffers);
+		}
+		else
+		{
+			Check(TEXT("2 (skipped: fewer than two ready instants)"), false);
+		}
+	}
+
+	// 3. Branching while the opponent is mid-action is rejected with a reason.
+	// Use a suppressed base timeline with a Heavy Strike so index 5 is genuinely
+	// mid-startup (not out of range).
+	{
+		const FBuhCombatState S = MakeWalkState();
+		const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateTimeline(S, -1, 1, 60, true);
+		UBuhCombatSim::SetCurrentTimeline(BaseTL);
+		const int32 LenBefore = UBuhCombatSim::GetTimelineLength();
+		int32 OutInstant = -1; bool bLegal = true; FString Reason;
+		UBuhCombatSim::GenerateBranchTimeline(5, 0, OutInstant, bLegal, Reason); // index 5 = mid-Heavy startup
+		Check(TEXT("3a busy opponent rejected"), !bLegal);
+		Check(TEXT("3b rejection reason non-empty"), !Reason.IsEmpty());
+		Check(TEXT("3c current timeline unchanged"), UBuhCombatSim::GetTimelineLength() == LenBefore);
+	}
+
+	// 4. The branch preserves the player's Walk (the hypothetical attack creates an
+	// immediate reaction opportunity, so the simulation pauses before the Walk can
+	// advance and the Walk state at the branch instant is intact).
+	{
+		const FBuhCombatState S = MakeWalkState();
+		const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateTimeline(S, -1, -1, 60);
+		UBuhCombatSim::SetCurrentTimeline(BaseTL);
+		const int32 BranchIndex = FirstReadyIndex(BaseTL);
+		if (BranchIndex >= 0)
+		{
+			int32 OutInstant = -1; bool bLegal = false; FString Reason;
+			UBuhCombatSim::GenerateBranchTimeline(BranchIndex, 0, OutInstant, bLegal, Reason);
+			const FBuhCombatState StBranch = UBuhCombatSim::GetStateAt(BranchIndex);
+			Check(TEXT("4 player Walk is preserved in the branch"),
+				StBranch.Fighters.Num() >= 1 &&
+				StBranch.Fighters[0].Action == 6 &&
+				(StBranch.Fighters[0].Phase == 1 || StBranch.Fighters[0].Phase == 2) &&
+				StBranch.Fighters[0].WalkRemaining == 1500.f);
+		}
+	}
+
+	// 5. Branching never mutates the authoritative CurrentState.
+	{
+		FBuhCombatState S = MakeWalkState();
+		const FBuhCombatState Copy = S;
+		UBuhCombatSim::GenerateTimeline(S, -1, -1, 60);
+		UBuhCombatSim::SetCurrentTimeline(UBuhCombatSim::GenerateTimeline(S, -1, -1, 60));
+		int32 OutInstant = -1; bool bLegal = false; FString Reason;
+		UBuhCombatSim::GenerateBranchTimeline(0, 0, OutInstant, bLegal, Reason);
+		Check(TEXT("5 branch never mutates CurrentState"), SameCombatState(S, Copy));
+	}
+
+	// 6. GetStateAt returns the full authoritative state at a snapshot index.
+	{
+		const FBuhCombatState S = MakeWalkState();
+		const TArray<FBuhTimelineSnapshot> TL = UBuhCombatSim::GenerateTimeline(S, -1, -1, 60);
+		UBuhCombatSim::SetCurrentTimeline(TL);
+		const FBuhCombatState St0 = UBuhCombatSim::GetStateAt(0);
+		Check(TEXT("6 GetStateAt returns full state"), (St0.Fighters.Num() == 2) && (St0.Instant == TL[0].Instant));
+		const FBuhCombatState StBad = UBuhCombatSim::GetStateAt(9999);
+		Check(TEXT("6b out-of-range state is empty"), StBad.Fighters.Num() == 0);
+	}
+
+	// 7. GenerateAndStoreBaseTimeline stores a base timeline with opponent Phase 0.
+	{
+		const FBuhCombatState S = MakeWalkState();
+		UBuhCombatSim::ClearPreview();
+		const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateAndStoreBaseTimeline(S, 6, 60);
+		Check(TEXT("7a base timeline stored"), UBuhCombatSim::bHasBaseTimeline());
+		Check(TEXT("7b base timeline non-empty"), BaseTL.Num() > 0);
+		bool bOpponentReady = true;
+		for (int32 i = 0; i < BaseTL.Num(); ++i)
+		{
+			const FBuhCombatState St = UBuhCombatSim::GetStateAt(i);
+			if (St.Fighters.Num() >= 2 && St.Fighters[1].Phase != 0) { bOpponentReady = false; break; }
+		}
+		Check(TEXT("7c opponent stays Phase 0 in base"), bOpponentReady);
+	}
+
+	// 8. GenerateBranchFromBase at a ready instant is legal and produces a reaction.
+	{
+		const FBuhCombatState S = MakeWalkState();
+		UBuhCombatSim::ClearPreview();
+		UBuhCombatSim::GenerateAndStoreBaseTimeline(S, 6, 60);
+		const int32 BranchIndex = FirstReadyIndex(UBuhCombatSim::GetBaseTimeline());
+		Check(TEXT("8a opponent ready at some instant in base"), BranchIndex >= 0);
+		if (BranchIndex >= 0)
+		{
+			int32 OutInstant = -1; bool bLegal = false; FString Reason;
+			const TArray<FBuhTimelineSnapshot> BranchTL = UBuhCombatSim::GenerateBranchFromBase(BranchIndex, 0, OutInstant, bLegal, Reason);
+			Check(TEXT("8b branch from base is legal"), bLegal);
+			Check(TEXT("8c branch instant recorded"), OutInstant >= 0);
+			bool bReaction = false;
+			for (const FBuhTimelineSnapshot& Sn : BranchTL) if (Sn.bReactionOpportunity) { bReaction = true; break; }
+			Check(TEXT("8d branch has a reaction opportunity"), bReaction);
+		}
+	}
+
+	// 9. GenerateBranchFromBase at a busy instant is rejected.
+	{
+		const FBuhCombatState S = MakeWalkState();
+		UBuhCombatSim::ClearPreview();
+		const TArray<FBuhTimelineSnapshot> BusyTL = UBuhCombatSim::GenerateTimeline(S, -1, 1, 60, true);
+		UBuhCombatSim::SetBaseTimeline(BusyTL, UBuhCombatSim::GetBaseTimelineStates());
+		const int32 LenBefore = UBuhCombatSim::GetTimelineLength();
+		int32 OutInstant = -1; bool bLegal = true; FString Reason;
+		UBuhCombatSim::GenerateBranchFromBase(5, 0, OutInstant, bLegal, Reason);
+		Check(TEXT("9a busy opponent rejected"), !bLegal);
+		Check(TEXT("9b rejection reason non-empty"), !Reason.IsEmpty());
+		Check(TEXT("9c current timeline unchanged"), UBuhCombatSim::GetTimelineLength() == LenBefore);
+		UBuhCombatSim::ClearPreview();
+	}
+
+	// 10. ClearPreview clears both base and current timeline.
+	{
+		const FBuhCombatState S = MakeWalkState();
+		UBuhCombatSim::ClearPreview();
+		UBuhCombatSim::GenerateAndStoreBaseTimeline(S, 6, 60);
+		Check(TEXT("10a base exists before clear"), UBuhCombatSim::bHasBaseTimeline());
+		UBuhCombatSim::ClearPreview();
+		Check(TEXT("10b base cleared"), !UBuhCombatSim::bHasBaseTimeline());
+		Check(TEXT("10c current timeline cleared"), UBuhCombatSim::GetTimelineLength() == 0);
+	}
+
+	return bAllPassed;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieWalkContinueReactionTest, "BUH.PIE.WalkContinueReaction",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
 

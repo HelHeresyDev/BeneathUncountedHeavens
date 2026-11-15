@@ -211,13 +211,79 @@ public:
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static TArray<FBuhTimelineSnapshot> GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak = false, bool bStopAtDecisionBoundary = false);
+	static TArray<FBuhTimelineSnapshot> GenerateTimeline(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision, int32 MaxInstants, bool bSuppressPlayerReadyBreak = false, bool bStopAtDecisionBoundary = false, bool bOpponentNoAction = false);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetCurrentTimeline(const TArray<FBuhTimelineSnapshot>& InTimeline);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhTimelineSnapshot GetSnapshotAt(int32 Instant);
+
+	// Stage 2: the full authoritative FBuhCombatState stored at snapshot index
+	// (parallel to GetSnapshotAt). Empty state when out of range. Branching at an
+	// Instant resumes combat from this complete state, never from snapshot fields.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState GetStateAt(int32 Index);
+
+	// Stage 2: store a full-state array in parallel with the current timeline.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetCurrentTimelineWithStates(const TArray<FBuhTimelineSnapshot>& InTimeline, const TArray<FBuhCombatState>& InStates);
+
+	// Stage 2: branch the current timeline at snapshot index BranchIndex by having
+	// the opponent begin NewOpponentAction at that Instant. The player continues
+	// their in-progress action (Walk/Dash/Jump). The opponent may only begin a new
+	// action when legally ready (Phase 0); otherwise bLegal=false and OutReason
+	// explains why. Returns the combined timeline (history before the branch + the
+	// branch from that Instant on), which is also installed as the current timeline
+	// with its full states. OutBranchInstant is the Instant the branch begins at.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static TArray<FBuhTimelineSnapshot> GenerateBranchTimeline(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason);
+
+	// Stage 2: the Instant at which the current timeline branched (-1 = no branch).
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 GetBranchInstant();
+
+	// Stage 2: store the "no opponent action" base timeline separately from the
+	// current (possibly branched) timeline so repeated opponent-action branches
+	// always start from the same legal base.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void SetBaseTimeline(const TArray<FBuhTimelineSnapshot>& InTimeline, const TArray<FBuhCombatState>& InStates);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void ClearBaseTimeline();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static bool bHasBaseTimeline();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 GetBaseTimelineLength();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static TArray<FBuhTimelineSnapshot> GetBaseTimeline();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static TArray<FBuhCombatState> GetBaseTimelineStates();
+
+	// Stage 2: restore the current timeline to the stored base (clears the branch).
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void RestoreBaseTimeline();
+
+	// Stage 2: generate the base "no opponent action" timeline for the given state
+	// and player move, store it as the base, and install it as the current timeline.
+	// Returns the base snapshots.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static TArray<FBuhTimelineSnapshot> GenerateAndStoreBaseTimeline(const FBuhCombatState& InState, int32 PlayerMove, int32 MaxInstants);
+
+	// Stage 2: branch the stored base timeline at snapshot index BranchIndex by
+	// having the opponent begin NewOpponentAction at that Instant. Unlike
+	// GenerateBranchTimeline, this always branches from the base, never from a
+	// previous branch continuation. Installs the combined result as current.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static TArray<FBuhTimelineSnapshot> GenerateBranchFromBase(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason);
+
+	// Stage 2: clear both the base and the current preview timeline.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static void ClearPreview();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetTimelineLength();

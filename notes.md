@@ -1232,3 +1232,19 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Cleanup:** the temporary `BUH.Scrub` diagnostic logging added to `UBuhCombatSim::MoveGhostsToInstant` during the earlier "scrubbing broken" investigation was removed and C++ recompiled clean — scrubbing was never actually broken; the slider range is updated at runtime by `RegeneratePredictionPreview` (`SetMaxValue`/`SetValue` to the final Instant index), so the design-time `MaxValue:30` is not the runtime range.
 
 **Status:** Stage 1 verified and committed. Scrubbing a Walk prediction moves the cyan ghost through every simulated position, updates the Instant/phase/coordinate readout, supports backward scrubbing, and leaves the real fighter stationary. Stage 2 (hypothetical opponent branches at a chosen Instant) is the next task.
+
+### 9.54 One-snapshot hypothetical timeline — unconditional base regeneration (RESOLVED — committed)
+
+**Problem:** During a reaction (State=1), selecting a hypothetical opponent move produced a one-snapshot timeline ("Instant 0 / 1") with the slider thumb stuck mid-track. The baseline Walk history was lost.
+
+**Cause:** `RegeneratePredictionPreview` called `GenerateAndStoreBaseTimeline` unconditionally on every invocation. During a reaction, the base was regenerated from the current non-planning combat state, producing a one-snapshot base. Branching at Instant 0 of that base yielded a one-snapshot combined timeline. Additionally, `GetBaseTimelineLength` was called before the generation, so the slider max was set to the stale/zero length.
+
+**Fix:** Rewrote `RegeneratePredictionPreview` DSL in `WBP_CombatUI`:
+- Only call `GenerateAndStoreBaseTimeline` when `GetBaseTimelineLength == 0` (no base exists yet).
+- Call `GetBaseTimelineLength` after the conditional generation.
+- Set slider max to the base length, then branch if a hypothetical opponent move is selected and the opponent snapshot phase is 0.
+- Finally set slider max/value to the final `GetTimelineLength` and `ClampInstantFromFloat`.
+
+**Verified:** Blueprint compiled, asset saved, all 25 BUH automation tests pass (0 failures). DSL read-back confirms the conditional generation and correct slider max ordering.
+
+**Lesson:** A preview-regeneration function must not unconditionally rebuild its baseline. If a base timeline already exists, preserve it and branch from it. Only generate a new base when none exists. Always compute the slider max after any conditional generation that may change the timeline length.
