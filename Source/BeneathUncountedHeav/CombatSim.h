@@ -287,6 +287,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static TArray<FBuhTimelineSnapshot> GenerateAndStoreReactionPreview(const FBuhCombatState& InState, int32 PlayerDecision, int32 MaxInstants);
 
+	// Reaction preview from manager: reads CurrentState directly from the
+	// CombatManager actor via property reflection, then generates and stores
+	// the reaction preview timeline. Returns the snapshot count.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static int32 GenerateReactionPreviewFromManager(UObject* CombatManager, int32 PlayerDecision, int32 MaxInstants);
+
 	// Stage 2: clear both the base and the current preview timeline.
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void ClearPreview();

@@ -2192,7 +2192,24 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreReactionPreview(cons
 	TArray<FBuhCombatState> States = GCurrentTimelineStates;
 	SetCurrentTimelineWithStates(Snaps, States);
 	GBranchInstant = -1;
+	UE_LOG(LogTemp, Warning, TEXT("ReactionPreview: generated %d snapshots, bHasTimeline=%d"), Snaps.Num(), bHasTimeline() ? 1 : 0);
 	return Snaps;
+}
+
+int32 UBuhCombatSim::GenerateReactionPreviewFromManager(UObject* CombatManager, int32 PlayerDecision, int32 MaxInstants)
+{
+	if (!CombatManager) return 0;
+	FBuhCombatState State;
+	UClass* Class = CombatManager->GetClass();
+	FStructProperty* StateProp = FindFProperty<FStructProperty>(Class, TEXT("CurrentState"));
+	if (!StateProp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ReactionPreviewFromManager: CurrentState property not found on %s"), *Class->GetName());
+		return 0;
+	}
+	FMemory::Memcpy(&State, StateProp->ContainerPtrToValuePtr<void>(CombatManager), StateProp->GetSize());
+	TArray<FBuhTimelineSnapshot> Snaps = GenerateAndStoreReactionPreview(State, PlayerDecision, MaxInstants);
+	return Snaps.Num();
 }
 
 TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchFromBase(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason)

@@ -1285,3 +1285,20 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Verified:** Blueprint compiled and saved. All 25 BUH automation tests pass (0 failures).
 
 **Lesson:** Always verify state enum values against the actual `ExecuteMove` graph before writing conditional branches. When reconstructing combat state from individual getters, preserve all fighter fields that affect simulation (Action, Phase, PhaseInstants, PendingAction, WalkTarget), not just positions and phases. Bind manager values to local DSL variables before using them in nested calls to avoid pin-type conflicts.
+
+### 9.57 Reaction preview now reads authoritative CurrentState via property reflection (RESOLVED — committed)
+
+**Problem:** ChatGPT review of commit `13dc5c0` identified that the reconstructed state still loses Walk destination, opponent `bCommitted`, `ReactedThreatFighter`, and Dash/Jump trajectory info. Also, the Continue handler called `RefreshUI` before `RegeneratePredictionPreview`, so the UI could display "No preview" before the timeline existed.
+
+**Cause:** `MakeStateWithPhases` reconstructs state from individual getters and cannot carry all fighter fields. The UI update order was wrong.
+
+**Fix:**
+1. Added `GenerateReactionPreviewFromManager(UObject* CombatManager, int32 PlayerDecision, int32 MaxInstants)` UFUNCTION in `CombatSim.h/.cpp`. It reads `CurrentState` directly from the manager via `FStructProperty` + `FMemory::Memcpy`, then calls `GenerateAndStoreReactionPreview`. Returns snapshot count.
+2. Added instrumentation log to `GenerateAndStoreReactionPreview`: `UE_LOG(LogTemp, Warning, TEXT("ReactionPreview: generated %d snapshots, bHasTimeline=%d"), ...)`.
+3. Rewrote `RegeneratePredictionPreview` DSL reaction branch to call `GenerateReactionPreviewFromManager _manager _playermove 30` instead of `MakeStateWithPhases` + `GenerateAndStoreReactionPreview`.
+4. Changed Continue handler order: `SetPlayerMove 7` → `RegeneratePredictionPreview` → `RefreshUI` (preview generated before UI refresh).
+5. C++ editor target rebuilt successfully.
+
+**Verified:** Blueprint compiled and saved. All 25 BUH automation tests pass (0 failures).
+
+**Lesson:** When a Blueprint actor holds a struct that the C++ simulation needs, read it via property reflection (`FindFProperty<FStructProperty>` + `FMemory::Memcpy`) rather than reconstructing from individual getters. This preserves all fields including those not exposed as Blueprint getters. Always generate dependent data (preview timeline) before updating UI that displays it.
