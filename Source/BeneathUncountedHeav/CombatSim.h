@@ -281,6 +281,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static TArray<FBuhTimelineSnapshot> GenerateBranchFromBase(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason);
 
+	// Reaction preview: generate a timeline from the frozen CurrentState with
+	// the player's reaction decision and no new opponent action. Installs the
+	// result as the current preview timeline (does not touch the base timeline).
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static TArray<FBuhTimelineSnapshot> GenerateAndStoreReactionPreview(const FBuhCombatState& InState, int32 PlayerDecision, int32 MaxInstants);
+
 	// Stage 2: clear both the base and the current preview timeline.
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void ClearPreview();

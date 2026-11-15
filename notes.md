@@ -1248,3 +1248,21 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Verified:** Blueprint compiled, asset saved, all 25 BUH automation tests pass (0 failures). DSL read-back confirms the conditional generation and correct slider max ordering.
 
 **Lesson:** A preview-regeneration function must not unconditionally rebuild its baseline. If a base timeline already exists, preserve it and branch from it. Only generate a new base when none exists. Always compute the slider max after any conditional generation that may change the timeline length.
+
+### 9.55 Continue during reaction shows "No preview" — missing RegeneratePredictionPreview call (RESOLVED — committed)
+
+**Problem:** During a reaction to Heavy, selecting Continue showed "No preview" in both the timeline and opponent prediction panels, despite the remaining movement path being visible.
+
+**Cause:** `OnClicked(BtnContinueWalk)` in `WBP_CombatUI:EventGraph` only called `SetPlayerMove 7` and `RefreshUI`. It never called `RegeneratePredictionPreview`, so no reaction preview timeline was generated. The `RegeneratePredictionPreview` graph itself also lacked a reaction-state branch — it only handled planning (State=0) with hypothetical opponent moves.
+
+**Fix:**
+1. Added `GenerateAndStoreReactionPreview` UFUNCTION to `CombatSim.h/.cpp`. It calls `GenerateTimeline(InState, PlayerDecision, -1, MaxInstants, true, false, true)` with `OpponentDecision=-1` (no new opponent action), stores the result via `SetCurrentTimelineWithStates`, and sets `GBranchInstant=-1`.
+2. Rewrote `RegeneratePredictionPreview` DSL in `WBP_CombatUI` to branch on `(Class|BPCombatManager|GetState _manager)`:
+   - State 0 (Planning): generate base timeline if empty; branch from base only when `HypotheticalOpponentMove >= 0` and opponent snapshot phase is 0.
+   - State 1 (Reaction): build state via `CombatSim|MakeStateWithPhases` from manager getters, then call `GenerateAndStoreReactionPreview` with the player's current move and `MaxInstants=30`.
+   - Finally set slider max/value from `GetTimelineLength` and `ClampInstantFromFloat`, and write snapshot info text.
+3. Updated `OnClicked(BtnContinueWalk)` in `EventGraph` to call `RegeneratePredictionPreview` after `RefreshUI`.
+
+**Verified:** C++ editor target built successfully. Blueprint compiled and saved. All 25 BUH automation tests pass (0 failures), including `BUH.PIE.WalkContinueReaction`.
+
+**Lesson:** A button handler that changes player state must also trigger any dependent preview regeneration. `RefreshUI` updates text/visibility but does not regenerate the preview timeline. The `RegeneratePredictionPreview` function must handle both planning (State=0) and reaction (State=1) states, using `MakeStateWithPhases` to reconstruct the frozen combat state from manager getters when no `GetCurrentState` getter is available in the DSL.

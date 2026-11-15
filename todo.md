@@ -1,119 +1,155 @@
-# BUH — Fix Hypothetical Timeline Branching and One-Snapshot Preview
+# BUH — Reaction Preview Is Empty Despite Continue Being Selected (RESOLVED)
 
-**Status: Fixed and verified.** All 25 BUH tests pass.
+The user tested commit `4839cc0` in graphical PIE.
 
-## Root Cause
+The screenshot shows:
+- State: Reaction opportunity.
+- Observed opponent attack: Heavy.
+- Continue button visible.
+- Player selection: Continue.
+- Remaining movement path visible.
+- Timeline: "No preview".
+- Opponent prediction panel: "No preview".
 
-`RegeneratePredictionPreview` called `GenerateAndStoreBaseTimeline` unconditionally on every invocation, overwriting the stored base timeline. During a reaction (State=1), the base was regenerated from the current non-planning combat state, producing a one-snapshot base. Branching at Instant 0 of that base yielded a one-snapshot combined timeline. Additionally, `GetBaseTimelineLength` was called before the generation, so the slider max was set to the stale/zero length.
+The user wants to scrub through the remaining movement and see what happens if they Continue against the already-observed Heavy.
 
-## Fix Applied
+**Do not implement more branching features until this works.**
 
-Rewrote `RegeneratePredictionPreview` DSL in `WBP_CombatUI`:
-- Only call `GenerateAndStoreBaseTimeline` when `GetBaseTimelineLength == 0` (no base exists yet).
-- Call `GetBaseTimelineLength` after the conditional generation.
-- Set slider max to the base length, then branch if a hypothetical opponent move is selected and the opponent snapshot phase is 0.
-- Finally set slider max/value to the final `GetTimelineLength` and `ClampInstantFromFloat`.
+## 1. Trace exactly why "No preview" appears
 
-The baseline Walk history is preserved across hypothetical branch selections.
+Inspect the actual SAVED Blueprint graphs, particularly:
 
-## 1. Diagnose the one-snapshot timeline
+- WBP_CombatUI Continue.OnClicked
+- WBP_CombatUI.RefreshUI
+- WBP_CombatUI.RegeneratePredictionPreview
+- WBP_CombatUI.ScrubTimeline
+- BP_CombatManager.GeneratePreviewTimeline
+- BP_CombatManager.GenerateAndStoreBaseTimeline
+- Any ClearPreview and SetCurrentTimeline calls
 
-Trace the exact sequence that generated it.
+During the exact sequence:
 
-Log:
-- Authoritative combat state and current Instant.
-- Selected preview branch Instant.
-- Player's active action and phase.
-- Opponent's active action and phase.
-- Hypothetical opponent action.
-- Whether the opponent is legally able to start it.
-- Generated prefix snapshot count.
-- Generated branch snapshot count.
-- First reaction Instant.
-- StoppedReason.
-- Final merged preview length.
+Walk → Execute → reaction to Heavy → select Continue
 
-A hypothetical attack that creates an immediate reaction may legitimately produce only one branch snapshot.
+Record:
 
-However, branching at Instant 6 must not discard the six earlier Instants of movement history.
+- Manager.State
+- Manager.CurrentState.Fighters[0].Action/Phase/PhaseInstants
+- Manager.CurrentState.Fighters[1].Action/Phase/PhaseInstants
+- Manager.PlayerMove
+- Selected hypothetical opponent action
+- GetBaseTimelineLength()
+- GetTimelineLength()
+- bHasTimeline()
+- Whether GenerateAndStoreBaseTimeline executes
+- Whether it returns snapshots
+- Whether ClearPreview or another function subsequently erases them
 
-## 2. Separate the baseline timeline from the branch
+Identify the exact function that prevents the preview from existing.
 
-The intended workflow is:
+Do not infer success from passing C++ tests.
 
-1. Select Walk and a destination.
-2. Generate a baseline timeline with no hypothetical opponent attack.
-3. Scrub through the Walk's actual simulated positions.
-4. Stop at an Instant, such as Instant 6.
-5. Select hypothetical opponent Heavy.
-6. Preserve the preview history leading up to Instant 6.
-7. Start Heavy only if the opponent is legally ready.
-8. Simulate forward to the next reaction or decision boundary.
+## 2. Correct the planning/reaction distinction
 
-Do not automatically replace the whole timeline with a fresh simulation beginning at Instant 0.
+**Planning state**
 
-Preserve the original combat state at every branch point through deterministic replay or complete simulated state checkpoints. Do not reconstruct authoritative internal state from display-only snapshot fields.
+- The player selects Walk, Dash, or Jump.
+- Generate a baseline timeline.
+- The player can scrub through their movement.
+- Hypothetical opponent actions may be introduced at legal future Instants.
 
-## 3. Handle existing reaction states correctly
+**Reaction state**
 
-This screenshot was captured during an actual reaction to Heavy.
+- The actual opponent has already committed to an observed action.
+- The player chooses a legal response, including Continue.
+- Generate the prediction from the authoritative frozen CurrentState.
+- Preserve the opponent's existing action, phase, and preparation progress.
+- Do not introduce a new hypothetical opponent action.
+- Do not restart the opponent's Heavy.
+- Do not reset the player's Walk to its original starting position.
 
-The opponent may already be committed to Heavy. Do not allow a hypothetical Heavy selection to overwrite that commitment unless the combat rules explicitly permit a new action.
+For Continue, pass player decision 7 and no new opponent decision to the existing simulator.
 
-Separate two contexts:
+Confirm that GenerateTimeline can advance this state while respecting the existing ReactedThreatFighter bookkeeping so the same Heavy does not trigger an identical reaction repeatedly.
 
-- Planning: investigate hypothetical future opponent actions.
-- Reaction: investigate legal player responses to an already-observed threat.
+For another legal response, simulate the appropriate replacement action from the same frozen combat state.
 
-At a reaction, preview Continue, Guard, Dodge, Quick, or Heavy as permitted by GetReactionInfo.
+## 3. Generate a reaction preview when a legal response is selected
 
-Do not restart the opponent's already committed attack merely because its hypothetical button was selected.
+Selecting Continue should:
 
-## 4. Fix the slider when timeline length changes
+1. Read a COPY of the authoritative frozen CurrentState.
+2. Generate the hypothetical continuation against the already committed opponent action.
+3. Store a valid nonempty preview timeline and its associated full states.
+4. Configure the slider range from the resulting snapshot count.
+5. Set the slider to a valid initial snapshot index.
+6. Move cyan/orange prediction ghosts to that snapshot.
+7. Display the current Instant and expected action phases.
 
-For N snapshots:
-- Clamp selected index to 0 through N-1.
-- Update the actual TimelineSlider.Value, not merely the displayed Instant text.
-- If N=1, show Instant 0 and disable dragging.
-- If N=0, show No preview.
-- Preserve the selected branch point appropriately when the preview is regenerated.
+It must not require an opponent hypothetical button click.
 
-The slider thumb, displayed Instant, and ghost positions must correspond to the same snapshot.
+Do not allow RegeneratePredictionPreview to clear a valid reaction preview merely because no hypothetical opponent move is selected.
 
-## 5. Verify using a controlled scenario
+Keep the reaction preview separate from the stored baseline used for planning branches.
 
-Start a fresh planning encounter, not an already triggered reaction.
+## 4. Correct empty timeline UI behavior
 
-Select Walk toward a destination.
+If no valid preview exists:
 
-Use a hypothetical opponent who remains idle during the baseline preview.
+- Display "No preview".
+- Disable the slider.
+- Reset its value to zero.
+- Hide prediction ghosts.
 
-Verify:
+When a preview exists:
 
-- Slider moves cyan ghost progressively through Walk.
-- Instant 0 and Instant 6 show different predicted positions.
-- Select hypothetical Heavy at Instant 6.
-- The prefix up to Instant 6 is unchanged.
-- Heavy starts at Instant 6 if legal.
-- Reaction detection uses the existing combat rules.
-- Scrubbing backward still shows the original Walk history.
-- The new branch displays its actual reaction event.
-- Real fighters remain stationary throughout prediction.
+- Enable the slider when more than one snapshot exists.
+- Set its maximum to the last valid snapshot index.
+- Ensure the thumb position, Instant text, and ghost locations match.
+- Scrubbing must not regenerate or clear the preview.
 
-Then separately test an existing real reaction with Continue.
+If simulation legitimately stops immediately, display the actual reaction/stop reason rather than silently presenting an unexplained empty timeline.
 
-## 6. Protect the working movement system
+## 5. Add a real reaction-preview regression test
 
-Do not modify BP_CombatManager.ExecuteMove, Walk/Dash/Jump movement, reaction timing, or Continue playback.
+A direct C++ test that GenerateTimeline works is not sufficient.
 
-Limit changes to hypothetical preview state, branching, timeline selection, and their UI integration.
+Test the actual connected UI/manager pathway:
 
-Add regression tests covering actual branch preservation and legal decision timing, not just GenerateTimeline returning a nonempty array.
+1. Start a valid Walk.
+2. Trigger an actual Heavy reaction.
+3. Verify authoritative CurrentState preserves the active Walk and committed Heavy.
+4. Select Continue in the real WBP_CombatUI instance.
+5. Assert GetTimelineLength() > 1 for a scenario where remaining Walk movement exists.
+6. Assert the selected snapshot's player positions advance.
+7. Assert the opponent's Heavy phase progresses correctly.
+8. Assert scrubbing moves only the prediction ghosts.
+9. Assert the real blue/red fighters and CurrentState remain unchanged.
+10. Click Execute and confirm existing authoritative Continue still works.
 
-Compile, save, read back relevant Blueprints, run all BUH tests, and update notes.md and todo.md.
+If actual UMG clicks cannot be automated, report that limitation clearly and provide diagnostic evidence from a valid PIE-world widget instance.
 
-Commit and push the changes to origin/master.
+Also verify fresh-planning Walk preview still works, including the stored baseline and hypothetical branch behavior.
 
-Report the commit SHA, one-snapshot cause, branching behavior, and any graphical checks requiring user confirmation.
+## 6. Strict scope
 
-**Success: The player can watch a Walk unfold, choose a hypothetical opponent action at a later legal Instant, and inspect the resulting reaction without losing the earlier movement history or altering real combat.**
+Do not modify:
+- Authoritative ExecuteMove.
+- Movement simulation or timing.
+- Walk/Dash/Jump destinations.
+- Jump playback.
+- Reaction detection or legality.
+- Movement path rendering.
+- Timeline widget hierarchy or visual styling.
+
+Fix only the prediction generation and UI state routing needed to make Continue preview work.
+
+Read back the actual saved Blueprint graphs after making changes.
+
+Run all BUH tests.
+
+Update notes.md and todo.md with the real cause and verification evidence.
+
+Commit and push to origin/master.
+
+**Success: At an actual Heavy reaction during Walk, selecting Continue creates a scrubbable preview of the remaining Walk and the opponent's committed Heavy. The real battle remains frozen until Execute is clicked.**
