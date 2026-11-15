@@ -1,78 +1,115 @@
-## **STATUS: All issues fixed and verified**
+## **STATUS: Memcpy crash fixed and verified**
 
-- State ID mismatch: reaction branch now checks `State == 3` (was `State == 1`).
-- Action discard: `MakeStateWithPhases` now accepts and preserves `PlayerAction`/`OpponentAction`.
-- Authoritative state: `GenerateReactionPreviewFromManager` reads `CurrentState` via property reflection, preserving all fighter fields (WalkTarget, bCommitted, ReactedThreatFighter, Dash/Jump trajectory).
-- UI order: Continue handler now generates preview BEFORE `RefreshUI`.
-- Instrumentation: `GenerateAndStoreReactionPreview` logs snapshot count and `bHasTimeline`.
-- All 25 BUH automation tests pass (0 failures).
-- See `notes.md` §9.56 and §9.57 for details.
+- Replaced `FMemory::Memcpy` with `ContainerPtrToValuePtr<FBuhCombatState>` + C++ copy assignment.
+- Added struct type validation (`StaticStruct()`) and fighter count check.
+- C++ editor target rebuilt successfully.
+- All 25 BUH automation tests pass (0 failures). No SIGSEGV in logs.
+- See `notes.md` §9.58 for details.
 
-## **New screenshot: the slider works, but prediction generation is still broken**
+## **I found a serious bug in the latest commit that could explain the crash.**
 
-I checked the newest GitHub commit, `13dc5c0`. Qwen has corrected the two issues I previously identified: the reaction branch now checks state `3`, and `MakeStateWithPhases()` accepts fighter action IDs.
+I checked the newest GitHub commit, `65d353e`, and found a potentially dangerous memory-management error in `CombatSim.cpp`.
 
-However, **the underlying combat-state problem has not been fully fixed**.
-
-The current reaction-preview implementation still reconstructs a new combat state instead of copying the one that actually produced the reaction.
-
-In particular, the reconstructed state still loses:
-
-- The original Walk destination.
-- The opponent's `bCommitted` status.
-- `ReactedThreatFighter`, which prevents repeatedly reacting to the same attack.
-- Other movement-specific state, including Dash and Jump trajectory information.
-
-Adding action IDs does not restore these fields. Even if the timeline begins generating, it cannot reliably predict what Continue will actually do.
-
-## **There's also a UI update-order problem**
-
-The documented `Continue.OnClicked` sequence is currently:
-
-Select Continue
-
-RefreshUI
-
-Generate preview
-
-RefreshUI can display "No preview" before the new timeline exists.
-
-This is a separate possible explanation for stale text.
-
-Importantly, the C++ `GenerateAndStoreReactionPreview()` should produce at least one snapshot whenever it receives a valid two-fighter state and `MaxInstants=30`. Therefore, **the missing movement fields alone do not fully explain why the UI remains empty**.
-
-We need to establish whether the generator is never called, its result is cleared, or the UI simply fails to display the generated data.
-
-## **The repair I recommend**
-
-Rather than extending `MakeStateWithPhases` with more parameters, replace the reconstruction approach.
-
-Create a Blueprint-callable C++ function along these lines:
+The newly added `GenerateReactionPreviewFromManager()` contains:
 
 ```
-GenerateReactionPreviewFromManager(
-    UObject* CombatManager,
-    int32 PlayerDecision,
-    int32 MaxInstants
+FMemory::Memcpy(
+    &State,
+    StateProp->ContainerPtrToValuePtr<void>(CombatManager),
+    StateProp->GetSize()
 );
 ```
 
-The function should read `CurrentState` directly from the manager using Unreal's reflected `FStructProperty`, validate the actual fighter states, and pass a copy to the existing `GenerateAndStoreReactionPreview()`.
+**This is unsafe because&#x20;**`FBuhCombatState`**&#x20;contains a&#x20;**`TArray<FBuhFighterState>`**.**
 
-Then change the Continue handler to generate the preview **before** updating the slider and displayed text.
+`FMemory::Memcpy` copies the array's internal pointer rather than independently copying its elements. The result is two combat-state objects that believe they own the same array allocation.
 
-For the next verification, instrument `GenerateAndStoreReactionPreview`, `ClearPreview`, and `ScrubTimeline` to log the snapshot count and `bHasTimeline`. This will distinguish a generation failure from a subsequent clear or stale UI update.
+When the temporary state is destroyed, it can free memory still referenced by the combat manager. This can cause:
 
-The required flow is:
+- Use-after-free errors.
+- Double-free errors.
+- Memory corruption.
+- Unreal Editor crashes.
 
-**Select Continue**
+### **The required fix**
 
-**Copy authoritative CurrentState**
+Replace the raw memory copy with a proper C++ copy:
 
-**Generate and store reaction timeline**
+```
+const FBuhCombatState* Source =
+    StateProp->ContainerPtrToValuePtr<FBuhCombatState>(
+        CombatManager
+    );
 
-**Configure slider and refresh preview UI**
+FBuhCombatState State = *Source;
+```
 
-I wouldn't change the combat resolver or slider geometry. I also wouldn't accept another "25/25 tests passed" report as proof: the current tests don't verify this complete UI pathway.
+Also validate that `StateProp->Struct == FBuhCombatState::StaticStruct()` before copying.
 
-**Bottom line:** Commit `13dc5c0` fixes the state-ID mistake but retains an incomplete state reconstruction. The next fix should eliminate that reconstruction and verify precisely where the preview data stops reaching the interface.
+This preserves the complete combat state while correctly copying the array's elements.
+
+**Do not run the current reaction-preview code again until that&#x20;**`Memcpy`**&#x20;has been removed.**
+
+### **Exact replacement for the crashing function**
+
+In `Source/BeneathUncountedHeav/CombatSim.cpp`, replace the entire function with:
+
+```
+int32 UBuhCombatSim::GenerateReactionPreviewFromManager(
+    UObject* CombatManager,
+    int32 PlayerDecision,
+    int32 MaxInstants)
+{
+    if (!IsValid(CombatManager))
+        return 0;
+
+    FStructProperty* StateProp =
+        FindFProperty<FStructProperty>(
+            CombatManager->GetClass(),
+            TEXT("CurrentState"));
+
+    if (!StateProp ||
+        StateProp->Struct != FBuhCombatState::StaticStruct())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("ReactionPreview: invalid CurrentState property"));
+        return 0;
+    }
+
+    const FBuhCombatState* Source =
+        StateProp->ContainerPtrToValuePtr<FBuhCombatState>(
+            CombatManager);
+
+    if (!Source || Source->Fighters.Num() < 2)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("ReactionPreview: invalid fighter state"));
+        return 0;
+    }
+
+    const FBuhCombatState StateCopy = *Source;
+
+    return GenerateAndStoreReactionPreview(
+        StateCopy, PlayerDecision, MaxInstants).Num();
+}
+```
+
+This is a focused change. No need to modify the slider or resolver.
+
+### **Check the crash log**
+
+On Ubuntu, run:
+
+```
+PROJECT="$HOME/Documents/Unreal Projects/BeneathUncountedHeav"
+
+grep -iEn \
+'Fatal error|SIGSEGV|double free|corrupt|ReactionPreview' \
+"$PROJECT"/Saved/Logs/*.log | tail -60
+```
+
+After fixing the code, rebuild the Unreal Editor target and restart Unreal completely before testing.
+
+**My assessment:** This is a high-confidence memory-corruption bug introduced in commit `65d353e`, and it is a plausible explanation for the crash. The crash log will help confirm whether it caused this particular failure.
+
+I also checked the test code: none of the existing automated tests directly exercises this new reflection-copy function. That explains how such a serious error could pass the existing test suite.

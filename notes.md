@@ -1301,4 +1301,16 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 
 **Verified:** Blueprint compiled and saved. All 25 BUH automation tests pass (0 failures).
 
-**Lesson:** When a Blueprint actor holds a struct that the C++ simulation needs, read it via property reflection (`FindFProperty<FStructProperty>` + `FMemory::Memcpy`) rather than reconstructing from individual getters. This preserves all fields including those not exposed as Blueprint getters. Always generate dependent data (preview timeline) before updating UI that displays it.
+**Lesson:** When a Blueprint actor holds a struct that the C++ simulation needs, read it via property reflection (`FindFProperty<FStructProperty>` + `ContainerPtrToValuePtr<T>`) rather than reconstructing from individual getters. This preserves all fields including those not exposed as Blueprint getters. Always generate dependent data (preview timeline) before updating UI that displays it. **Never use `FMemory::Memcpy` on structs containing `TArray`** — it copies the internal pointer instead of the array elements, causing use-after-free/double-free crashes. Use `ContainerPtrToValuePtr<T>` + C++ copy assignment instead.
+
+### 9.58 Reaction preview Memcpy crash fixed with proper C++ copy (RESOLVED — committed)
+
+**Problem:** Commit `65d353e` used `FMemory::Memcpy` to copy `FBuhCombatState` from the manager, but the struct contains `TArray<FBuhFighterState>`. Memcpy copies the array's internal pointer, so the temporary and the manager share the same allocation. When the temporary is destroyed, it frees memory still referenced by the manager, causing SIGSEGV.
+
+**Cause:** `FMemory::Memcpy` is a raw byte copy that does not understand C++ object semantics. `TArray` has a heap-allocated buffer pointer that must be deep-copied, not shallow-copied.
+
+**Fix:** Replaced `FMemory::Memcpy` with `ContainerPtrToValuePtr<FBuhCombatState>` + C++ copy assignment (`const FBuhCombatState StateCopy = *Source;`). Added validation: `StateProp->Struct != FBuhCombatState::StaticStruct()` and `Source->Fighters.Num() < 2`.
+
+**Verified:** C++ editor target rebuilt successfully. All 25 BUH automation tests pass (0 failures). No SIGSEGV in logs.
+
+**Lesson:** `FMemory::Memcpy` is only safe for POD types. Any struct containing `TArray`, `TMap`, `FString`, or other heap-allocated members must be copied via C++ assignment or `FMemory::Copy` on the struct type (which invokes the copy constructor). Always validate struct type with `StaticStruct()` before reflection-based copies.

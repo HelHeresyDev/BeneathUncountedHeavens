@@ -2198,18 +2198,21 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreReactionPreview(cons
 
 int32 UBuhCombatSim::GenerateReactionPreviewFromManager(UObject* CombatManager, int32 PlayerDecision, int32 MaxInstants)
 {
-	if (!CombatManager) return 0;
-	FBuhCombatState State;
-	UClass* Class = CombatManager->GetClass();
-	FStructProperty* StateProp = FindFProperty<FStructProperty>(Class, TEXT("CurrentState"));
-	if (!StateProp)
+	if (!IsValid(CombatManager)) return 0;
+	FStructProperty* StateProp = FindFProperty<FStructProperty>(CombatManager->GetClass(), TEXT("CurrentState"));
+	if (!StateProp || StateProp->Struct != FBuhCombatState::StaticStruct())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ReactionPreviewFromManager: CurrentState property not found on %s"), *Class->GetName());
+		UE_LOG(LogTemp, Error, TEXT("ReactionPreview: invalid CurrentState property"));
 		return 0;
 	}
-	FMemory::Memcpy(&State, StateProp->ContainerPtrToValuePtr<void>(CombatManager), StateProp->GetSize());
-	TArray<FBuhTimelineSnapshot> Snaps = GenerateAndStoreReactionPreview(State, PlayerDecision, MaxInstants);
-	return Snaps.Num();
+	const FBuhCombatState* Source = StateProp->ContainerPtrToValuePtr<FBuhCombatState>(CombatManager);
+	if (!Source || Source->Fighters.Num() < 2)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ReactionPreview: invalid fighter state"));
+		return 0;
+	}
+	const FBuhCombatState StateCopy = *Source;
+	return GenerateAndStoreReactionPreview(StateCopy, PlayerDecision, MaxInstants).Num();
 }
 
 TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchFromBase(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason)
