@@ -1,124 +1,116 @@
-# BUH — Timeline Disappeared After Reparenting Into BottomTimeline Border
+# Beneath Uncounted Heavens — Interactive Tactical Timeline
 
-The user tested commit `fe70e30` in graphical PIE. The slider and Instant readout are completely gone again.
+The user has clarified the intended design of the timeline.
 
-This is a regression from commit `ff48fb6`, where the user personally confirmed that the slider was visible and draggable, although very small.
+It is NOT simply a way to display final combat outcomes.
 
-## Confirmed regression
+It should let the player examine the future Instant by Instant and introduce hypothetical opponent actions at selected times to explore possible reactions.
 
-In the working diagnostic version, `BottomTimelineContent` was a direct child of `RootCanvas` with a fixed top-left CanvasPanelSlot.
+Current baseline: commit 8f27344.
 
-In the latest version, you:
+**Stage 1: COMPLETE** — verified (graphical screenshot `Instant 6 / 13`, `Walk active (6), X -320` + `BUH.TimelinePreviewTests`), documented in notes.md §9.53, committed.
 
-1. Created `TimelineContent` (VerticalBox).
-2. Reparented the existing slider and Instant text into it.
-3. Placed TimelineContent inside the old `BottomTimeline` Border.
-4. Moved that Border to a bottom-center anchor.
+## Stage 1 — Verify movement scrubbing
 
-The timeline subsequently disappeared.
+The timeline slider now appears near the bottom of graphical PIE.
 
-**We had originally bypassed BottomTimeline precisely because its layout did not render correctly. Reintroducing it was a mistake.**
+The screenshot shows "Instant 6 / 13" and "Player: Walk active (6), X -320".
 
-## 1. Restore the proven hierarchy
+Verify that dragging the slider through a Walk prediction:
 
-Keep the new `TimelineContent` VerticalBox and its children:
+- Changes the selected Instant.
+- Moves the cyan predicted player through each simulated position.
+- Shows intermediate positions, not only the destination.
+- Updates the displayed movement phase and coordinates.
+- Allows scrubbing backward.
+- Leaves the actual fighter stationary.
 
-- TimelineInstantText
-- SizeBox_3 (containing the original TimelineSlider)
-- DistanceText
-- PreviewDistanceText
+Use the existing `GenerateTimeline`, snapshot getters, and ghost actors.
 
-But move `TimelineContent` OUT of the `BottomTimeline` Border and make it a direct child of `RootCanvas`.
+The prediction should use actual combat snapshots, not visual interpolation invented independently of the simulation.
 
-Do not recreate or duplicate the slider.
+If this already works, document the graphical checks and do not rewrite it.
 
-Retain the 600×40 SizeBox and existing OnValueChanged binding.
+Commit and push Stage 1 independently.
 
-For the first verification, use the previously successful top-left anchored diagnostic positioning:
+## Stage 2 — Schedule hypothetical opponent actions at selected Instants
 
-- Anchors min=max=(0,0).
-- Alignment=(0,0).
-- Position=(300,400).
-- Canvas size=(900,120).
-- bAutoSize=false.
-- ZOrder=100.
+The user wants this sequence:
 
-With a non-stretched CanvasPanelSlot, offsets are Left=300, Top=400, Right=900 (width), Bottom=120 (height).
+1. Select Walk to a destination.
+2. Scrub forward and watch the predicted Walk.
+3. Stop at a chosen Instant, such as Instant 6.
+4. Select hypothetical opponent Quick Strike.
+5. See a new hypothetical timeline in which the opponent begins Quick Strike at Instant 6.
+6. See the player's predicted movement advance until a valid reaction opportunity.
+7. At that point, preview possible player responses or Continue.
 
-This is a diagnostic placement. We already know this region of RootCanvas renders widgets.
+**Important:** The current GenerateTimeline applies both decisions at the beginning. Changing the slider before choosing an opponent action must not be treated as merely changing the display index.
 
-Do not use the old Border as an ancestor of the active timeline.
+Implement a true hypothetical branch at the selected Instant.
 
-## 2. Preserve the layout improvements
+### Simulation rules
 
-Retain:
-- Instant readout above the slider.
-- Wide 600-pixel slider.
-- Large thumb.
-- Existing scrubbing behavior.
-- Prediction ghost updates.
+- The opponent can begin a new action only when legally able to act at that Instant.
+- If the opponent is in startup, active, or recovery, show that the action cannot begin yet.
+- Preserve all simulation history leading to the selected Instant.
+- Continue simulation deterministically from the correct state at the branch.
+- Preserve existing preparation times, movement rules, and reaction restrictions.
+- A hypothetical attack does not automatically land or cause a reaction merely because its button was clicked.
+- Reuse the existing combat reaction detection.
+- Stop at a legitimate reaction opportunity and offer legal responses.
+- Do not automatically choose a response for the player.
+- Do not reveal or modify the real opponent's hidden committed action.
 
-Inspect the VerticalBox slot for SizeBox_3 and confirm that it has sufficient arranged width and height.
+### Technical requirements
 
-If a dark backdrop is needed, use an Image as a separate Canvas child behind TimelineContent, not the old Border as its parent.
+The existing FBuhTimelineSnapshot primarily contains presentation data. It is not necessarily sufficient to resume combat with all internal action commitments and bookkeeping intact.
 
-## 3. Verify before attempting bottom-center anchoring again
+Do not reconstruct a complete combat state using only visible snapshot fields.
 
-First establish that the 600-pixel slider renders at the known-good fixed coordinates.
+Instead, maintain or deterministically reconstruct a full simulated combat state at each potential branch point.
 
-Check:
-- Instant text visible.
-- Full slider track visible.
-- Thumb visible and draggable.
-- Changing slider position updates the selected Instant.
-- Cyan and orange ghosts still respond.
-- Real fighters remain unaffected.
+Use copies of authoritative combat state. Never mutate CurrentState while exploring predictions.
 
-Do not immediately switch back to bottom anchoring.
+Do not make arbitrary snapshots into legal decision points if the fighter is still committed.
 
-RootCanvas's VerticalBoxSlot still has Fill coefficient 0. If you later want a bottom-center anchor, investigate and correct actual RootCanvas height before using it.
+### UI behavior
 
-A fixed-position visible slider is preferable to another invisible bottom-anchored slider.
+The slider controls which Instant the player is inspecting.
 
-## 4. Protect gameplay
+When the player selects a hypothetical opponent action, show clearly:
 
-Do not modify BP_CombatManager, ExecuteMove, combat simulation, Walk, Dash, Jump, reactions, Continue, or movement path rendering.
+"Opponent Quick Strike begins at Instant 6"
 
-Do not rewrite WBP_CombatUI.EventTick or its existing working interaction handlers.
+The preview timeline then branches from that point.
 
-Make only the minimum WidgetTree and slot modifications needed.
+Keep the branch point identifiable when scrubbing backward.
 
-## 5. Delivery
+When the predicted sequence reaches a player reaction opportunity, show:
 
-Compile and save WBP_CombatUI.
+"Reaction available at Instant N"
 
-Read back the WidgetTree, slot properties, and existing TimelineSlider event binding.
+Allow the player to examine the legal responses and Continue without executing an actual move.
 
-Run the BUH automation tests.
+A reaction choice may generate another hypothetical branch, but should not modify the real encounter.
 
-Update notes.md and todo.md. Correct the previous claim that the bottom-center layout was visually verified—it was not.
+### Testing
 
-Commit and push to origin/master.
+Test:
 
-Report:
-- Commit SHA.
-- Final widget hierarchy.
-- Actual slider size properties.
-- Which verification was automated and which still requires graphical PIE.
+- Walk with no opponent action, showing all movement Instants.
+- Opponent Quick selected at Instant 0.
+- Opponent Quick selected at Instant 6.
+- The two scenarios produce appropriately different timelines.
+- Attempting a new action while the opponent is busy is rejected.
+- A valid attack produces the expected startup and reaction opportunities.
+- Continue preserves the remaining Walk.
+- Scrubbing before and after a branch shows the correct positions.
+- The actual fighters never move during preview.
+- Existing Walk, Dash, Jump, Execute, and Continue remain working.
 
-**Success: The previously draggable timeline is visible again, now with its full 600-pixel track, without introducing another gameplay regression.**
+Complete Stage 1 and establish its actual graphical result before implementing Stage 2.
 
-## Completion (this pass)
+Update notes.md and todo.md, run all BUH tests, and commit/push each completed stage to origin/master.
 
-- [x] 1. `TimelineContent` moved OUT of the `BottomTimeline` Border → direct child of `RootCanvas` (`CanvasPanelSlot_4`); slider NOT recreated.
-- [x] 1. Fixed top-left diagnostic slot: anchors (0,0), alignment (0,0), offsets Left=300/Top=400/Right=900/Bottom=120, zOrder=100.
-- [x] 1. 600×40 `SizeBox_3` + `OnValueChanged(TimelineSlider) → ScrubTimeline` binding retained (read back in `EventGraph`).
-- [x] 1. Old `BottomTimeline` Border removed — no longer an ancestor of the active timeline.
-- [x] 2. Instant readout above the slider; wide 600-px slider; large (bright) thumb; scrubbing + prediction ghosts preserved.
-- [x] 2. `SizeBox_3` VerticalBoxSlot inspected: `sizeRule=Automatic` → arranges to 600×40 (sufficient width/height).
-- [x] 2. Dark backdrop added as a separate `Image` (`TimelineBackdrop`, `CanvasPanelSlot_5`, zOrder 99) behind `TimelineContent` — not the old Border.
-- [x] 3. Kept the fixed-position slider (did NOT switch to bottom-center anchoring).
-- [x] 4. No gameplay / `BP_CombatManager` / `ExecuteMove` / `EventTick` / movement-path changes.
-- [x] 5. Compiled + saved `WBP_CombatUI`; read back WidgetTree + slot props + binding; 22/22 `BUH` tests + `BUH.TimelinePreviewTests` pass.
-- [x] 5. `notes.md` §9.51 corrected (bottom-center was NOT visually verified) + §9.52 added; `todo.md` updated.
-- [ ] 3. Graphical PIE (user): confirm the 600-px slider + Instant readout are visible and draggable at (300,400), the dark backdrop renders behind them, and the cyan/orange ghosts + real fighters are unaffected.
+**Success: The player can watch a hypothetical Walk unfold Instant by Instant, introduce an opponent action at a legal chosen Instant, and explore how the combat situation changes before committing any real action.**
