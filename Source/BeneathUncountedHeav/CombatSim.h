@@ -138,6 +138,9 @@ public:
 	static FBuhCombatState WithPlayerWalkTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhCombatState WithPlayerWalkTargetFromPreview(const FBuhCombatState& InState);
+
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhCombatState WithPlayerDashTarget(const FBuhCombatState& InState, float TargetX, float TargetY = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
@@ -388,6 +391,24 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static void SetPreviewJumpTarget(float TargetX, float TargetY = 0.f);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetPreviewWalkTarget();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetPreviewWalkTargetY();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetPreviewDashTarget();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetPreviewDashTargetY();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetPreviewJumpTarget();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static float GetPreviewJumpTargetY();
 
 	static float GPlayerWalkTarget;
 	static float GPlayerWalkTargetY;

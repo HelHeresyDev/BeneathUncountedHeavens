@@ -124,6 +124,15 @@ FBuhCombatState UBuhCombatSim::WithPlayerWalkTarget(const FBuhCombatState& InSta
 	return S;
 }
 
+FBuhCombatState UBuhCombatSim::WithPlayerWalkTargetFromPreview(const FBuhCombatState& InState)
+{
+	if (GPlayerWalkTarget >= -9998.f)
+	{
+		return WithPlayerWalkTarget(InState, GPlayerWalkTarget, GPlayerWalkTargetY);
+	}
+	return InState;
+}
+
 FBuhCombatState UBuhCombatSim::WithPlayerDashTarget(const FBuhCombatState& InState, float TargetX, float TargetY)
 {
 	FBuhCombatState S = InState;
@@ -2678,6 +2687,13 @@ void UBuhCombatSim::SetPreviewJumpTarget(float TargetX, float TargetY)
 	GPlayerJumpTarget = TargetX;
 	GPlayerJumpTargetY = TargetY;
 }
+
+float UBuhCombatSim::GetPreviewWalkTarget() { return GPlayerWalkTarget; }
+float UBuhCombatSim::GetPreviewWalkTargetY() { return GPlayerWalkTargetY; }
+float UBuhCombatSim::GetPreviewDashTarget() { return GPlayerDashTarget; }
+float UBuhCombatSim::GetPreviewDashTargetY() { return GPlayerDashTargetY; }
+float UBuhCombatSim::GetPreviewJumpTarget() { return GPlayerJumpTarget; }
+float UBuhCombatSim::GetPreviewJumpTargetY() { return GPlayerJumpTargetY; }
 
 float UBuhCombatSim::GExecDashTarget = -9999.f;
 float UBuhCombatSim::GExecDashTargetY = 0.f;
