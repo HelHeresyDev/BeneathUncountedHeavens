@@ -1,65 +1,110 @@
-# BUH — Restore Ordinary Movement Prediction
+# BUH — Hypothetical Attack Does Not Interrupt Walk Preview
 
-The user confirmed that reaction → Continue previews work, but ordinary Walk planning does not visibly show the prediction ghost.
+The user has confirmed that ordinary Walk prediction ghosts now appear, but selecting a hypothetical opponent attack at a chosen Instant does not stop the Walk prediction.
 
-I investigated commit `20cd80e` and found two issues to address.
+I inspected repository commit `efdca6c`.
 
-## 1. Fix planning ghost visibility
+## Findings
 
-In `WBP_CombatUI.RefreshUI`, the existing ghost visibility rule requires:
+`UBuhCombatSim::GenerateBranchFromBase` should already generate a reaction interruption when the opponent starts Quick or Heavy while the player is in a reactable Walk.
 
-`HypotheticalOpponentMove >= 0 OR (State == 3 AND bHasTimeline())`
+`CheckReactionPause` records the reaction, and `GenerateTimeline` stops with `StoppedReason=5`.
 
-This excludes ordinary planning (State 0) with no hypothetical opponent selection.
+However, the branch can fail without replacing the existing timeline, and existing automation tests do not verify the complete Blueprint-to-ghost pathway.
 
-Correct the rule so prediction ghosts are visible whenever there is a valid preview for the currently selected player action, including ordinary Walk, Dash, and Jump in planning state.
+## Investigate first
 
-Do not require a hypothetical opponent action just to display the baseline movement prediction.
+Read the actual saved Blueprint graphs:
 
-Keep ghosts hidden when no valid player action/preview exists, after Reset, and during actual execution.
+- `WBP_CombatUI.EventGraph` — all four hypothetical opponent buttons
+- `WBP_CombatUI.RegeneratePredictionPreview`
+- `WBP_CombatUI.ScrubTimeline`
+- `WBP_CombatUI.RefreshUI`
 
-## 2. Prevent stale planning baselines
+Trace this exact sequence:
 
-Inspect `RegeneratePredictionPreview` and the movement-selection and destination-change handlers.
+1. Start a fresh encounter.
+2. Select Walk and a sufficiently distant destination.
+3. Scrub to Instant 5, while Walk is active.
+4. Select hypothetical Heavy.
+5. Check whether `GenerateBranchFromBase` executes.
 
-The existing `GetBaseTimelineLength == 0` condition only detects a missing baseline, not an outdated one.
+Record:
 
-Ensure a fresh planning baseline is generated when the selected action, destination, or authoritative starting state changes.
+- Selected slider snapshot index
+- Selected hypothetical opponent action
+- Base timeline length
+- Opponent phase at the selected base snapshot
+- Whether the branch is legal
+- `OutReason` on rejection
+- Returned branch timeline length
+- Final snapshot's `StoppedReason`
+- Final installed `GetTimelineLength`
+- Slider maximum after regeneration
 
-Preserve the existing baseline while scrubbing or selecting hypothetical opponent branches. Do not regenerate the timeline simply because the slider moves.
+Determine whether the branch fails, is never called, or is overwritten by a later refresh/regeneration.
 
-## 3. Preserve working functionality
+Do not guess which one is happening.
 
-Do not change:
-- The combat resolver or movement speeds.
-- The reaction → Continue preview.
-- The opponent decision-boundary behavior.
-- The slider geometry or ghost materials.
-- Authoritative combat execution.
+## Required behavior
 
-## 4. Verification
+When the opponent is legally ready and the player is actively Walking:
 
-Test both planning and reaction pathways.
+- Choosing hypothetical Quick or Heavy starts that action at the selected branch point.
+- A valid reaction opportunity interrupts the simulated Walk.
+- The shortened branch replaces the current displayed timeline.
+- Earlier Walk snapshots remain available for scrubbing.
+- The slider cannot move past the reaction boundary.
+- The cyan ghost stops at the predicted reaction position.
+- The real fighter remains stationary.
 
-Planning: select Walk, choose a destination, and scrub the prediction without selecting a hypothetical opponent action. The cyan ghost must move to the predicted intermediate positions.
+If the opponent is not legally ready, reject the hypothetical action and display the actual reason instead of silently retaining the original prediction.
 
-Change the Walk destination and confirm the timeline is rebuilt using the new destination, rather than showing stale snapshots.
+Do not force an interruption when the player has already finished walking or when the movement is not legally reactable.
 
-Confirm equivalent preview visibility for Dash and Jump.
+## Critical verification
 
-Reaction: Walk → Execute → Heavy reaction → Continue must still generate the working preview, stopping at the opponent's next decision boundary.
+Add a regression test using an ordinary planning Walk baseline, not a manually pre-committed Walk fixture.
 
-Read back the actual saved Blueprint graphs, run the BUH automated tests, save the assets, and report what still requires graphical PIE verification.
+Generate the baseline, branch at an active Walk snapshot (for example, index 5), and assert:
 
-Update notes.md and todo.md, then commit and push.
+- `bLegal == true`
+- The last snapshot has `bReactionOpportunity == true`
+- The last snapshot has `StoppedReason == 5`
+- The installed timeline ends at the reaction boundary
+- No original baseline snapshots remain after that boundary
+- The final ghost coordinates match the interrupted Walk position
+- The original stored baseline remains intact for further branching
+- The authoritative combat state is unchanged
 
-## Completion record (headless + automated)
+Then verify the UI path invokes that successful branch, updates the slider range, and scrubs the final installed timeline rather than the old baseline.
 
-- [x] `RefreshUI` ghost visibility now uses `(State == 0 OR State == 3) AND bHasTimeline`, so ordinary Walk/Dash/Jump planning shows ghosts without a hypothetical opponent selection.
-- [x] `RegeneratePredictionPreview` detects stale baselines with a 13-value signature (action, positions, health, seed, PlayerY, Walk/Dash/Jump target X/Y) and regenerates only when it changes or the timeline is empty.
-- [x] `RegeneratePredictionPreview` sets the C++ Walk preview target from manager variables and wraps planning states with `WithPlayerWalk/Dash/JumpTargetFromPreview`.
-- [x] `ClearPendingMovementPreview` calls `CombatSim|ClearPreview` and `SetBasePlayerMove -1` to invalidate the stale-baseline signature.
-- [x] All seven `BP_CombatManager` select functions call `RegeneratePredictionPreview` before `RefreshUI` (Jump via full rewrite; the other six via surgical `create_node`/`connect_pins` insertion because `write_graph_dsl` cannot re-emit `b`-prefixed bool setters).
-- [x] `WBP_CombatUI` and `BP_CombatManager` compiled clean, read back, and saved.
-- [x] All 26 `BUH.*` automation tests pass (0 failures).
-- [ ] Graphical PIE verification: Walk ghost moves to predicted positions, changing the Walk destination rebuilds the timeline, Dash/Jump show equivalent previews, and reaction → Continue still stops at the opponent's decision boundary.
+## Constraints
+
+Preserve:
+- Ordinary Walk/Dash/Jump previews
+- Reaction → Continue previews
+- Opponent decision-boundary stopping
+- Current slider geometry
+- Existing ghost rendering and materials
+- Authoritative combat execution
+
+Make the smallest necessary changes. Do not introduce a new preview architecture.
+
+Build, compile and save modified Blueprints, read back their graphs, run all BUH tests, and update notes.md and todo.md.
+
+Commit and push the fix.
+
+Report the exact root cause and distinguish automated verification from graphical PIE verification.
+
+## Resolution
+
+**Root cause:** The four hypothetical-opponent button handlers in `WBP_CombatUI:EventGraph` called `RefreshUI` before `RegeneratePredictionPreview`. `RefreshUI` scrubbed the old Walk baseline and left the ghosts/readout showing it; the later `RegeneratePredictionPreview` installed the reaction branch but did not update the UI, so the Walk prediction appeared to continue.
+
+**Fix:** Reordered all four opponent handlers to call `RegeneratePredictionPreview` first and `RefreshUI` second. `WBP_CombatUI` compiled clean and the saved graph was read back to confirm the order.
+
+**Regression test:** Added `BUH.PlanningWalkHypotheticalBranch`, which generates an ordinary planning Walk baseline, branches at Instant 5 with a hypothetical Heavy, and asserts legality, branch instant, shortened timeline, preserved earlier Walk snapshots, reaction opportunity, final `StoppedReason == 5`, and an unchanged authoritative combat state.
+
+**Automated verification:** All 27 `BUH.*` automation tests pass (0 failures), including the new regression test and the existing reaction/decision-boundary suites.
+
+**Graphical PIE verification:** Still pending. The user must confirm in a fresh PIE that selecting Walk, scrubbing to an active Walk instant, then choosing a hypothetical Heavy/Quick stops the Walk ghost at the reaction position, shortens the slider range, and leaves the real fighter stationary.

@@ -561,6 +561,53 @@ bool FBuhReactionDecisionBoundaryTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// Regression: an ordinary planning Walk baseline must branch correctly when the
+// user selects a hypothetical opponent attack at a chosen Instant.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPlanningWalkHypotheticalBranchTest, "BUH.PlanningWalkHypotheticalBranch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhPlanningWalkHypotheticalBranchTest::RunTest(const FString& Parameters)
+{
+	FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	S.Fighters[0].Action = 6;
+	S.Fighters[0].Phase = 1;
+	S.Fighters[0].PhaseInstants = 0;
+	S.Fighters[0].bCommitted = true;
+	S.Fighters[0].WalkTarget = -1000.f;
+	S.Fighters[0].WalkTargetY = 0.f;
+	S.Fighters[0].WalkRemaining = 1500.f;
+
+	UBuhCombatSim::ClearPreview();
+	const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateAndStoreBaseTimeline(S, 6, 30);
+	TestTrue(TEXT("ordinary Walk base timeline stored"), UBuhCombatSim::bHasBaseTimeline() && BaseTL.Num() > 5);
+	if (BaseTL.Num() <= 5) return false;
+
+	const FBuhCombatState St5 = UBuhCombatSim::GetStateAt(5);
+	TestTrue(TEXT("opponent is ready at Instant 5 of the base"), St5.Fighters.Num() >= 2 && St5.Fighters[1].Phase == 0);
+
+	int32 OutInstant = -1; bool bLegal = false; FString Reason;
+	const TArray<FBuhTimelineSnapshot> BranchTL = UBuhCombatSim::GenerateBranchFromBase(5, 1, OutInstant, bLegal, Reason);
+	TestTrue(TEXT("Heavy branch from an ordinary Walk baseline is legal"), bLegal);
+	if (!bLegal)
+	{
+		AddError(FString::Printf(TEXT("GenerateBranchFromBase rejected: %s"), *Reason));
+		return false;
+	}
+	TestEqual(TEXT("branch instant is the chosen Instant"), OutInstant, 5);
+	TestTrue(TEXT("branch timeline is shorter than the base"), BranchTL.Num() < BaseTL.Num());
+	TestTrue(TEXT("branch timeline keeps the earlier Walk snapshots"), BranchTL.Num() >= 6 && BranchTL[0].Instant == 0 && BranchTL[5].Instant == 5);
+
+	bool bReaction = false;
+	for (const FBuhTimelineSnapshot& Sn : BranchTL) if (Sn.bReactionOpportunity) { bReaction = true; break; }
+	TestTrue(TEXT("branch contains the reaction opportunity"), bReaction);
+	TestEqual(TEXT("branch ends at the reaction pause"), BranchTL.Last().StoppedReason, 5);
+	TestTrue(TEXT("installed timeline matches the branch"), UBuhCombatSim::GetTimelineLength() == BranchTL.Num());
+	TestEqual(TEXT("branch instant recorded"), UBuhCombatSim::GetBranchInstant(), 5);
+
+	UBuhCombatSim::ClearPreview();
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieWalkContinueReactionTest, "BUH.PIE.WalkContinueReaction",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
 
