@@ -2188,7 +2188,7 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreBaseTimeline(const F
 
 TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreReactionPreview(const FBuhCombatState& InState, int32 PlayerDecision, int32 MaxInstants)
 {
-	TArray<FBuhTimelineSnapshot> Snaps = GenerateTimeline(InState, PlayerDecision, -1, MaxInstants, true, false, true);
+	TArray<FBuhTimelineSnapshot> Snaps = GenerateTimeline(InState, PlayerDecision, -1, MaxInstants, true, true, true);
 	TArray<FBuhCombatState> States = GCurrentTimelineStates;
 	SetCurrentTimelineWithStates(Snaps, States);
 	GBranchInstant = -1;

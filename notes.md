@@ -200,8 +200,8 @@ When a function is removed from a Blueprint, stale `CallFunction` nodes referenc
 - LSP false positives persist on automation/combat source files; do not treat them as real errors.
 - The running headless editor does NOT pick up new C++ code until the editor is restarted. After a UBT build, kill and relaunch the headless editor.
 - `CombatSim.h/.cpp` implements the deterministic resolver and the Jump playback system. `CombatSimAutomation.cpp` contains `FBuhCombatSimTest`, `FBuhCombatFlowTest`, and `FBuhWalkPreviewTest`. `CombatManagerIntegrationAutomation.cpp` contains `FBuhCombatManagerIntegrationTest`. `PathRendererAutomation.cpp` contains `BUH.PathRendererTests`, `BUH.DashPathColorTests`, `BUH.DashReactionIntegrationTest`, `BUH.DashGateRegressionTest`, `BUH.DashLifecycleRegressionTest`, `BUH.JumpSimulationTests`, `BUH.JumpPathColorTests`, `BUH.JumpPlaybackIntegrationTests`, and `BUH.PieDashDiagTest`.
-- `TimelinePreviewAutomation.cpp` contains `BUH.TimelinePreviewTests`, `BUH.WalkPreviewTests`, and `BUH.PIE.WalkContinueReaction` (a limitation-reporting test, §9.43).
-- All 24 `BUH.*` automation suites pass.
+- `TimelinePreviewAutomation.cpp` contains `BUH.TimelinePreviewTests`, `BUH.WalkPreviewTests`, `BUH.PIE.WalkContinueReaction`, and `BUH.ReactionDecisionBoundary`.
+- All 26 `BUH.*` automation tests pass.
 
 ---
 
@@ -1326,3 +1326,25 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Verified:** `WBP_CombatUI` compiled clean with the class object path `/Game/BUH/Prototypes/TacticalDuel/Blueprints/WBP_CombatUI.WBP_CombatUI` (the bare package path is rejected by `compile_blueprint`). `read_graph_dsl` read-back confirms the new ghost-visibility condition, the `self` world-context argument, and the `PreviewDistanceText` update. All 25 `BUH` automation tests pass (0 failures). `save_assets` succeeded. **Graphical PIE verification is still pending** — headless `-nullrhi` cannot capture the game view, so the on-screen ghost movement and distance readout must be confirmed by the user's fresh graphical PIE (scrub to Instant 17 and confirm the cyan ghost moves near `(-2, -111)` while the real fighter stays stationary).
 
 **Lesson:** (1) The `write_graph_dsl` literal-bind limitation can be worked around by inlining literals into the consuming node call (`(== _state 3)`, `(>= _x 0)`) instead of `(bind _x 3)`. The writer reuses existing literal nodes with matching values, so old literal binds may remain in the read-back without harm. (2) `self` is a valid DSL expression and is the correct way to pass the owning widget as a `WorldContextObject` to a static C++ function. (3) `compile_blueprint` expects the Blueprint **object** path (`Package.AssetName`), not the bare package path. (4) A visibility rule that couples two unrelated features (ghost display and hypothetical-opponent branching) will silently break when one feature is used without the other; gate each visual element on the state that actually produces its data.
+
+### 9.60 Reaction preview stops at the opponent's decision boundary (RESOLVED — graphical PIE pending)
+
+**Problem:** A Continue reaction preview simulated the full 30-Instant window after the opponent's Heavy finished, leaving the opponent Ready and idle while the player continued walking. This extrapolated unknown opponent behavior and made the prediction misleading.
+
+**Cause:** `GenerateAndStoreReactionPreview` called `GenerateTimeline` with `bStopAtDecisionBoundary=false`. The existing stop condition (`bOpponentReady && bStopAtDecisionBoundary`) was therefore never active for reaction previews.
+
+**Fix:** Changed the single `GenerateTimeline` call in `GenerateAndStoreReactionPreview` from `bStopAtDecisionBoundary=false` to `true`. No other simulation, Blueprint, UI, or authoritative `ExecuteMove` behavior was changed. Planning previews still use `bStopAtDecisionBoundary=false`.
+
+**Regression test:** Added `BUH.ReactionDecisionBoundary` (`FBuhReactionDecisionBoundaryTest`) to `TimelinePreviewAutomation.cpp`. It creates a Walk-versus-Heavy reaction via `ResolveCombat(S, 6, 1, 200)`, copies the paused `FinalState`, calls `GenerateAndStoreReactionPreview(R.FinalState, 7, 30)`, and verifies:
+- the preview is non-empty and ends with `StoppedReason == 2` (`Decision boundary`);
+- the final snapshot has `bOpponentReady == true` and `OpponentPhase == 0`;
+- the preview is shorter than 30 Instants and `GetTimelineLength()` equals the snapshot count;
+- the opponent's Heavy progresses through startup, active-frame resolution, and recovery;
+- no earlier snapshot already has `bOpponentReady` with phase 0;
+- the player's Walk action, Walk target, and `ReactedThreatFighter` are preserved;
+- the authoritative combat state is not mutated;
+- the snapshot array and full-state array remain synchronized.
+
+**Verification:** C++ editor target built successfully. All 26 `BUH.*` automation tests pass (0 failures). No Blueprint assets were modified, so no Blueprint compile/save/read-back was required. Graphical PIE verification of the truncated preview is still pending.
+
+**Lesson:** (1) A Walk toward the negative X axis has a destination that is *less* than the start position, so a progress assertion must use `FMath::Abs(last - start) > 1.f`, not `last > start`. (2) In `GenerateTimeline`, an active frame resolves and immediately moves the attacker to `Phase = 3` within the same snapshot, so a Heavy with Active=1 never produces a snapshot with `OpponentPhase == 2`. Evidence of the active frame must come from the event log on the recovery snapshot (`Fighter == 1`, `OpponentPhase == 3`, `OpponentAction == 1`, event Type 0/1/2/3). (3) A preview that stops at a decision boundary must still preserve all committed actions and reaction bookkeeping from the authoritative state, and it must not mutate that state.

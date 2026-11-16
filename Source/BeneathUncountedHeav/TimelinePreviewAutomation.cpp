@@ -507,6 +507,60 @@ bool FBuhBranchPreviewTest::RunTest(const FString& Parameters)
 	return bAllPassed;
 }
 
+// Regression: a reaction preview must stop when the opponent becomes ready to
+// choose another action, instead of simulating the rest of the window as idle.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhReactionDecisionBoundaryTest, "BUH.ReactionDecisionBoundary",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhReactionDecisionBoundaryTest::RunTest(const FString& Parameters)
+{
+	FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	S = UBuhCombatSim::WithPlayerWalkTarget(S, -1000.f);
+	const FBuhCombatResult R = UBuhCombatSim::ResolveCombat(S, /*PlayerDecision=*/6, /*OpponentDecision=*/1, /*MaxInstants=*/200);
+	if (!TestTrue(TEXT("reaction pause reached"), R.StoppedReason == 5 && R.bReactionOpportunity)) return false;
+
+	const FBuhCombatState Before = R.FinalState;
+	UBuhCombatSim::ClearPreview();
+	const TArray<FBuhTimelineSnapshot> Snaps = UBuhCombatSim::GenerateAndStoreReactionPreview(R.FinalState, /*PlayerDecision=*/7, /*MaxInstants=*/30);
+	TestTrue(TEXT("reaction preview non-empty"), Snaps.Num() > 0);
+	if (Snaps.Num() == 0) return false;
+	TestEqual(TEXT("reaction preview stops at decision boundary"), Snaps.Last().StoppedReason, 2);
+	TestTrue(TEXT("opponent is ready at the stop"), Snaps.Last().bOpponentReady && Snaps.Last().OpponentPhase == 0);
+	TestTrue(TEXT("preview is shorter than the idle window"), Snaps.Num() < 30);
+	TestEqual(TEXT("slider maximum matches snapshot count"), UBuhCombatSim::GetTimelineLength(), Snaps.Num());
+
+	bool bSawStartup = false, bSawHeavyResolution = false, bSawRecovery = false, bEarlierOpponentReady = false;
+	for (int32 i = 0; i < Snaps.Num(); ++i)
+	{
+		if (Snaps[i].OpponentPhase == 1) bSawStartup = true;
+		if (Snaps[i].OpponentPhase == 3 && Snaps[i].OpponentAction == 1)
+		{
+			for (const FBuhCombatEvent& E : Snaps[i].Events)
+			{
+				if (E.Fighter == 1 && (E.Type == 0 || E.Type == 1 || E.Type == 2 || E.Type == 3)) bSawHeavyResolution = true;
+			}
+		}
+		if (Snaps[i].OpponentPhase == 3 && Snaps[i].OpponentAction == 1 && Snaps[i].OpponentPhaseInstants > 0) bSawRecovery = true;
+		if (i < Snaps.Num() - 1 && Snaps[i].bOpponentReady) bEarlierOpponentReady = true;
+	}
+	TestTrue(TEXT("opponent Heavy progressed through startup"), bSawStartup);
+	TestTrue(TEXT("opponent Heavy resolved its active frame"), bSawHeavyResolution);
+	TestTrue(TEXT("opponent Heavy progressed through recovery"), bSawRecovery);
+	TestFalse(TEXT("no opponent-ready snapshot before the boundary"), bEarlierOpponentReady);
+
+	TestTrue(TEXT("player Walk is preserved at the preview start"), R.FinalState.Fighters[0].Action == 6 && Snaps[0].PlayerAction == 6);
+	TestTrue(TEXT("player Walk made progress"), FMath::Abs(Snaps.Last().PlayerX - Before.Fighters[0].X) > 1.f);
+	TestTrue(TEXT("player Walk target preserved"), FMath::Abs(R.FinalState.Fighters[0].WalkTarget - Before.Fighters[0].WalkTarget) < 1.f);
+	TestEqual(TEXT("reaction bookkeeping preserved on the authoritative state"), R.FinalState.Fighters[0].ReactedThreatFighter, Before.Fighters[0].ReactedThreatFighter);
+	TestTrue(TEXT("authoritative state unmutated by previewing"), SameCombatState(Before, R.FinalState));
+
+	const FBuhCombatState LastState = UBuhCombatSim::GetStateAt(Snaps.Num() - 1);
+	const FBuhCombatState PastEndState = UBuhCombatSim::GetStateAt(Snaps.Num());
+	TestTrue(TEXT("full-state array synchronized with snapshots"), LastState.Fighters.Num() == 2 && PastEndState.Fighters.Num() == 0);
+	UBuhCombatSim::ClearPreview();
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieWalkContinueReactionTest, "BUH.PIE.WalkContinueReaction",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
 
