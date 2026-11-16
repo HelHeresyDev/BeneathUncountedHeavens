@@ -2585,9 +2585,9 @@ static FAutoConsoleCommand GBUHRunCombatTestsCmd(
 		UE_LOG(LogTemp, Display, TEXT("=== BUH.RunCombatTests: done, report written to %s ==="), *FilePath);
 	}));
 
-void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
+void UBuhCombatSim::MoveGhostsToInstant(UObject* WorldContextObject, int32 Instant)
 {
-	UWorld* World = GEngine->GetWorldContexts()[0].World();
+	UWorld* World = IsValid(WorldContextObject) ? WorldContextObject->GetWorld() : nullptr;
 	if (!World) return;
 	if (!bHasTimeline()) return;
 	const FBuhTimelineSnapshot Snap = GetSnapshotAt(Instant);
@@ -2616,12 +2616,12 @@ void UBuhCombatSim::MoveGhostsToInstant(int32 Instant)
 	}
 }
 
-int32 UBuhCombatSim::MoveGhostsToFinalInstant()
+int32 UBuhCombatSim::MoveGhostsToFinalInstant(UObject* WorldContextObject)
 {
 	if (!bHasTimeline()) return 0;
 	int32 Len = GetTimelineLength();
 	int32 FinalIdx = FMath::Max(0, Len - 1);
-	MoveGhostsToInstant(FinalIdx);
+	MoveGhostsToInstant(WorldContextObject, FinalIdx);
 	return FinalIdx;
 }
 
@@ -2631,12 +2631,12 @@ int32 UBuhCombatSim::GetFinalInstantIndex()
 	return FMath::Max(0, GetTimelineLength() - 1);
 }
 
-void UBuhCombatSim::SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant)
+void UBuhCombatSim::SetupTimelineAndMoveGhosts(UObject* WorldContextObject, int32 PlayerMove, int32 OpponentMove, int32 Instant)
 {
 	FBuhCombatState State = MakeState(-500.0f, 500.0f, 100.0f, 100.0f, 0);
 	TArray<FBuhTimelineSnapshot> Timeline = GenerateTimeline(State, PlayerMove, OpponentMove, 30);
 	SetCurrentTimeline(Timeline);
-	MoveGhostsToInstant(Instant);
+	MoveGhostsToInstant(WorldContextObject, Instant);
 }
 
 FString UBuhCombatSim::GetMoveNameText(int32 Move)
@@ -2898,7 +2898,9 @@ static FAutoConsoleCommand GBUHSetupTimelineCmd(
 		const int32 OpponentMove = FCString::Atoi(*Args[1]);
 		const int32 Instant = FCString::Atoi(*Args[2]);
 		UE_LOG(LogTemp, Display, TEXT("BUH.SetupTimeline: Player=%d Opponent=%d Instant=%d"), PlayerMove, OpponentMove, Instant);
-		UBuhCombatSim::SetupTimelineAndMoveGhosts(PlayerMove, OpponentMove, Instant);
+		UWorld* World = GEngine->GetWorldContexts()[0].World();
+		UObject* Context = World ? static_cast<UObject*>(World) : nullptr;
+		UBuhCombatSim::SetupTimelineAndMoveGhosts(Context, PlayerMove, OpponentMove, Instant);
 	}));
 
 static FAutoConsoleCommand GBUHMoveGhostsCmd(
@@ -2913,7 +2915,9 @@ static FAutoConsoleCommand GBUHMoveGhostsCmd(
 		}
 		const int32 Instant = FCString::Atoi(*Args[0]);
 		UE_LOG(LogTemp, Display, TEXT("BUH.MoveGhosts: Instant=%d"), Instant);
-		UBuhCombatSim::MoveGhostsToInstant(Instant);
+		UWorld* World = GEngine->GetWorldContexts()[0].World();
+		UObject* Context = World ? static_cast<UObject*>(World) : nullptr;
+		UBuhCombatSim::MoveGhostsToInstant(Context, Instant);
 	}));
 
 static FAutoConsoleCommand GBUHPrintSnapshotCmd(

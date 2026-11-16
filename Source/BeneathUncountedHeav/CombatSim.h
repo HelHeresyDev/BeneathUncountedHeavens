@@ -360,16 +360,16 @@ public:
 	static int32 ChooseOpponentMove(const FBuhCombatState& State, int32 LastPlayerMove, int32 Seed);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static void MoveGhostsToInstant(int32 Instant);
+	static void MoveGhostsToInstant(UObject* WorldContextObject, int32 Instant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static int32 MoveGhostsToFinalInstant();
+	static int32 MoveGhostsToFinalInstant(UObject* WorldContextObject);
 
 	UFUNCTION(BlueprintPure, Category = "CombatSim")
 	static int32 GetFinalInstantIndex();
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
-	static void SetupTimelineAndMoveGhosts(int32 PlayerMove, int32 OpponentMove, int32 Instant);
+	static void SetupTimelineAndMoveGhosts(UObject* WorldContextObject, int32 PlayerMove, int32 OpponentMove, int32 Instant);
 
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString GetMoveNameText(int32 Move);
