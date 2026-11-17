@@ -2473,6 +2473,8 @@ int32 UBuhCombatSim::GetSnapshotPlayerPhase(int32 Index)
 
 int32 UBuhCombatSim::GetSnapshotOpponentPhase(int32 Index)
 {
+	if (bGHasBaseTimeline && Index >= 0 && Index < GBaseTimelineStates.Num() && GBaseTimelineStates[Index].Fighters.Num() >= 2)
+		return GBaseTimelineStates[Index].Fighters[1].Phase;
 	if (Index >= 0 && Index < GCurrentTimeline.Num()) return GCurrentTimeline[Index].OpponentPhase;
 	return 0;
 }

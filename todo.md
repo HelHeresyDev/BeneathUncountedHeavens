@@ -1,110 +1,68 @@
-# BUH — Hypothetical Attack Does Not Interrupt Walk Preview
+# BUH — Fix Hypothetical Branching in the Actual Planning UI
 
-The user has confirmed that ordinary Walk prediction ghosts now appear, but selecting a hypothetical opponent attack at a chosen Instant does not stop the Walk prediction.
+Current repository baseline: `9c230bc`.
 
-I inspected repository commit `efdca6c`.
+The user reports that selecting a hypothetical opponent action does not stop the prediction ghost. The latest screenshot shows State 3 (Reaction opportunity), Continue selected, and an already-committed Heavy attack.
 
-## Findings
+We need to distinguish two cases and verify the actual UI behavior.
 
-`UBuhCombatSim::GenerateBranchFromBase` should already generate a reaction interruption when the opponent starts Quick or Heavy while the player is in a reactable Walk.
+## 1. Planning mode (State 0)
 
-`CheckReactionPause` records the reaction, and `GenerateTimeline` stops with `StoppedReason=5`.
+Reproduce:
 
-However, the branch can fail without replacing the existing timeline, and existing automation tests do not verify the complete Blueprint-to-ghost pathway.
+1. Reset the encounter.
+2. Select Walk with a destination far enough to remain active beyond Instant 5.
+3. Scrub to Instant 5.
+4. Without executing, select hypothetical Heavy.
+5. Inspect the installed timeline.
 
-## Investigate first
+Expected:
 
-Read the actual saved Blueprint graphs:
+- `GenerateBranchFromBase(5, 1, ...)` succeeds.
+- A reaction opportunity occurs when Heavy starts.
+- The timeline ends at that reaction opportunity.
+- The slider maximum becomes the final branch index.
+- The cyan ghost stops at the interruption position.
+- Scrubbing past that boundary is impossible.
+- The authoritative fighter remains stationary.
 
-- `WBP_CombatUI.EventGraph` — all four hypothetical opponent buttons
-- `WBP_CombatUI.RegeneratePredictionPreview`
-- `WBP_CombatUI.ScrubTimeline`
-- `WBP_CombatUI.RefreshUI`
+If this fails, trace the actual saved `WBP_CombatUI` execution graph, including baseline-signature invalidation, selected slider index, branch legality, result length, slider maximum, and subsequent `RefreshUI` calls.
 
-Trace this exact sequence:
+Do not assume the previous button-order fix solved it.
 
-1. Start a fresh encounter.
-2. Select Walk and a sufficiently distant destination.
-3. Scrub to Instant 5, while Walk is active.
-4. Select hypothetical Heavy.
-5. Check whether `GenerateBranchFromBase` executes.
+## 2. Reaction mode (State 3)
 
-Record:
+During an actual reaction, the opponent's observed Heavy is already committed.
 
-- Selected slider snapshot index
-- Selected hypothetical opponent action
-- Base timeline length
-- Opponent phase at the selected base snapshot
-- Whether the branch is legal
-- `OutReason` on rejection
-- Returned branch timeline length
-- Final snapshot's `StoppedReason`
-- Final installed `GetTimelineLength`
-- Slider maximum after regeneration
+- Do not allow the hypothetical opponent buttons to create another attack.
+- Clearly identify the committed attack separately from hypothetical planning selections.
+- Continue must simulate the already-committed action until the next valid decision boundary.
+- Preserve the working reaction slider and ghost movement.
 
-Determine whether the branch fails, is never called, or is overwritten by a later refresh/regeneration.
+Do not artificially truncate Continue at the original reaction Instant: Continue means declining the interruption.
 
-Do not guess which one is happening.
+## 3. Strengthen regression coverage
 
-## Required behavior
+The current `BUH.PlanningWalkHypotheticalBranch` test starts with a manually pre-committed Walk. Add coverage starting from a fresh planning state with normal Walk selection and a destination.
 
-When the opponent is legally ready and the player is actively Walking:
+Verify the actual Blueprint event path or explicitly report that it requires graphical PIE.
 
-- Choosing hypothetical Quick or Heavy starts that action at the selected branch point.
-- A valid reaction opportunity interrupts the simulated Walk.
-- The shortened branch replaces the current displayed timeline.
-- Earlier Walk snapshots remain available for scrubbing.
-- The slider cannot move past the reaction boundary.
-- The cyan ghost stops at the predicted reaction position.
-- The real fighter remains stationary.
+Add assertions for:
 
-If the opponent is not legally ready, reject the hypothetical action and display the actual reason instead of silently retaining the original prediction.
+- Selected branch Instant.
+- Branch legality and rejection reason.
+- Final `StoppedReason`.
+- Installed timeline length.
+- Slider maximum matching the installed timeline.
+- Ghost coordinates at the final snapshot.
+- Preservation of the baseline and authoritative state.
 
-Do not force an interruption when the player has already finished walking or when the movement is not legally reactable.
+## 4. Restrictions
 
-## Critical verification
+Do not rewrite the combat resolver, slider, movement system, or preview architecture.
 
-Add a regression test using an ordinary planning Walk baseline, not a manually pre-committed Walk fixture.
+Preserve working ordinary movement previews and reaction → Continue behavior.
 
-Generate the baseline, branch at an active Walk snapshot (for example, index 5), and assert:
+Compile, save, and read back modified Blueprints; run all BUH tests; update notes.md and todo.md; commit and push.
 
-- `bLegal == true`
-- The last snapshot has `bReactionOpportunity == true`
-- The last snapshot has `StoppedReason == 5`
-- The installed timeline ends at the reaction boundary
-- No original baseline snapshots remain after that boundary
-- The final ghost coordinates match the interrupted Walk position
-- The original stored baseline remains intact for further branching
-- The authoritative combat state is unchanged
-
-Then verify the UI path invokes that successful branch, updates the slider range, and scrubs the final installed timeline rather than the old baseline.
-
-## Constraints
-
-Preserve:
-- Ordinary Walk/Dash/Jump previews
-- Reaction → Continue previews
-- Opponent decision-boundary stopping
-- Current slider geometry
-- Existing ghost rendering and materials
-- Authoritative combat execution
-
-Make the smallest necessary changes. Do not introduce a new preview architecture.
-
-Build, compile and save modified Blueprints, read back their graphs, run all BUH tests, and update notes.md and todo.md.
-
-Commit and push the fix.
-
-Report the exact root cause and distinguish automated verification from graphical PIE verification.
-
-## Resolution
-
-**Root cause:** The four hypothetical-opponent button handlers in `WBP_CombatUI:EventGraph` called `RefreshUI` before `RegeneratePredictionPreview`. `RefreshUI` scrubbed the old Walk baseline and left the ghosts/readout showing it; the later `RegeneratePredictionPreview` installed the reaction branch but did not update the UI, so the Walk prediction appeared to continue.
-
-**Fix:** Reordered all four opponent handlers to call `RegeneratePredictionPreview` first and `RefreshUI` second. `WBP_CombatUI` compiled clean and the saved graph was read back to confirm the order.
-
-**Regression test:** Added `BUH.PlanningWalkHypotheticalBranch`, which generates an ordinary planning Walk baseline, branches at Instant 5 with a hypothetical Heavy, and asserts legality, branch instant, shortened timeline, preserved earlier Walk snapshots, reaction opportunity, final `StoppedReason == 5`, and an unchanged authoritative combat state.
-
-**Automated verification:** All 27 `BUH.*` automation tests pass (0 failures), including the new regression test and the existing reaction/decision-boundary suites.
-
-**Graphical PIE verification:** Still pending. The user must confirm in a fresh PIE that selecting Walk, scrubbing to an active Walk instant, then choosing a hypothetical Heavy/Quick stops the Walk ghost at the reaction position, shortens the slider range, and leaves the real fighter stationary.
+Report the specific failure found, not merely that the automated tests passed.

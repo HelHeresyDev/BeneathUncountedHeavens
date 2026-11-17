@@ -1,14 +1,22 @@
 #include "CombatSim.h"
 #include "Misc/AutomationTest.h"
 #include "Engine/Blueprint.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/Actor.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/UnrealType.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/Slider.h"
+#include "Components/TextBlock.h"
+#include "Editor.h"
+#include "PlayInEditorDataTypes.h"
+#include "UObject/Script.h"
+#include "HAL/IConsoleManager.h"
 
 // todo.md §9 — 13 automated tests for the Tactical Timeline Preview.
 //
@@ -608,6 +616,51 @@ bool FBuhPlanningWalkHypotheticalBranchTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// Regression: a fresh planning state with a normal Walk selection and destination
+// must branch correctly when the user selects a hypothetical opponent attack.
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPlanningWalkHypotheticalBranchFreshTest, "BUH.PlanningWalkHypotheticalBranchFresh",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhPlanningWalkHypotheticalBranchFreshTest::RunTest(const FString& Parameters)
+{
+	FBuhCombatState S = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	S.Fighters[0].WalkTarget = -1000.f;
+	S.Fighters[0].WalkTargetY = 0.f;
+
+	UBuhCombatSim::ClearPreview();
+	const TArray<FBuhTimelineSnapshot> BaseTL = UBuhCombatSim::GenerateAndStoreBaseTimeline(S, 6, 30);
+	TestTrue(TEXT("fresh planning Walk base timeline stored"), UBuhCombatSim::bHasBaseTimeline() && BaseTL.Num() > 5);
+	if (BaseTL.Num() <= 5) return false;
+
+	const FBuhCombatState St5 = UBuhCombatSim::GetStateAt(5);
+	TestTrue(TEXT("opponent is ready at Instant 5 of the fresh base"), St5.Fighters.Num() >= 2 && St5.Fighters[1].Phase == 0);
+
+	int32 OutInstant = -1; bool bLegal = false; FString Reason;
+	const TArray<FBuhTimelineSnapshot> BranchTL = UBuhCombatSim::GenerateBranchFromBase(5, 1, OutInstant, bLegal, Reason);
+	TestTrue(TEXT("Heavy branch from a fresh planning Walk baseline is legal"), bLegal);
+	if (!bLegal)
+	{
+		AddError(FString::Printf(TEXT("GenerateBranchFromBase rejected: %s"), *Reason));
+		return false;
+	}
+	TestEqual(TEXT("branch instant is the chosen Instant"), OutInstant, 5);
+	TestTrue(TEXT("branch timeline is shorter than the base"), BranchTL.Num() < BaseTL.Num());
+	TestTrue(TEXT("branch timeline keeps the earlier Walk snapshots"), BranchTL.Num() >= 6 && BranchTL[0].Instant == 0 && BranchTL[5].Instant == 5);
+
+	bool bReaction = false;
+	for (const FBuhTimelineSnapshot& Sn : BranchTL) if (Sn.bReactionOpportunity) { bReaction = true; break; }
+	TestTrue(TEXT("branch contains the reaction opportunity"), bReaction);
+	TestEqual(TEXT("branch ends at the reaction pause"), BranchTL.Last().StoppedReason, 5);
+	TestTrue(TEXT("installed timeline matches the branch"), UBuhCombatSim::GetTimelineLength() == BranchTL.Num());
+	TestEqual(TEXT("branch instant recorded"), UBuhCombatSim::GetBranchInstant(), 5);
+	TestEqual(TEXT("base timeline is preserved after branching"), UBuhCombatSim::GetBaseTimelineLength(), BaseTL.Num());
+	TestTrue(TEXT("ghost is stopped before the Walk destination"), BranchTL.Last().PlayerX > BaseTL.Last().PlayerX);
+	TestEqual(TEXT("opponent ghost remains stationary"), BranchTL.Last().OpponentX, 500.f);
+
+	UBuhCombatSim::ClearPreview();
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieWalkContinueReactionTest, "BUH.PIE.WalkContinueReaction",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
 
@@ -840,5 +893,442 @@ bool FBuhPieWalkContinueReactionTest::RunTest(const FString& Parameters)
 		PlayerFighter->GetActorLocation().X));
 	AddInfo(TEXT("Limitation: PIE-world manager state and WBP button visibility are not observable from a headless automation test (the controller ends PIE at test start and editor-world BP writes do not land). Walk-vs-Heavy reaction-at-instant-0 is proven by BUH.CombatFlowTests / CombatSimAutomation Step L; the Continue button is verified by the graphical PIE playtest."));
 
+	return true;
+}
+
+static UUserWidget* FBuhFindCombatUI()
+{
+	for (TObjectIterator<UUserWidget> It; It; ++It)
+	{
+		UUserWidget* W = *It;
+		if (W && W->IsValidLowLevel() && W->GetClass()->GetName().Contains(TEXT("WBP_CombatUI")))
+		{
+			return W;
+		}
+	}
+	return nullptr;
+}
+
+static void FBuhDumpProbeObjects(UWorld* World, AActor* CM, UUserWidget* UI)
+{
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe PIE world=%s IsGameWorld=%d"), *World->GetName(), World->IsGameWorld() ? 1 : 0);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe Manager found=%s"), *CM->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe UI found=%s"), *UI->GetName());
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe BranchInstant=%d BaseTimelineLength=%d"), UBuhCombatSim::GetBranchInstant(), UBuhCombatSim::GetBaseTimelineLength());
+
+	UClass* Class = CM->GetClass();
+	for (FProperty* P = Class->PropertyLink; P; P = P->PropertyLinkNext)
+	{
+		if (P->IsA<FIntProperty>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe CM int %s=%d"), *P->GetName(), *P->ContainerPtrToValuePtr<int32>(CM));
+		}
+		else if (P->IsA<FFloatProperty>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe CM float %s=%f"), *P->GetName(), *P->ContainerPtrToValuePtr<float>(CM));
+		}
+	}
+
+	UClass* UIClass = UI->GetClass();
+	for (FProperty* P = UIClass->PropertyLink; P; P = P->PropertyLinkNext)
+	{
+		if (P->IsA<FIntProperty>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe UI int %s=%d"), *P->GetName(), *P->ContainerPtrToValuePtr<int32>(UI));
+		}
+		else if (P->IsA<FFloatProperty>())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe UI float %s=%f"), *P->GetName(), *P->ContainerPtrToValuePtr<float>(UI));
+		}
+	}
+}
+
+static bool FBuhCallFunction(UObject* Obj, const TCHAR* FuncName)
+{
+	UFunction* F = Obj->FindFunction(FName(FuncName));
+	if (!F)
+	{
+		return false;
+	}
+	void* Params = FMemory::Malloc(F->ParmsSize, 16);
+	FMemory::Memzero(Params, F->ParmsSize);
+	Obj->ProcessEvent(F, Params);
+	FMemory::Free(Params);
+	return true;
+}
+
+static bool FBuhCallFunctionWithFloats(UObject* Obj, const TCHAR* FuncName, float A, float B)
+{
+	UFunction* F = Obj->FindFunction(FName(FuncName));
+	if (!F)
+	{
+		return false;
+	}
+	void* Params = FMemory::Malloc(F->ParmsSize, 16);
+	FMemory::Memzero(Params, F->ParmsSize);
+	if (FFloatProperty* P = FindFProperty<FFloatProperty>(F, FName("TargetX")))
+	{
+		P->SetFloatingPointPropertyValue(Params, A);
+	}
+	if (FFloatProperty* P = FindFProperty<FFloatProperty>(F, FName("TargetY")))
+	{
+		P->SetFloatingPointPropertyValue(Params, B);
+	}
+	Obj->ProcessEvent(F, Params);
+	FMemory::Free(Params);
+	return true;
+}
+
+static int32 FBuhGetIntProperty(UObject* Obj, const TCHAR* Name, int32 Default = INT_MIN)
+{
+	if (FIntProperty* P = FindFProperty<FIntProperty>(Obj->GetClass(), FName(Name)))
+	{
+		return *P->ContainerPtrToValuePtr<int32>(Obj);
+	}
+	return Default;
+}
+
+static void FBuhSetIntProperty(UObject* Obj, const TCHAR* Name, int32 Value)
+{
+	if (FIntProperty* P = FindFProperty<FIntProperty>(Obj->GetClass(), FName(Name)))
+	{
+		P->SetIntPropertyValue(Obj, (int64)Value);
+	}
+}
+
+static UWidget* FBuhGetWidget(UUserWidget* UI, const TCHAR* Name)
+{
+	return UI->GetWidgetFromName(FName(Name));
+}
+
+static FString FBuhGetText(UUserWidget* UI, const TCHAR* Name)
+{
+	if (UTextBlock* T = Cast<UTextBlock>(FBuhGetWidget(UI, Name)))
+	{
+		return T->GetText().ToString();
+	}
+	return FString();
+}
+
+static ESlateVisibility FBuhGetVisibility(UUserWidget* UI, const TCHAR* Name)
+{
+	if (UWidget* W = FBuhGetWidget(UI, Name))
+	{
+		return W->GetVisibility();
+	}
+	return ESlateVisibility::Hidden;
+}
+
+static void FBuhRunState0(FAutomationTestBase* Test, AActor* CM, UUserWidget* UI)
+{
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 ResetEncounter"));
+	FBuhCallFunction(CM, TEXT("ResetEncounter"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 SetPreviewWalkTarget"));
+	UBuhCombatSim::SetPreviewWalkTarget(500.f, 0.f);
+	FBuhSetIntProperty(CM, TEXT("PlayerMove"), 6);
+	FBuhSetIntProperty(UI, TEXT("BasePlayerMove"), 6);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 Regenerate1"));
+	FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 base length=%d"), UBuhCombatSim::GetBaseTimelineLength());
+	if (USlider* S = Cast<USlider>(FBuhGetWidget(UI, TEXT("TimelineSlider"))))
+	{
+		S->SetValue(5.f);
+	}
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 ScrubTimeline"));
+	FBuhCallFunction(UI, TEXT("ScrubTimeline"));
+	FBuhSetIntProperty(UI, TEXT("HypotheticalOpponentMove"), 1);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 Regenerate2"));
+	FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S0 RefreshUI"));
+	FBuhCallFunction(UI, TEXT("RefreshUI"));
+
+	Test->TestEqual(TEXT("State0 BranchInstant is 5"), UBuhCombatSim::GetBranchInstant(), 5);
+	Test->TestTrue(TEXT("State0 base timeline exists"), UBuhCombatSim::GetBaseTimelineLength() > 0);
+	if (USlider* S = Cast<USlider>(FBuhGetWidget(UI, TEXT("TimelineSlider"))))
+	{
+		Test->TestTrue(TEXT("State0 slider max extended"), S->GetMaxValue() >= 5.f);
+	}
+	Test->TestEqual(TEXT("State0 authoritative player stationary"), FBuhGetIntProperty(CM, TEXT("PlayerX")), -500);
+	Test->TestEqual(TEXT("State0 authoritative opponent stationary"), FBuhGetIntProperty(CM, TEXT("OpponentX")), 500);
+	Test->TestEqual(TEXT("State0 opponent quick button visible"), (int32)FBuhGetVisibility(UI, TEXT("OpponentQuickButton")), (int32)ESlateVisibility::Visible);
+	Test->TestEqual(TEXT("State0 opponent heavy button visible"), (int32)FBuhGetVisibility(UI, TEXT("OpponentHeavyButton")), (int32)ESlateVisibility::Visible);
+	Test->TestEqual(TEXT("State0 opponent guard button visible"), (int32)FBuhGetVisibility(UI, TEXT("OpponentGuardButton")), (int32)ESlateVisibility::Visible);
+	Test->TestEqual(TEXT("State0 opponent dodge button visible"), (int32)FBuhGetVisibility(UI, TEXT("OpponentDodgeButton")), (int32)ESlateVisibility::Visible);
+	FString Outcome = FBuhGetText(UI, TEXT("PredictedOutcomeText"));
+	Test->TestTrue(TEXT("State0 branch summary present"), !Outcome.IsEmpty());
+}
+
+static void FBuhRunState3(FAutomationTestBase* Test, AActor* CM, UUserWidget* UI)
+{
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S3 ResetEncounter"));
+	FBuhCallFunction(CM, TEXT("ResetEncounter"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S3 ExecuteMove Walk vs Heavy"));
+	FBuhSetIntProperty(CM, TEXT("PlayerMove"), 6);
+	FBuhSetIntProperty(CM, TEXT("OpponentMove"), 1);
+	FBuhCallFunction(CM, TEXT("ExecuteMove"));
+	int32 State = FBuhGetIntProperty(CM, TEXT("State"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S3 State after ExecuteMove=%d"), State);
+	Test->TestEqual(TEXT("State3 entered reaction state"), State, 3);
+	if (State != 3)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S3 Regenerate1"));
+	FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S3 RefreshUI1"));
+	FBuhCallFunction(UI, TEXT("RefreshUI"));
+
+	Test->TestEqual(TEXT("State3 opponent quick button hidden"), (int32)FBuhGetVisibility(UI, TEXT("OpponentQuickButton")), (int32)ESlateVisibility::Hidden);
+	Test->TestEqual(TEXT("State3 opponent heavy button hidden"), (int32)FBuhGetVisibility(UI, TEXT("OpponentHeavyButton")), (int32)ESlateVisibility::Hidden);
+	Test->TestEqual(TEXT("State3 opponent guard button hidden"), (int32)FBuhGetVisibility(UI, TEXT("OpponentGuardButton")), (int32)ESlateVisibility::Hidden);
+	Test->TestEqual(TEXT("State3 opponent dodge button hidden"), (int32)FBuhGetVisibility(UI, TEXT("OpponentDodgeButton")), (int32)ESlateVisibility::Hidden);
+
+	FString OpponentText = FBuhGetText(UI, TEXT("OpponentMoveText"));
+	Test->TestTrue(TEXT("State3 committed opponent attack identified"), OpponentText.Contains(TEXT("Heavy")));
+
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbe S3 Continue"));
+	FBuhSetIntProperty(CM, TEXT("PlayerMove"), 7);
+	FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+	FBuhCallFunction(UI, TEXT("RefreshUI"));
+
+	Test->TestEqual(TEXT("State3 Continue keeps reaction state"), FBuhGetIntProperty(CM, TEXT("State")), 3);
+	Test->TestEqual(TEXT("State3 opponent heavy button still hidden"), (int32)FBuhGetVisibility(UI, TEXT("OpponentHeavyButton")), (int32)ESlateVisibility::Hidden);
+	FString Outcome = FBuhGetText(UI, TEXT("PredictedOutcomeText"));
+	Test->TestTrue(TEXT("State3 Continue simulates committed action"), !Outcome.IsEmpty());
+}
+
+static void FBuhRunUIProbeFromConsole()
+{
+	UUserWidget* UI = FBuhFindCombatUI();
+	if (!UI)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole No WBP_CombatUI found."));
+		return;
+	}
+	UWorld* World = UI->GetWorld();
+	AActor* CM = nullptr;
+	if (World)
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->GetClass()->GetName().Contains(TEXT("BP_CombatManager")))
+			{
+				CM = *It;
+				break;
+			}
+		}
+	}
+	if (!CM)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole No BP_CombatManager found."));
+		return;
+	}
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 ResetEncounter"));
+	FBuhCallFunction(CM, TEXT("ResetEncounter"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 SetPreviewWalkTarget"));
+	UBuhCombatSim::SetPreviewWalkTarget(500.f, 0.f);
+	FBuhSetIntProperty(CM, TEXT("PlayerMove"), 6);
+	FBuhSetIntProperty(UI, TEXT("BasePlayerMove"), 6);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 Regenerate1"));
+	FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 base length=%d"), UBuhCombatSim::GetBaseTimelineLength());
+	if (USlider* S = Cast<USlider>(FBuhGetWidget(UI, TEXT("TimelineSlider"))))
+	{
+		S->SetValue(5.f);
+	}
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 ScrubTimeline"));
+	FBuhCallFunction(UI, TEXT("ScrubTimeline"));
+	FBuhSetIntProperty(UI, TEXT("HypotheticalOpponentMove"), 1);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 Regenerate2"));
+	FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 RefreshUI"));
+	FBuhCallFunction(UI, TEXT("RefreshUI"));
+
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 BranchInstant=%d BaseTimelineLength=%d"), UBuhCombatSim::GetBranchInstant(), UBuhCombatSim::GetBaseTimelineLength());
+	if (USlider* S = Cast<USlider>(FBuhGetWidget(UI, TEXT("TimelineSlider"))))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 slider max=%f value=%f"), S->GetMaxValue(), S->GetValue());
+	}
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 PlayerX=%d OpponentX=%d"), FBuhGetIntProperty(CM, TEXT("PlayerX")), FBuhGetIntProperty(CM, TEXT("OpponentX")));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 OpponentQuickButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentQuickButton")));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 OpponentHeavyButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentHeavyButton")));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 OpponentGuardButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentGuardButton")));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 OpponentDodgeButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentDodgeButton")));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S0 PredictedOutcomeText=%s"), *FBuhGetText(UI, TEXT("PredictedOutcomeText")));
+
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 ResetEncounter"));
+	FBuhCallFunction(CM, TEXT("ResetEncounter"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 ExecuteMove Walk vs Heavy"));
+	FBuhSetIntProperty(CM, TEXT("PlayerMove"), 6);
+	FBuhSetIntProperty(CM, TEXT("OpponentMove"), 1);
+	FBuhCallFunction(CM, TEXT("ExecuteMove"));
+	int32 State = FBuhGetIntProperty(CM, TEXT("State"));
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 State after ExecuteMove=%d"), State);
+	if (State == 3)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 Regenerate1"));
+		FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 RefreshUI1"));
+		FBuhCallFunction(UI, TEXT("RefreshUI"));
+
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 OpponentQuickButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentQuickButton")));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 OpponentHeavyButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentHeavyButton")));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 OpponentGuardButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentGuardButton")));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 OpponentDodgeButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentDodgeButton")));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 OpponentMoveText=%s"), *FBuhGetText(UI, TEXT("OpponentMoveText")));
+
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 Continue"));
+		FBuhSetIntProperty(CM, TEXT("PlayerMove"), 7);
+		FBuhCallFunction(UI, TEXT("RegeneratePredictionPreview"));
+		FBuhCallFunction(UI, TEXT("RefreshUI"));
+
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 Continue State=%d"), FBuhGetIntProperty(CM, TEXT("State")));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 Continue OpponentHeavyButton visibility=%d"), (int32)FBuhGetVisibility(UI, TEXT("OpponentHeavyButton")));
+		UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole S3 Continue PredictedOutcomeText=%s"), *FBuhGetText(UI, TEXT("PredictedOutcomeText")));
+	}
+	UE_LOG(LogTemp, Warning, TEXT("BUH.UIProbeConsole Done"));
+}
+
+static FAutoConsoleCommand CBUHRunUIProbe(TEXT("BUH.RunUIProbe"), TEXT("Run the UI probe sequence in the current PIE world."), FConsoleCommandDelegate::CreateStatic(&FBuhRunUIProbeFromConsole));
+
+class FBuhRunUIProbeTest : public IAutomationLatentCommand
+{
+public:
+	FBuhRunUIProbeTest(FAutomationTestBase* InTest, AActor* InCM, UUserWidget* InUI)
+		: Test(InTest), CM(InCM), UI(InUI), TicksToWait(30)
+	{
+	}
+
+	virtual bool Update() override
+	{
+		if (!Test || !CM || !UI)
+		{
+			if (Test)
+			{
+				Test->AddError(TEXT("Missing PIE objects."));
+			}
+			return true;
+		}
+		if (TicksToWait > 0)
+		{
+			--TicksToWait;
+			return false;
+		}
+		FBuhRunState0(Test, CM, UI);
+		FBuhRunState3(Test, CM, UI);
+		return true;
+	}
+
+private:
+	FAutomationTestBase* Test;
+	AActor* CM;
+	UUserWidget* UI;
+	int32 TicksToWait;
+};
+
+class FBuhEndPieCommand : public IAutomationLatentCommand
+{
+public:
+	FBuhEndPieCommand() : bEnded(false) {}
+
+	virtual bool Update() override
+	{
+		if (!bEnded && GEditor)
+		{
+			GEditor->EndPlayMap();
+			bEnded = true;
+		}
+		return true;
+	}
+
+private:
+	bool bEnded;
+};
+
+class FBuhWaitForPieUICommand : public IAutomationLatentCommand
+{
+public:
+	FBuhWaitForPieUICommand()
+		: TimeoutTime(FPlatformTime::Seconds() + 30.0), FoundUI(nullptr), Phase(0), TicksToWait(30)
+	{
+	}
+
+	virtual bool Update() override
+	{
+		FAutomationTestBase* Test = FAutomationTestFramework::Get().GetCurrentTest();
+		if (TicksToWait > 0)
+		{
+			--TicksToWait;
+			return false;
+		}
+		if (Phase == 0)
+		{
+			UUserWidget* UI = FBuhFindCombatUI();
+			if (UI)
+			{
+				FoundUI = UI;
+				Phase = 1;
+				TicksToWait = 30;
+				return false;
+			}
+			if (FPlatformTime::Seconds() > TimeoutTime)
+			{
+				if (Test)
+				{
+					Test->AddError(TEXT("PIE game world did not start."));
+				}
+				return true;
+			}
+			TicksToWait = 10;
+			return false;
+		}
+		if (Phase == 1)
+		{
+			UWorld* World = FoundUI ? FoundUI->GetWorld() : nullptr;
+			AActor* CM = nullptr;
+			if (World)
+			{
+				for (TActorIterator<AActor> It(World); It; ++It)
+				{
+					if (It->GetClass()->GetName().Contains(TEXT("BP_CombatManager")))
+					{
+						CM = *It;
+						break;
+					}
+				}
+			}
+			if (CM && World && World->IsGameWorld() && Test)
+			{
+				FBuhRunState0(Test, CM, FoundUI);
+				FBuhRunState3(Test, CM, FoundUI);
+				return true;
+			}
+			if (Test)
+			{
+				Test->AddError(TEXT("PIE manager or game world not available."));
+			}
+			return true;
+		}
+		return true;
+	}
+
+private:
+	double TimeoutTime;
+	UUserWidget* FoundUI;
+	int32 Phase;
+	int32 TicksToWait;
+};
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhPieUIProbeTest, "BUH.PIE.UIProbe",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ClientContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhPieUIProbeTest::RunTest(const FString& Parameters)
+{
+	if (!FBuhFindCombatUI() && GEditor)
+	{
+		GEditor->PlayMap(nullptr, nullptr, -1, 0, false);
+	}
+	AddCommand(new FBuhWaitForPieUICommand());
 	return true;
 }
