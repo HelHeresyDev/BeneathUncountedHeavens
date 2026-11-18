@@ -1,98 +1,143 @@
-# BUH — Restore Opponent Prediction Controls After Reaction Ghost Update
+## **Found a missing legality check for Continue**
 
-Current baseline: commit `edca825`.
+I inspected the latest GitHub commit, `d809a90`, including `CombatSim.cpp`.
 
-The user reports losing the ability to predict enemy actions following implementation of the separate gold reaction ghost.
+**Continue (action 7) is only supposed to resume movement that is already underway.** Selecting Walk in the planning menu doesn't qualify because the movement hasn't actually started.
 
-## Observed regression
+The current simulator handles Continue like this:
 
-In graphical PIE:
+```
+if (Decision == 7)
+{
+    if (IsReactableMovement(F))
+    {
+        /* Continue Walk/Dash: preserve existing state */
+    }
+    continue;
+}
+```
 
-- The right-side hypothetical opponent action controls have disappeared.
-- The panel displays prediction text but no Quick, Heavy, Guard, or Dodge buttons.
-- The actual-distance display reads `D: 0.0` despite separated fighters.
-- The player can still scrub the reaction timeline.
+The problem is that **an illegal Continue is silently ignored rather than rejected**.
 
-Previous builds displayed the four opponent-action buttons.
+If the player hasn't started walking, `IsReactableMovement(F)` returns false, but the rest of the simulation can still proceed. This leaves the UI and combat manager at risk of disagreeing about the player's selected action.
 
-## 1. Investigate the saved UI Blueprint
+I can't yet prove that's the precise crash mechanism without the crash log. However, accepting Continue outside a valid reaction is a real control-flow defect worth fixing.
 
-Inspect the actual saved `WBP_CombatUI`:
+The correct behavior should be:
 
-- Widget tree, including RightPanel and its children.
-- `RefreshUI`
-- `EventGraph`
-- Four hypothetical-opponent button handlers.
-- `RegeneratePredictionPreview`
-- `ScrubTimeline`
+- **Walk selected but not executed:** Continue is unavailable.
+- **Walk executed, then interrupted by an enemy attack:** Continue becomes available.
+- **Continue selected during that reaction:** Resume the existing movement without restarting it.
+- **Invalid Continue requested anyway:** Reject safely without changing the combat state or crashing.
 
-Determine why the opponent-action controls are missing.
+## **Repair prompt for Qwen**
 
-Check each button's visibility, enabled state, parent visibility, opacity, layout geometry, and execution paths.
+# BUH — Unreal Crash: Continue Before Movement Execution
 
-Pay particular attention to the recent deletion of 10 nodes from `RefreshUI`, documented in `notes.md` §9.63.
+Repository: `HelHeresyDev/BeneathUncountedHeavens`
 
-Do not assume a successful Blueprint compilation proves the UI is working.
+Baseline: `d809a90`
 
-## 2. Restore opponent predictions
+## Crash reproduction
 
-Planning mode (State 0):
+The user reports:
 
-- Show Quick, Heavy, Guard, and Dodge hypothetical actions.
-- Selecting an action at the chosen timeline Instant must generate a separate hypothetical branch.
-- Preserve the full baseline movement timeline.
-- Preserve the moving cyan player ghost.
-- Show the fixed gold reaction ghost at the calculated reaction opportunity.
-- Display the selected hypothetical opponent action and its predicted consequences.
-- Allow changing or clearing the hypothetical selection.
+1. Start a fresh combat encounter.
+2. Select Walk.
+3. Without executing Walk, switch to Continue.
+4. Unreal Editor crashes.
 
-Reaction mode (State 3):
+This transition should be illegal but must never crash.
 
-- Display the already-committed opponent action clearly.
-- Do not allow a new opponent action while the opponent is busy.
-- Show an explanatory unavailable state rather than silently removing prediction controls.
-- Preserve the Continue preview and its decision-boundary stopping behavior.
+## Investigation
 
-## 3. Preserve separate timelines
+First inspect the latest local Unreal crash log and call stack from `Saved/Logs` and `Saved/Crashes`.
 
-The latest implementation correctly stores `GBranchTimeline` separately from the baseline.
+Identify the failing function and source line. Do not assume the illegal Continue selection is the direct crash cause.
 
-Do not revert to replacing the main timeline with hypothetical branches.
+Inspect:
 
-Use `bHasBranchTimeline()` and `GetReactionSnapshot()` to display branch information independently.
+- `WBP_CombatUI.EventGraph` and `BtnContinueWalk.OnClicked`
+- `WBP_CombatUI.RefreshUI`
+- `BP_CombatManager.SetPlayerMove`
+- `BP_CombatManager.ExecuteMove`
+- `UBuhCombatSim::GetReactionInfo`
+- `UBuhCombatSim::ResolveCombat`
+- `UBuhCombatSim::GenerateTimeline`
 
-Verify that the right panel reports the hypothetical branch rather than merely repeating baseline snapshot information.
+The current C++ simulator silently ignores Continue when `IsReactableMovement(F)` is false. This is not adequate validation.
 
-## 4. Restore the actual-distance readout
+Also inspect uses of `MoveData[F.Action]`, because a fighter with `Action == -1` and an active phase could produce an out-of-bounds access.
 
-The previous `RefreshUI` changes removed the actor-position nodes used to calculate actual distance.
+## Required fix
 
-Restore a valid distance calculation using the real fighter positions, with safe actor validation.
+### UI validation
 
-Do not substitute the predicted distance for the actual distance.
+Continue must only be available during a genuine player reaction opportunity when the player has an active, legally resumable Walk, Dash, or Jump.
 
-## 5. Verification
+Selecting Walk in planning mode must never enable Continue.
 
-Test these scenarios:
+Do not determine legality from the selected `PlayerMove` alone. Check the authoritative combat state and actual reaction status.
 
-A. Planning Walk, no hypothetical action: cyan ghost follows the full movement prediction.
+### Combat manager validation
 
-B. Planning Walk, hypothetical Heavy at Instant 5: baseline continues, gold reaction ghost appears at the actual reaction opportunity, and the hypothetical branch information is displayed.
+Reject Continue before changing `PlayerMove` if no legal reaction exists.
 
-C. Change Heavy to Quick: reaction prediction updates without replacing the baseline.
+Preserve the player's pending Walk selection and destination when an invalid Continue request occurs.
 
-D. Clear hypothetical selection: gold ghost disappears; baseline remains.
+Do not enter resolving mode or mutate authoritative combat state on an invalid request.
 
-E. Actual Heavy reaction → Continue: existing reaction preview still works.
+### C++ safety
 
-F. Reset: all hypothetical data and reaction ghosts are cleared.
+Validate Continue before attempting to resolve it.
 
-G. Actual and predicted distance displays remain accurate.
+A rejected Continue must produce a safe, defined failure rather than silently running a simulation with no valid action.
 
-Read back the actual Blueprint graphs and widget properties after editing.
+Guard action-array indexing against invalid action IDs, without disguising other combat-state corruption.
 
-Run all BUH tests, build, save, update notes.md and todo.md, and commit.
+Do not modify the behavior of a legitimate Continue.
 
-Do not call this resolved until the user verifies the controls and ghost behavior in graphical PIE.
+## Regression tests
 
-**Critical restriction:** Do not remove existing UI nodes simply to make a headless test stop crashing. If the test cannot safely execute a gameplay-dependent widget in the editor world, fix the test environment or narrow its assertions instead.
+Add tests covering:
+
+1. Fresh encounter → Continue attempted: rejected safely.
+2. Select Walk → Continue without Execute: rejected safely.
+3. Select Dash → Continue without Execute: rejected safely.
+4. Select Jump → Continue without Execute: rejected safely.
+5. Walk → Execute → genuine Heavy reaction → Continue: succeeds.
+6. Valid Continue preserves the original movement target, phase and reaction bookkeeping.
+7. Invalid Continue never changes authoritative combat state, fighter positions or health.
+8. Reset and action cancellation leave no stale Continue eligibility.
+
+Test the relevant Blueprint execution path where possible. Headless C++ tests alone do not establish that the live UI cannot crash.
+
+## Constraints
+
+Preserve:
+
+- Baseline movement prediction
+- Hypothetical opponent branches
+- Gold reaction ghost
+- Reaction → Continue timeline
+- Existing combat timing
+
+Keep the fix focused on crash prevention and legal action-state transitions.
+
+Build, run tests, compile and save modified Blueprints, update notes.md and todo.md, then commit and push.
+
+Report the actual crash stack, confirmed root cause, files changed, test results, and remaining graphical PIE checks.
+
+Do not declare the crash fixed solely because all headless automation tests pass.
+
+**Priority:** Fix this crash before making more prediction-system changes. We need Continue to be a strictly legal reaction action, not something the UI can accidentally request during ordinary planning.
+
+## Status (2026-11-17)
+
+- [x] Inspected crash log and identified root cause: empty `FinalState.Fighters` in `ResolveCombat` early return, unguarded `GetFinal*` indexing, and missing Continue legality guard in `ExecuteMove`.
+- [x] Added `UBuhCombatSim::IsContinueLegal` and made `ResolveCombat` return a safe two-fighter error state with `StoppedReason = 0`.
+- [x] Added a surgical Continue guard to `BP_CombatManager:ExecuteMove` that rejects illegal Continue without entering resolving mode.
+- [x] Restored opponent-button visibility/opacity and the three ghost-hide chains in `WBP_CombatUI:RefreshUI`.
+- [x] Compiled and saved `BP_CombatManager` and `WBP_CombatUI`.
+- [x] Added C++ regression tests `V5` and `V6`; full non-PIE `BUH.*` suite passes 26/26.
+- [ ] Graphical PIE verification: invalid Continue rejected safely, valid Continue resumes movement, opponent buttons dimmed correctly, ghosts hide/show correctly.

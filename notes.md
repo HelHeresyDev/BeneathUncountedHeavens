@@ -1392,10 +1392,44 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 - Rewrote `BUH.RefreshUIReactionGhost` to verify the reaction ghost **entirely in C++**, removing the `WBP_CombatUI` widget creation and the `RefreshUI` Blueprint call that triggered the VM crash. The test now: builds the state, generates the base timeline, branches with a hypothetical Heavy, asserts `bHasReactionSnapshot()`, calls `UBuhCombatSim::MoveGhostsToInstant(World, 0)`, and asserts the `GhostReaction` actor's location matches `GetReactionSnapshot()` (`PlayerX`, `PlayerY`, `90.0f + PlayerHeight`) within `1.0f`, that `Ghost->IsHidden()` is `false` with a reaction snapshot, then calls `ClearPreview()` + `MoveGhostsToInstant` again and asserts `Ghost->IsHidden()` is `true`.
 - Replaced the unreliable `FindFProperty<FBoolProperty>` reflection read of `bHidden` with a direct C++ `Ghost->IsHidden()` call.
 - Restructured `UBuhCombatSim::MoveGhostsToInstant` so it no longer returns early when `!bHasTimeline()`; it now always iterates actors and handles `GhostReaction` show/hide based on `bGHasReactionSnapshot`, while player/opponent ghosts are only moved when `bMoveMainGhosts = bHasTimeline()` is true.
-- As a side effect of removing the crash trigger, 10 nodes were deleted from the `WBP_CombatUI:RefreshUI` graph (2 `Transformation|GetActorLocation` distance-text nodes and 4 `Actor|GetAllActorsWithTag`+`Rendering|SetActorHiddenInGame` ghost-hide pairs). The distance text now shows `D: 0` (regression) and the no-preview ghost-hide logic moved to C++ `MoveGhostsToInstant`. The asset was compiled and saved.
+- As a side effect of removing the crash trigger, 10 nodes were deleted from the `WBP_CombatUI:RefreshUI` graph (2 `Transformation|GetActorLocation` distance-text nodes and 4 `Actor|GetAllActorsWithTag`+`Rendering|SetActorHiddenInGame` ghost-hide pairs). The distance text now shows `D: 0` (regression) and the no-preview ghost-hide logic moved to C++ `MoveGhostsToInstant`. The asset was compiled and saved. (The three player/opponent/destination ghost-hide pairs were later restored in Blueprint — see §9.64 — so `MoveGhostsToInstant` now only owns `GhostReaction`.)
 
 **Regression test:** `BUH.RefreshUIReactionGhost` now passes headless (`Result={Success}`), with diagnostics confirming `ghost=(-500.0,0.0,90.0) snap=(-500.0,0.0,0.0)`, `bHiddenBefore=0` (visible with reaction snapshot), `bHiddenAfter=1` (hidden after `ClearPreview`). All 28 non-PIE `BUH.*` automation tests pass (0 failures, 0 SIGSEGV), including `BUH.WalkPreviewTests` (which initially hung at test enumeration but passed on retry — a pre-existing flaky enumeration issue, unrelated to this change).
 
 **MCP gotcha — `AActor::bHidden` reflection read is unreliable:** `FindFProperty<FBoolProperty>(Actor->GetClass(), FName("bHidden"))` + `*P->ContainerPtrToValuePtr<bool>(Actor)` returned `96` (0x60) instead of `0`/`1` for a `BP_Fighter` actor. Use the direct C++ `AActor::IsHidden()` method instead of reflection for bool actor properties in automation tests.
 
 **Verified:** `BeneathUncountedHeavEditor` rebuilt clean. Standalone `BUH.RefreshUIReactionGhost` run: no SIGSEGV, all step lines printed, `Result={Success}`. Full non-PIE suite: 28/28 Success. **Graphical PIE verification of the gold reaction ghost in the game view is still pending** — the user must confirm in a fresh PIE that a hypothetical opponent attack shows the gold `GhostReaction` at the reaction-opportunity position and hides it when the hypothetical is cleared.
+
+### 9.64 Continue-before-movement crash fixed + opponent-button/ghost UI restored (RESOLVED — graphical PIE pending)
+
+**Problem:** Selecting Walk and then Continue without executing Walk crashed the editor with `Array index out of bounds: 0 into an array of size 0` at `Runtime/Core/Public/Containers/Array.h:1339`. The crash occurred because `ExecuteMove` passed an empty `CurrentState` to `ResolveCombat` for `PlayerMove == 7`; `ResolveCombat` early-returned a default `FBuhCombatResult` whose `FinalState.Fighters` was empty, and `GetFinalPlayerHealth` / `GetFinalOpponentHealth` indexed `FinalState.Fighters[0/1]` unguarded. Additionally, `WBP_CombatUI:RefreshUI` had lost its three ghost-hide node pairs (`DestPlayer`, `GhostPlayer`, `GhostOpponent`) and its opponent-button visibility/opacity logic after the §9.63 node pruning.
+
+**Cause:**
+1. `UBuhCombatSim::ResolveCombat` returned an error result with `FinalState.Fighters.Num() == 0` when given a state with fewer than two fighters.
+2. `GetFinalPlayerHealth` / `GetFinalOpponentHealth` / `PredictText` indexed `FinalState.Fighters[0/1]` without a `Num()` check.
+3. `ExecuteMove` had no guard rejecting an illegal Continue before entering resolving mode; for `PlayerMove == 7` it set `PreExecutionState = GetCurrentState`, which was an empty default state when no movement had yet executed.
+4. `read_graph_dsl` omitted side exec branches (the `BtnContinueWalk` visibility chain and the ghost-hide nodes), so the missing ghost logic was not visible in a DSL read and had to be reconstructed from `actual_refresh2.dsl`.
+
+**Fix:**
+- C++:
+  - Added `UBuhCombatSim::IsContinueLegal(const FBuhCombatState& State)` (`BlueprintPure`): `return State.Fighters.Num() >= 2 && IsReactableMovement(State.Fighters[0]);`.
+  - `ResolveCombat` early return now populates `Err.FinalState.Fighters.AddDefaulted(2)` and sets `StoppedReason = 0` (the controlled-error code expected by the V1/V2 regression tests), preventing the `GetFinal*` asserts.
+  - Added regression tests `V5 continue-empty-state-controlled-error` and `V6 is-continue-legal-reactable-walk` to the `BUH.CombatSimTests` report.
+- Blueprint `BP_CombatManager:ExecuteMove`:
+  - Added a surgical guard: `Branch( AND(PlayerMove == 7, NOT(IsContinueLegal(GetCurrentState))) )`.
+  - `then` → `PrintString "Continue unavailable: no movement in progress"` → reject-only `RefreshUI`.
+  - `false` → normal resolution (`SetState 1`, etc.).
+  - The initial wiring had `then`/`false` swapped; corrected and verified via `read_graph_dsl`.
+- Blueprint `WBP_CombatUI:RefreshUI`:
+  - Opponent buttons (`GetOpponentQuickButton`, `GetOpponentHeavyButton`, `GetOpponentGuardButton`, `GetOpponentDodgeButton`) are now always visible (`ToVisibility true`) with `SetRenderOpacity` = `Select(State == 0, 1.0, 0.55)`.
+  - Restored the three ghost-hide chains: `DestPlayer` hidden unless `PlayerMove == 6`; `GhostPlayer` and `GhostOpponent` hidden when `NOT( (State == 0 OR State == 3) AND bHasTimeline )`. Each chain is `Actor|GetAllActorsWithTag` → `Utilities|Array|Get(acopy)` → `Rendering|SetActorHiddenInGame`, spliced into the `RefreshUI` exec chain after the opponent-button opacity nodes.
+  - The `BtnContinueWalk` visibility chain already existed (`GetReactionInfoFromManager` + `ANDBoolean` + `ToVisibility` + `SetVisibility`); no new `IsContinueLegal` node was needed in `RefreshUI`.
+
+**MCP gotchas discovered:**
+- `create_node` type_id for integer equality is `Utilities|Operators|Equal(==)`, not `Math|Integer|Equal(Integer)` (the latter is what `get_node_infos` reports for existing nodes, but `create_node` rejects it). Use `find_node_types` with filter `"Equal"` to discover the creatable form.
+- `Actor|GetAllActorsWithTag` is an exec node. Its `OutActors` output cannot feed a pure `Utilities|Array|Get(acopy)` data node unless the `GetAllActorsWithTag` node is itself in the exec chain immediately before the consuming `Rendering|SetActorHiddenInGame`. Otherwise the compile fails with "The current value of the 'Array' pin is invalid".
+- `read_graph_dsl` can omit side exec branches; verify actual graph contents with `find_nodes` + `get_node_infos` before concluding a node is missing.
+
+**Regression test:** Full non-PIE `BUH.*` suite passes 26/26 (0 failures, 0 SIGSEGV). `CombatTestReport.txt` shows `V1`, `V2`, `V5`, and `V6` all PASS (71 passed, 0 failed in the combat-sim report).
+
+**Verified:** `BeneathUncountedHeavEditor` rebuilt clean. `BP_CombatManager` and `WBP_CombatUI` compiled and saved. **Graphical PIE verification is still pending** — the user must confirm in a fresh PIE that (a) selecting Walk then Continue without Execute is rejected safely with no crash, (b) a genuine reaction Continue still resumes movement, (c) opponent buttons are visible and dimmed correctly outside planning, and (d) prediction ghosts hide/show correctly.

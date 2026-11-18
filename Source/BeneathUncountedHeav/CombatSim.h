@@ -193,6 +193,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static bool IsReactionOpportunity(const FBuhCombatResult& Result);
 
+	// True when the player fighter is mid-Walk/Dash/Jump and can legally resume
+	// with Continue (action 7). Empty or idle states return false.
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static bool IsContinueLegal(const FBuhCombatState& State);
+
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static int32 GetReactionInstant(const FBuhCombatResult& Result);
 

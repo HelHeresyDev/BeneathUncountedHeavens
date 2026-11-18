@@ -379,6 +379,11 @@ static bool IsReactableMovement(const FBuhFighterState& F)
 	return IsReactableWalk(F) || IsReactableDash(F) || IsReactableJump(F);
 }
 
+bool UBuhCombatSim::IsContinueLegal(const FBuhCombatState& State)
+{
+	return State.Fighters.Num() >= 2 && IsReactableMovement(State.Fighters[0]);
+}
+
 static void ClampJumpDestination(double StartX, double StartY, double& TargetX, double& TargetY)
 {
 	if (TargetX < -9998.0)
@@ -444,6 +449,7 @@ FBuhCombatResult UBuhCombatSim::ResolveCombat(FBuhCombatState InState, int32 Pla
 	if (InState.Fighters.Num() < 2)
 	{
 		FBuhCombatResult Err;
+		Err.FinalState.Fighters.AddDefaulted(2);
 		Err.StoppedReason = 0;
 		return Err;
 	}
@@ -1736,6 +1742,28 @@ FString UBuhCombatSim::RunAllTests()
 		const bool bErr = (R.StoppedReason == 0);
 		Check(TEXT("V2 execute-move-empty-fighters-error"), bErr,
 			FString::Printf(TEXT("reason=%d"), R.StoppedReason));
+	}
+
+	// Test V5 — Continue (7) on an empty state returns a controlled error and does not assert.
+	{
+		FBuhCombatState S;
+		const FBuhCombatResult R = ResolveCombat(S, 7, 1, 200);
+		const bool bErr = (R.StoppedReason == 0) && (R.FinalState.Fighters.Num() == 2);
+		Check(TEXT("V5 continue-empty-state-controlled-error"), bErr,
+			FString::Printf(TEXT("reason=%d fighters=%d"), R.StoppedReason, R.FinalState.Fighters.Num()));
+	}
+
+	// Test V6 — IsContinueLegal is false on an empty state and true on a reactable Walk.
+	{
+		FBuhCombatState Empty;
+		const bool bEmptyIllegal = !IsContinueLegal(Empty);
+		FBuhCombatState Walk = MakeState(-500, 500, 100, 100, 0);
+		Walk.Fighters[0].Action = 6;
+		Walk.Fighters[0].Phase = 2;
+		Walk.Fighters[0].PhaseInstants = 3;
+		const bool bWalkLegal = IsContinueLegal(Walk);
+		Check(TEXT("V6 is-continue-legal-reactable-walk"), bEmptyIllegal && bWalkLegal,
+			FString::Printf(TEXT("empty=%d walk=%d"), bEmptyIllegal ? 1 : 0, bWalkLegal ? 1 : 0));
 	}
 
 	// Test V3 — State persistence across Walk and a subsequent action.
