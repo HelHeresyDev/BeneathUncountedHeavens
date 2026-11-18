@@ -1,143 +1,139 @@
-## **Found a missing legality check for Continue**
+This looks like another regression in the Walk-targeting controls. I checked the latest GitHub commit, `63fcbad`, and the project's previous fixes.
 
-I inspected the latest GitHub commit, `d809a90`, including `CombatSim.cpp`.
+Your screenshot shows `Your: None` and `No preview`. Those are normal before choosing a Walk destination, but **the cursor should remain visible and a green ground path should follow it while targeting**.
 
-**Continue (action 7) is only supposed to resume movement that is already underway.** Selecting Walk in the planning menu doesn't qualify because the movement hasn't actually started.
+### **What I found**
 
-The current simulator handles Continue like this:
+The project has encountered almost this exact cursor problem before. In `notes.md` §9.24, `SetInputModeGameAndUI` was hiding the cursor because `bHideCursorDuringCapture` was enabled. Section 9.30 also established that targeting handlers need to explicitly set `ShowMouseCursor = true`.
 
-```
-if (Decision == 7)
-{
-    if (IsReactableMovement(F))
-    {
-        /* Continue Walk/Dash: preserve existing state */
-    }
-    continue;
-}
-```
+There is another possible issue: the click that selects Walk might also be interpreted as the click confirming its destination, immediately ending targeting.
 
-The problem is that **an illegal Continue is silently ignored rather than rejected**.
+The current targeting flow should be:
 
-If the player hasn't started walking, `IsReactableMovement(F)` returns false, but the rest of the simulation can still proceed. This leaves the UI and combat manager at risk of disagreeing about the player's selected action.
+Click Walk
 
-I can't yet prove that's the precise crash mechanism without the crash log. However, accepting Continue outside a valid reaction is a real control-flow defect worth fixing.
+TargetingAction = 6
 
-The correct behavior should be:
+Cursor visible + green line follows mouse
 
-- **Walk selected but not executed:** Continue is unavailable.
-- **Walk executed, then interrupted by an enemy attack:** Continue becomes available.
-- **Continue selected during that reaction:** Resume the existing movement without restarting it.
-- **Invalid Continue requested anyway:** Reject safely without changing the combat state or crashing.
+Separate ground click confirms destination
 
-## **Repair prompt for Qwen**
+I also notice **Continue is visible in the movement submenu during ordinary planning**. That should only be available during a genuine movement reaction.
 
-# BUH — Unreal Crash: Continue Before Movement Execution
+## **Next Qwen prompt**
 
-Repository: `HelHeresyDev/BeneathUncountedHeavens`
+# BUH — Repair Walk Targeting Cursor and Missing Path
 
-Baseline: `d809a90`
+Repository: `HelHeresyDev/BeneathUncountedHeavens`\
+Baseline: `63fcbad`
 
-## Crash reproduction
+## Reproduction
 
-The user reports:
+1. Start a fresh graphical PIE session.
+2. Open the Move submenu.
+3. Click Walk.
 
-1. Start a fresh combat encounter.
-2. Select Walk.
-3. Without executing Walk, switch to Continue.
-4. Unreal Editor crashes.
+Observed:
 
-This transition should be illegal but must never crash.
+- Mouse cursor disappears.
+- No green Walk targeting line appears.
+- No destination marker appears.
+- HUD remains `Your: None`.
+- Timeline remains `No preview`.
 
-## Investigation
+The screenshot also shows Continue visible during ordinary planning.
 
-First inspect the latest local Unreal crash log and call stack from `Saved/Logs` and `Saved/Crashes`.
+## Investigation — identify the actual failure
 
-Identify the failing function and source line. Do not assume the illegal Continue selection is the direct crash cause.
+Inspect the saved Blueprint graphs:
 
-Inspect:
-
-- `WBP_CombatUI.EventGraph` and `BtnContinueWalk.OnClicked`
+- `WBP_CombatUI.OnClicked(BtnWalkMove)`
+- `WBP_CombatUI.EventTick`
 - `WBP_CombatUI.RefreshUI`
-- `BP_CombatManager.SetPlayerMove`
-- `BP_CombatManager.ExecuteMove`
-- `UBuhCombatSim::GetReactionInfo`
-- `UBuhCombatSim::ResolveCombat`
-- `UBuhCombatSim::GenerateTimeline`
+- `BP_CombatManager.BeginWalkTargeting`
+- `BP_CombatManager.CancelTargeting`
+- `BP_CombatManager.SelectWalkDestination`
 
-The current C++ simulator silently ignores Continue when `IsReactableMovement(F)` is false. This is not adequate validation.
+Read project notes §§9.23, 9.24, 9.30, 9.34 and 9.40 before modifying anything.
 
-Also inspect uses of `MoveData[F.Action]`, because a fighter with `Action == -1` and an active phase could produce an out-of-bounds access.
+### Check 1: Cursor capture
 
-## Required fix
+Inspect `SetInputModeGameAndUI` in the Walk handler.
 
-### UI validation
+Verify:
 
-Continue must only be available during a genuine player reaction opportunity when the player has an active, legally resumable Walk, Dash, or Jump.
+- `bHideCursorDuringCapture = false`
+- `SetShowMouseCursor(true)` is called on the correct PlayerController.
+- The mouse is not being captured by the first-person controller.
+- No later event immediately hides the cursor or changes input mode.
 
-Selecting Walk in planning mode must never enable Continue.
+### Check 2: Targeting state
 
-Do not determine legality from the selected `PlayerMove` alone. Check the authoritative combat state and actual reaction status.
+Verify clicking Walk calls `BeginWalkTargeting` and sets `TargetingAction = 6`.
 
-### Combat manager validation
+Log the actual value immediately after clicking and on the next EventTick.
 
-Reject Continue before changing `PlayerMove` if no legal reaction exists.
+Check whether another function immediately calls `CancelTargeting`, returning the value to -1.
 
-Preserve the player's pending Walk selection and destination when an invalid Continue request occurs.
+### Check 3: Same-click confirmation
 
-Do not enter resolving mode or mutate authoritative combat state on an invalid request.
+Investigate whether the mouse click that activates the Walk button is also detected by `WasInputKeyJustPressed(LeftMouseButton)` in EventTick.
 
-### C++ safety
+If so, targeting may start and cancel in the same frame.
 
-Validate Continue before attempting to resolve it.
+Targeting confirmation must require a separate mouse click after the Walk button has been released.
 
-A rejected Continue must produce a safe, defined failure rather than silently running a simulation with no valid action.
+Do not introduce arbitrary timing delays if a proper input-state transition can solve it.
 
-Guard action-array indexing against invalid action IDs, without disguising other combat-state corruption.
+### Check 4: Path generation
 
-Do not modify the behavior of a legitimate Continue.
+When `State == 0` and `TargetingAction == 6`:
 
-## Regression tests
+- EventTick must update the ground cursor location.
+- The ground hit test must return a valid location.
+- `DrawGroundLine` must receive the correct start and end coordinates.
+- `DestPlayer` must be positioned and visible.
+- No other function should clear the path every frame.
 
-Add tests covering:
+Inspect the existing `BUHPathRenderer` rather than replacing it.
 
-1. Fresh encounter → Continue attempted: rejected safely.
-2. Select Walk → Continue without Execute: rejected safely.
-3. Select Dash → Continue without Execute: rejected safely.
-4. Select Jump → Continue without Execute: rejected safely.
-5. Walk → Execute → genuine Heavy reaction → Continue: succeeds.
-6. Valid Continue preserves the original movement target, phase and reaction bookkeeping.
-7. Invalid Continue never changes authoritative combat state, fighter positions or health.
-8. Reset and action cancellation leave no stale Continue eligibility.
+## Required behavior
 
-Test the relevant Blueprint execution path where possible. Headless C++ tests alone do not establish that the live UI cannot crash.
+- Clicking Walk enters targeting mode.
+- Cursor remains visible.
+- Green path follows the cursor across the ground.
+- A separate left-click confirms the destination.
+- Confirmation produces a normal Walk preview and cyan ghost.
+- Right-click or Escape cancels targeting.
+- Canceling restores normal input and removes temporary targeting geometry.
+- Walk → Dash → Jump transitions remain functional.
+- Continue is unavailable during ordinary planning and visible only when a genuine resumable movement reaction exists.
 
-## Constraints
+## Preserve existing systems
 
-Preserve:
+Do not modify the combat resolver, movement speed, hypothetical opponent branches, gold reaction ghost, or timeline scrubber.
 
-- Baseline movement prediction
-- Hypothetical opponent branches
-- Gold reaction ghost
-- Reaction → Continue timeline
-- Existing combat timing
+Avoid full EventGraph rewrites. The project previously lost entire EventTick handlers from `write_graph_dsl`. Prefer surgical node edits and read back the actual connections afterward.
 
-Keep the fix focused on crash prevention and legal action-state transitions.
+## Verification
 
-Build, run tests, compile and save modified Blueprints, update notes.md and todo.md, then commit and push.
+Perform automated checks of targeting transitions, including the same-click scenario.
 
-Report the actual crash stack, confirmed root cause, files changed, test results, and remaining graphical PIE checks.
+Inspect Blueprint compile warnings, not merely compile success.
 
-Do not declare the crash fixed solely because all headless automation tests pass.
+Verify C++/Blueprint wiring and saved assets.
 
-**Priority:** Fix this crash before making more prediction-system changes. We need Continue to be a strictly legal reaction action, not something the UI can accidentally request during ordinary planning.
+Report exactly:
 
-## Status (2026-11-17)
+- Why the cursor disappeared.
+- Whether TargetingAction was set and remained active.
+- Why DrawGroundLine was not visible.
+- Which Blueprint nodes changed.
+- Automated results.
+- What still requires manual graphical PIE verification.
 
-- [x] Inspected crash log and identified root cause: empty `FinalState.Fighters` in `ResolveCombat` early return, unguarded `GetFinal*` indexing, and missing Continue legality guard in `ExecuteMove`.
-- [x] Added `UBuhCombatSim::IsContinueLegal` and made `ResolveCombat` return a safe two-fighter error state with `StoppedReason = 0`.
-- [x] Added a surgical Continue guard to `BP_CombatManager:ExecuteMove` that rejects illegal Continue without entering resolving mode.
-- [x] Restored opponent-button visibility/opacity and the three ghost-hide chains in `WBP_CombatUI:RefreshUI`.
-- [x] Compiled and saved `BP_CombatManager` and `WBP_CombatUI`.
-- [x] Added C++ regression tests `V5` and `V6`; full non-PIE `BUH.*` suite passes 26/26.
-- [ ] Graphical PIE verification: invalid Continue rejected safely, valid Continue resumes movement, opponent buttons dimmed correctly, ghosts hide/show correctly.
+Update notes.md and todo.md, commit and push.
+
+Do not claim that cursor visibility is verified from headless PIE.
+
+**My priority would be fixing targeting before touching predictions again.** The movement-preview architecture is working well enough now that we should stabilize how actions are selected and confirmed, rather than risk another regression in the combat simulator.
