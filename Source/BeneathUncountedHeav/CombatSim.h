@@ -210,6 +210,12 @@ public:
 		int32 ReactionInstant,
 		const FBuhCombatState& CurrentState);
 
+	// Reads the manager's reaction properties via reflection and calls GetReactionInfo.
+	// Unambiguous single call that avoids the Blueprint global name-search collisions
+	// between the manager's auto-generated property getters and CombatSim/CustomizableObjectInstance.
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FBuhReactionInfo GetReactionInfoFromManager(UObject* Manager);
+
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
 
@@ -283,6 +289,18 @@ public:
 	// previous branch continuation. Installs the combined result as current.
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static TArray<FBuhTimelineSnapshot> GenerateBranchFromBase(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason);
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static bool bHasBranchTimeline();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static int32 GetBranchTimelineLength();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static bool bHasReactionSnapshot();
+
+	UFUNCTION(BlueprintPure, Category = "CombatSim")
+	static FBuhTimelineSnapshot GetReactionSnapshot();
 
 	// Reaction preview: generate a timeline from the frozen CurrentState with
 	// the player's reaction decision and no new opponent action. Installs the

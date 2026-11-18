@@ -1,68 +1,49 @@
-# BUH — Fix Hypothetical Branching in the Actual Planning UI
+I agree. That's a better design for **Beneath Uncounted Heavens**, especially because we're trying to make combat feel like chess rather than a conventional action game.
 
-Current repository baseline: `9c230bc`.
+The problem with our current approach is that choosing a hypothetical attack **replaces the original prediction**. But the purpose of hypothetical actions is to explore possibilities, not discard information.
 
-The user reports that selecting a hypothetical opponent action does not stop the prediction ghost. The latest screenshot shows State 3 (Reaction opportunity), Continue selected, and an already-committed Heavy attack.
+## **Proposed design: Multiple prediction ghosts**
 
-We need to distinguish two cases and verify the actual UI behavior.
+We should separate the uninterrupted movement prediction from hypothetical reaction points.
 
-## 1. Planning mode (State 0)
+**Main movement ghost — cyan**
 
-Reproduce:
+Follows the original Walk trajectory as you scrub. Never stops just because you select a hypothetical attack.
 
-1. Reset the encounter.
-2. Select Walk with a destination far enough to remain active beyond Instant 5.
-3. Scrub to Instant 5.
-4. Without executing, select hypothetical Heavy.
-5. Inspect the installed timeline.
+**Reaction ghost — gold**
 
-Expected:
+Remains fixed at the predicted location where your fighter would receive a reaction opportunity.
 
-- `GenerateBranchFromBase(5, 1, ...)` succeeds.
-- A reaction opportunity occurs when Heavy starts.
-- The timeline ends at that reaction opportunity.
-- The slider maximum becomes the final branch index.
-- The cyan ghost stops at the interruption position.
-- Scrubbing past that boundary is impossible.
-- The authoritative fighter remains stationary.
+For example, suppose you plan a 30-Instant Walk and choose a hypothetical Heavy at Instant 4.
 
-If this fails, trace the actual saved `WBP_CombatUI` execution graph, including baseline-signature invalidation, selected slider index, branch legality, result length, slider maximum, and subsequent `RefreshUI` calls.
+Full movement timeline
 
-Do not assume the previous button-order fix solved it.
+Illustrative timeline: the marker indicates the hypothetical reaction, while the baseline remains available through Instant 30.
 
-## 2. Reaction mode (State 3)
+When you scrub to Instant 15, the cyan ghost moves to its Instant 15 location, but the gold ghost remains where the reaction would have occurred at Instant 4.
 
-During an actual reaction, the opponent's observed Heavy is already committed.
+This lets you compare the uninterrupted movement and the potential interruption simultaneously.
 
-- Do not allow the hypothetical opponent buttons to create another attack.
-- Clearly identify the committed attack separately from hypothetical planning selections.
-- Continue must simulate the already-committed action until the next valid decision boundary.
-- Preserve the working reaction slider and ghost movement.
+## **How I would implement it**
 
-Do not artificially truncate Continue at the original reaction Instant: Continue means declining the interruption.
+Importantly, **we should still calculate the hypothetical branch, but we shouldn't replace the displayed main timeline with it**.
 
-## 3. Strengthen regression coverage
+The existing `GenerateBranchFromBase()` calculates the reaction correctly, but installs its combined result as the current timeline. I'd separate those responsibilities.
 
-The current `BUH.PlanningWalkHypotheticalBranch` test starts with a manually pre-committed Walk. Add coverage starting from a fresh planning state with normal Walk selection and a destination.
+The revised architecture would work as follows:
 
-Verify the actual Blueprint event path or explicitly report that it requires graphical PIE.
+1. Preserve the existing baseline timeline as the primary scrubber data.
+2. Calculate the hypothetical attack in a separate simulation without overwriting that baseline.
+3. Find the actual reaction snapshot and position. For Dash or Jump, this may occur later than the attack's selected start Instant.
+4. Position a reusable gold reaction ghost at those coordinates and mark that Instant on the timeline.
+5. When the hypothetical action or its start Instant changes, update the reaction ghost. When the hypothetical is cleared, hide it.
 
-Add assertions for:
+If the hypothetical action produces no legal reaction opportunity, the UI should say so rather than inventing a reaction location.
 
-- Selected branch Instant.
-- Branch legality and rejection reason.
-- Final `StoppedReason`.
-- Installed timeline length.
-- Slider maximum matching the installed timeline.
-- Ghost coordinates at the final snapshot.
-- Preservation of the baseline and authoritative state.
+## **One additional improvement**
 
-## 4. Restrictions
+Eventually, I'd like to allow **multiple hypothetical reactions on the same movement timeline**, so you could see what happens if the opponent attacks at Instant 4, Instant 8, or Instant 12.
 
-Do not rewrite the combat resolver, slider, movement system, or preview architecture.
+We don't need to implement that yet. One reaction ghost is sufficient to establish the design.
 
-Preserve working ordinary movement previews and reaction → Continue behavior.
-
-Compile, save, and read back modified Blueprints; run all BUH tests; update notes.md and todo.md; commit and push.
-
-Report the specific failure found, not merely that the automated tests passed.
+**My recommendation:** Keep the full baseline Walk prediction visible at all times, treat hypothetical attacks as independent annotations, and use the gold ghost to show the resulting reaction position. Then we can build more elaborate tactical comparisons on that foundation.

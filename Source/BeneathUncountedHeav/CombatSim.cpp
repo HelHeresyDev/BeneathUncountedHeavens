@@ -8,6 +8,8 @@
 #include "Engine/World.h"
 #include "Engine/EngineBaseTypes.h"
 #include "GameFramework/Actor.h"
+#include "UObject/UnrealType.h"
+#include "UObject/Field.h"
 #include "EngineUtils.h"
 #include "Components/Widget.h"
 #include "Blueprint/UserWidget.h"
@@ -1901,6 +1903,31 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfo(
 	return Info;
 }
 
+FBuhReactionInfo UBuhCombatSim::GetReactionInfoFromManager(UObject* Manager)
+{
+	bool bOpp = false;
+	int32 Fighter = 0, Threat = 0, Instant = 0;
+	FBuhCombatState State;
+	if (Manager)
+	{
+		UClass* C = Manager->GetClass();
+		if (FBoolProperty* P = CastField<FBoolProperty>(FindFProperty<FProperty>(C, FName("bReactionOpportunity"))))
+			bOpp = *P->ContainerPtrToValuePtr<bool>(Manager);
+		if (FIntProperty* P = CastField<FIntProperty>(FindFProperty<FProperty>(C, FName("ReactionFighter"))))
+			Fighter = *P->ContainerPtrToValuePtr<int32>(Manager);
+		if (FIntProperty* P = CastField<FIntProperty>(FindFProperty<FProperty>(C, FName("ObservedThreatAction"))))
+			Threat = *P->ContainerPtrToValuePtr<int32>(Manager);
+		if (FIntProperty* P = CastField<FIntProperty>(FindFProperty<FProperty>(C, FName("ReactionInstant"))))
+			Instant = *P->ContainerPtrToValuePtr<int32>(Manager);
+		if (FStructProperty* P = CastField<FStructProperty>(FindFProperty<FProperty>(C, FName("CurrentState"))))
+		{
+			void* ValuePtr = P->ContainerPtrToValuePtr<void>(Manager);
+			State = *static_cast<FBuhCombatState*>(ValuePtr);
+		}
+	}
+	return GetReactionInfo(bOpp, Fighter, Threat, Instant, State);
+}
+
 // Stage 2: the full authoritative FBuhCombatState at each snapshot index, stored
 // in parallel with GCurrentTimeline. FBuhTimelineSnapshot is presentation-only and
 // cannot resume combat; branching at an Instant requires this complete state (all
@@ -2132,6 +2159,24 @@ FBuhCombatState UBuhCombatSim::GetStateAt(int32 Index)
 }
 
 static int32 GBranchInstant = -1;
+static TArray<FBuhTimelineSnapshot> GBranchTimeline;
+static TArray<FBuhCombatState> GBranchTimelineStates;
+static bool bGHasBranchTimeline = false;
+static FBuhTimelineSnapshot GReactionSnapshot;
+static bool bGHasReactionSnapshot = false;
+
+static void ClearBranchTimeline()
+{
+	GBranchTimeline.Reset();
+	GBranchTimelineStates.Reset();
+	bGHasBranchTimeline = false;
+}
+
+static void ClearReactionSnapshot()
+{
+	GReactionSnapshot = FBuhTimelineSnapshot();
+	bGHasReactionSnapshot = false;
+}
 
 void UBuhCombatSim::SetCurrentTimelineWithStates(const TArray<FBuhTimelineSnapshot>& InTimeline, const TArray<FBuhCombatState>& InStates)
 {
@@ -2192,6 +2237,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreBaseTimeline(const F
 	SetBaseTimeline(BaseSnaps, BaseStates);
 	SetCurrentTimelineWithStates(BaseSnaps, BaseStates);
 	GBranchInstant = -1;
+	ClearBranchTimeline();
+	ClearReactionSnapshot();
 	return BaseSnaps;
 }
 
@@ -2201,6 +2248,8 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateAndStoreReactionPreview(cons
 	TArray<FBuhCombatState> States = GCurrentTimelineStates;
 	SetCurrentTimelineWithStates(Snaps, States);
 	GBranchInstant = -1;
+	ClearBranchTimeline();
+	ClearReactionSnapshot();
 	UE_LOG(LogTemp, Warning, TEXT("ReactionPreview: generated %d snapshots, bHasTimeline=%d"), Snaps.Num(), bHasTimeline() ? 1 : 0);
 	return Snaps;
 }
@@ -2283,7 +2332,20 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchFromBase(int32 BranchI
 	for (int32 i = 0; i < BranchIndex; ++i) CombinedStates.Add(GBaseTimelineStates[i]);
 	for (const FBuhCombatState& St : BranchStates) CombinedStates.Add(St);
 
-	SetCurrentTimelineWithStates(Combined, CombinedStates);
+	GBranchTimeline = BranchSnaps;
+	GBranchTimelineStates = BranchStates;
+	bGHasBranchTimeline = true;
+
+	ClearReactionSnapshot();
+	for (const FBuhTimelineSnapshot& S : BranchSnaps)
+	{
+		if (S.bReactionOpportunity)
+		{
+			GReactionSnapshot = S;
+			bGHasReactionSnapshot = true;
+		}
+	}
+
 	GBranchInstant = BranchInstant;
 	OutBranchInstant = BranchInstant;
 	bLegal = true;
@@ -2296,6 +2358,8 @@ void UBuhCombatSim::ClearPreview()
 	ClearBaseTimeline();
 	SetCurrentTimeline(TArray<FBuhTimelineSnapshot>());
 	GBranchInstant = -1;
+	ClearBranchTimeline();
+	ClearReactionSnapshot();
 }
 
 TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchTimeline(int32 BranchIndex, int32 NewOpponentAction, int32& OutBranchInstant, bool& bLegal, FString& OutReason)
@@ -2371,6 +2435,26 @@ TArray<FBuhTimelineSnapshot> UBuhCombatSim::GenerateBranchTimeline(int32 BranchI
 int32 UBuhCombatSim::GetBranchInstant()
 {
 	return GBranchInstant;
+}
+
+bool UBuhCombatSim::bHasBranchTimeline()
+{
+	return bGHasBranchTimeline;
+}
+
+int32 UBuhCombatSim::GetBranchTimelineLength()
+{
+	return bGHasBranchTimeline ? GBranchTimeline.Num() : 0;
+}
+
+bool UBuhCombatSim::bHasReactionSnapshot()
+{
+	return bGHasReactionSnapshot;
+}
+
+FBuhTimelineSnapshot UBuhCombatSim::GetReactionSnapshot()
+{
+	return GReactionSnapshot;
 }
 
 FBuhTimelineSnapshot UBuhCombatSim::GetSnapshotAt(int32 Instant)
@@ -2537,6 +2621,16 @@ FString UBuhCombatSim::GetSnapshotInfoText(int32 Index)
 			Out += FString::Printf(TEXT("  %s\n"), *E.Detail);
 		}
 	}
+	if (bGHasReactionSnapshot)
+	{
+		const TCHAR* ReactionSide = GReactionSnapshot.ReactionFighter == 0 ? TEXT("Player") : TEXT("Opponent");
+		Out += FString::Printf(TEXT("\nHypothetical reaction: %s can react with %s at Instant %d"),
+			ReactionSide, BuhCombat::MoveName(GReactionSnapshot.ObservedThreatAction), GReactionSnapshot.Instant);
+	}
+	else if (GBranchInstant >= 0 && bGHasBranchTimeline)
+	{
+		Out += TEXT("\nHypothetical reaction: no legal reaction opportunity");
+	}
 	return Out;
 }
 
@@ -2596,33 +2690,105 @@ static FAutoConsoleCommand GBUHRunCombatTestsCmd(
 		UE_LOG(LogTemp, Display, TEXT("=== BUH.RunCombatTests: done, report written to %s ==="), *FilePath);
 	}));
 
+static UMaterialInterface* GetGhostReactionMaterial()
+{
+	static UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/BUH/Prototypes/TacticalDuel/Materials/MI_GhostReaction.MI_GhostReaction"));
+	return Mat;
+}
+
 void UBuhCombatSim::MoveGhostsToInstant(UObject* WorldContextObject, int32 Instant)
 {
 	UWorld* World = IsValid(WorldContextObject) ? WorldContextObject->GetWorld() : nullptr;
 	if (!World) return;
-	if (!bHasTimeline()) return;
-	const FBuhTimelineSnapshot Snap = GetSnapshotAt(Instant);
-	const float PlayerX = Snap.PlayerX;
-	const float OpponentX = Snap.OpponentX;
-	const float PlayerY = Snap.PlayerY;
-	const float OpponentY = Snap.OpponentY;
-	const float PlayerHeight = Snap.PlayerHeight;
-	const float OpponentHeight = Snap.OpponentHeight;
+
+	const bool bMoveMainGhosts = bHasTimeline();
+	FBuhTimelineSnapshot PlayerSnap;
+	FBuhTimelineSnapshot OpponentSnap;
+	if (bMoveMainGhosts)
+	{
+		if (bGHasBaseTimeline && Instant >= 0 && Instant < GBaseTimeline.Num())
+		{
+			PlayerSnap = GBaseTimeline[Instant];
+		}
+		else
+		{
+			PlayerSnap = GetSnapshotAt(Instant);
+		}
+
+		if (bGHasBranchTimeline && GBranchInstant >= 0 && Instant >= GBranchInstant)
+		{
+			const int32 BranchIndex = Instant - GBranchInstant;
+			if (BranchIndex >= 0 && BranchIndex < GBranchTimeline.Num())
+			{
+				OpponentSnap = GBranchTimeline[BranchIndex];
+			}
+			else
+			{
+				OpponentSnap = PlayerSnap;
+			}
+		}
+		else if (bGHasBaseTimeline && Instant >= 0 && Instant < GBaseTimeline.Num())
+		{
+			OpponentSnap = GBaseTimeline[Instant];
+		}
+		else
+		{
+			OpponentSnap = GetSnapshotAt(Instant);
+		}
+	}
+
+	const float PlayerX = PlayerSnap.PlayerX;
+	const float OpponentX = OpponentSnap.OpponentX;
+	const float PlayerY = PlayerSnap.PlayerY;
+	const float OpponentY = OpponentSnap.OpponentY;
+	const float PlayerHeight = PlayerSnap.PlayerHeight;
+	const float OpponentHeight = OpponentSnap.OpponentHeight;
 	const float PlayerYaw = FMath::RadiansToDegrees(FMath::Atan2(OpponentY - PlayerY, OpponentX - PlayerX));
 	const float OpponentYaw = FMath::RadiansToDegrees(FMath::Atan2(PlayerY - OpponentY, PlayerX - OpponentX));
+	const float ReactionYaw = bGHasReactionSnapshot
+		? FMath::RadiansToDegrees(FMath::Atan2(GReactionSnapshot.OpponentY - GReactionSnapshot.PlayerY, GReactionSnapshot.OpponentX - GReactionSnapshot.PlayerX))
+		: 0.f;
+	UMaterialInterface* ReactionMat = GetGhostReactionMaterial();
+
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		AActor* Actor = *It;
 		if (!Actor) continue;
 		if (Actor->Tags.Contains(TEXT("GhostPlayer")))
 		{
-			Actor->SetActorLocation(FVector(PlayerX, PlayerY, 90.0f + PlayerHeight));
-			Actor->SetActorRotation(FRotator(0.0f, PlayerYaw, 0.0f));
+			if (bMoveMainGhosts)
+			{
+				Actor->SetActorLocation(FVector(PlayerX, PlayerY, 90.0f + PlayerHeight));
+				Actor->SetActorRotation(FRotator(0.0f, PlayerYaw, 0.0f));
+			}
 		}
 		else if (Actor->Tags.Contains(TEXT("GhostOpponent")))
 		{
-			Actor->SetActorLocation(FVector(OpponentX, OpponentY, 90.0f + OpponentHeight));
-			Actor->SetActorRotation(FRotator(0.0f, OpponentYaw, 0.0f));
+			if (bMoveMainGhosts)
+			{
+				Actor->SetActorLocation(FVector(OpponentX, OpponentY, 90.0f + OpponentHeight));
+				Actor->SetActorRotation(FRotator(0.0f, OpponentYaw, 0.0f));
+			}
+		}
+		else if (Actor->Tags.Contains(TEXT("GhostReaction")))
+		{
+			Actor->SetActorHiddenInGame(!bGHasReactionSnapshot);
+			if (bGHasReactionSnapshot)
+			{
+				Actor->SetActorLocation(FVector(GReactionSnapshot.PlayerX, GReactionSnapshot.PlayerY, 90.0f + GReactionSnapshot.PlayerHeight));
+				Actor->SetActorRotation(FRotator(0.0f, ReactionYaw, 0.0f));
+				if (ReactionMat)
+				{
+					for (UActorComponent* Comp : Actor->GetComponents())
+					{
+						if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Comp))
+						{
+							Mesh->SetMaterial(0, ReactionMat);
+							break;
+						}
+					}
+				}
+			}
 		}
 	}
 }

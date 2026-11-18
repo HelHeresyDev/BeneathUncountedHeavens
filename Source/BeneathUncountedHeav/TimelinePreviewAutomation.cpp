@@ -14,6 +14,8 @@
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
 #include "Editor.h"
+#include "Engine/Engine.h"
+#include "Blueprint/UserWidget.h"
 #include "PlayInEditorDataTypes.h"
 #include "UObject/Script.h"
 #include "HAL/IConsoleManager.h"
@@ -609,8 +611,10 @@ bool FBuhPlanningWalkHypotheticalBranchTest::RunTest(const FString& Parameters)
 	for (const FBuhTimelineSnapshot& Sn : BranchTL) if (Sn.bReactionOpportunity) { bReaction = true; break; }
 	TestTrue(TEXT("branch contains the reaction opportunity"), bReaction);
 	TestEqual(TEXT("branch ends at the reaction pause"), BranchTL.Last().StoppedReason, 5);
-	TestTrue(TEXT("installed timeline matches the branch"), UBuhCombatSim::GetTimelineLength() == BranchTL.Num());
+	TestTrue(TEXT("current timeline remains the base"), UBuhCombatSim::GetTimelineLength() == BaseTL.Num());
 	TestEqual(TEXT("branch instant recorded"), UBuhCombatSim::GetBranchInstant(), 5);
+	TestTrue(TEXT("branch timeline stored separately"), UBuhCombatSim::bHasBranchTimeline());
+	TestTrue(TEXT("reaction snapshot stored"), UBuhCombatSim::bHasReactionSnapshot());
 
 	UBuhCombatSim::ClearPreview();
 	return true;
@@ -651,9 +655,11 @@ bool FBuhPlanningWalkHypotheticalBranchFreshTest::RunTest(const FString& Paramet
 	for (const FBuhTimelineSnapshot& Sn : BranchTL) if (Sn.bReactionOpportunity) { bReaction = true; break; }
 	TestTrue(TEXT("branch contains the reaction opportunity"), bReaction);
 	TestEqual(TEXT("branch ends at the reaction pause"), BranchTL.Last().StoppedReason, 5);
-	TestTrue(TEXT("installed timeline matches the branch"), UBuhCombatSim::GetTimelineLength() == BranchTL.Num());
+	TestTrue(TEXT("current timeline remains the base"), UBuhCombatSim::GetTimelineLength() == BaseTL.Num());
 	TestEqual(TEXT("branch instant recorded"), UBuhCombatSim::GetBranchInstant(), 5);
 	TestEqual(TEXT("base timeline is preserved after branching"), UBuhCombatSim::GetBaseTimelineLength(), BaseTL.Num());
+	TestTrue(TEXT("branch timeline stored separately"), UBuhCombatSim::bHasBranchTimeline());
+	TestTrue(TEXT("reaction snapshot stored"), UBuhCombatSim::bHasReactionSnapshot());
 	TestTrue(TEXT("ghost is stopped before the Walk destination"), BranchTL.Last().PlayerX > BaseTL.Last().PlayerX);
 	TestEqual(TEXT("opponent ghost remains stationary"), BranchTL.Last().OpponentX, 500.f);
 
@@ -1330,5 +1336,128 @@ bool FBuhPieUIProbeTest::RunTest(const FString& Parameters)
 		GEditor->PlayMap(nullptr, nullptr, -1, 0, false);
 	}
 	AddCommand(new FBuhWaitForPieUICommand());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBuhRefreshUIReactionGhostTest, "BUH.RefreshUIReactionGhost",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBuhRefreshUIReactionGhostTest::RunTest(const FString& Parameters)
+{
+	if (!GEditor)
+	{
+		AddError(TEXT("Editor unavailable."));
+		return false;
+	}
+
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	if (!World)
+	{
+		AddError(TEXT("Editor world unavailable."));
+		return false;
+	}
+
+	AActor* CM = nullptr;
+	AActor* Ghost = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetClass()->GetName().Contains(TEXT("BP_CombatManager")))
+		{
+			CM = *It;
+		}
+		if (It->Tags.Contains(TEXT("GhostReaction")))
+		{
+			Ghost = *It;
+		}
+	}
+
+	if (!CM || !Ghost)
+	{
+		AddError(TEXT("BP_CombatManager or GhostReaction actor not found."));
+		return false;
+	}
+
+	// BeginPlay sets the manager's fighter object properties via tags, but it does not
+	// run in the editor world. RefreshUI dereferences GetPlayerFighter/GetOpponentFighter
+	// for the distance text, so set them here or the call segfaults on a null actor.
+	AActor* PlayerFighter = nullptr;
+	AActor* OpponentFighter = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* A = *It;
+		if (!A->GetClass()->GetName().Contains(TEXT("BP_Fighter")))
+		{
+			continue;
+		}
+		bool bIsGhost = false;
+		if (FProperty* P = FindFProperty<FProperty>(A->GetClass(), TEXT("bIsGhost")))
+		{
+			bIsGhost = *P->ContainerPtrToValuePtr<bool>(A);
+		}
+		if (bIsGhost)
+		{
+			continue;
+		}
+		if (A->ActorHasTag(FName(TEXT("PlayerFighter"))) && !PlayerFighter)
+		{
+			PlayerFighter = A;
+		}
+		if (A->ActorHasTag(FName(TEXT("OpponentFighter"))) && !OpponentFighter)
+		{
+			OpponentFighter = A;
+		}
+	}
+	if (FObjectProperty* PFProp = FindFProperty<FObjectProperty>(CM->GetClass(), FName("PlayerFighter")))
+	{
+		PFProp->SetObjectPropertyValue_InContainer(CM, PlayerFighter);
+	}
+	if (FObjectProperty* OFProp = FindFProperty<FObjectProperty>(CM->GetClass(), FName("OpponentFighter")))
+	{
+		OFProp->SetObjectPropertyValue_InContainer(CM, OpponentFighter);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("BUH.RefreshUIReactionGhost step MakeState"));
+	FBuhCombatState State = UBuhCombatSim::MakeState(-500, 500, 100, 100, 0);
+	State = UBuhCombatSim::WithPlayerWalkTarget(State, 500.f, 0.f);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.RefreshUIReactionGhost step GenerateAndStoreBaseTimeline"));
+	UBuhCombatSim::GenerateAndStoreBaseTimeline(State, 6, 100);
+
+	int32 BranchInstant = 0;
+	bool bLegal = false;
+	FString Reason;
+	UE_LOG(LogTemp, Warning, TEXT("BUH.RefreshUIReactionGhost step GenerateBranchFromBase"));
+	UBuhCombatSim::GenerateBranchFromBase(0, 1, BranchInstant, bLegal, Reason);
+	UE_LOG(LogTemp, Warning, TEXT("BUH.RefreshUIReactionGhost step branch done legal=%d reason=%s"), bLegal ? 1 : 0, *Reason);
+
+	TestTrue(TEXT("Hypothetical branch is legal"), bLegal);
+	TestTrue(TEXT("Reaction snapshot exists"), UBuhCombatSim::bHasReactionSnapshot());
+	if (!UBuhCombatSim::bHasReactionSnapshot())
+	{
+		AddError(FString::Printf(TEXT("No reaction snapshot: %s"), *Reason));
+		return false;
+	}
+
+	// Position the ghosts at the reaction instant. The gold reaction ghost must be
+	// shown at the reaction snapshot coordinates while the base timeline is intact.
+	UE_LOG(LogTemp, Warning, TEXT("BUH.RefreshUIReactionGhost step MoveGhostsToInstant (reaction)"));
+	UBuhCombatSim::MoveGhostsToInstant(World, 0);
+
+	const FBuhTimelineSnapshot Snap = UBuhCombatSim::GetReactionSnapshot();
+	const FVector GhostLoc = Ghost->GetActorLocation();
+	TestTrue(TEXT("GhostReaction X matches reaction snapshot"), FMath::Abs(GhostLoc.X - Snap.PlayerX) < 1.0f);
+	TestTrue(TEXT("GhostReaction Y matches reaction snapshot"), FMath::Abs(GhostLoc.Y - Snap.PlayerY) < 1.0f);
+	TestTrue(TEXT("GhostReaction Z matches reaction snapshot"), FMath::Abs(GhostLoc.Z - (90.0f + Snap.PlayerHeight)) < 1.0f);
+
+	const bool bHiddenBefore = Ghost->IsHidden();
+	TestFalse(TEXT("GhostReaction visible with reaction snapshot"), bHiddenBefore);
+
+	// Clear the preview and confirm the reaction ghost hides.
+	UE_LOG(LogTemp, Warning, TEXT("BUH.RefreshUIReactionGhost step ClearPreview"));
+	UBuhCombatSim::ClearPreview();
+	UBuhCombatSim::MoveGhostsToInstant(World, 0);
+
+	const bool bHiddenAfter = Ghost->IsHidden();
+	TestTrue(TEXT("GhostReaction hidden after ClearPreview"), bHiddenAfter);
+
 	return true;
 }
