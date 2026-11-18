@@ -1,49 +1,98 @@
-I agree. That's a better design for **Beneath Uncounted Heavens**, especially because we're trying to make combat feel like chess rather than a conventional action game.
+# BUH — Restore Opponent Prediction Controls After Reaction Ghost Update
 
-The problem with our current approach is that choosing a hypothetical attack **replaces the original prediction**. But the purpose of hypothetical actions is to explore possibilities, not discard information.
+Current baseline: commit `edca825`.
 
-## **Proposed design: Multiple prediction ghosts**
+The user reports losing the ability to predict enemy actions following implementation of the separate gold reaction ghost.
 
-We should separate the uninterrupted movement prediction from hypothetical reaction points.
+## Observed regression
 
-**Main movement ghost — cyan**
+In graphical PIE:
 
-Follows the original Walk trajectory as you scrub. Never stops just because you select a hypothetical attack.
+- The right-side hypothetical opponent action controls have disappeared.
+- The panel displays prediction text but no Quick, Heavy, Guard, or Dodge buttons.
+- The actual-distance display reads `D: 0.0` despite separated fighters.
+- The player can still scrub the reaction timeline.
 
-**Reaction ghost — gold**
+Previous builds displayed the four opponent-action buttons.
 
-Remains fixed at the predicted location where your fighter would receive a reaction opportunity.
+## 1. Investigate the saved UI Blueprint
 
-For example, suppose you plan a 30-Instant Walk and choose a hypothetical Heavy at Instant 4.
+Inspect the actual saved `WBP_CombatUI`:
 
-Full movement timeline
+- Widget tree, including RightPanel and its children.
+- `RefreshUI`
+- `EventGraph`
+- Four hypothetical-opponent button handlers.
+- `RegeneratePredictionPreview`
+- `ScrubTimeline`
 
-Illustrative timeline: the marker indicates the hypothetical reaction, while the baseline remains available through Instant 30.
+Determine why the opponent-action controls are missing.
 
-When you scrub to Instant 15, the cyan ghost moves to its Instant 15 location, but the gold ghost remains where the reaction would have occurred at Instant 4.
+Check each button's visibility, enabled state, parent visibility, opacity, layout geometry, and execution paths.
 
-This lets you compare the uninterrupted movement and the potential interruption simultaneously.
+Pay particular attention to the recent deletion of 10 nodes from `RefreshUI`, documented in `notes.md` §9.63.
 
-## **How I would implement it**
+Do not assume a successful Blueprint compilation proves the UI is working.
 
-Importantly, **we should still calculate the hypothetical branch, but we shouldn't replace the displayed main timeline with it**.
+## 2. Restore opponent predictions
 
-The existing `GenerateBranchFromBase()` calculates the reaction correctly, but installs its combined result as the current timeline. I'd separate those responsibilities.
+Planning mode (State 0):
 
-The revised architecture would work as follows:
+- Show Quick, Heavy, Guard, and Dodge hypothetical actions.
+- Selecting an action at the chosen timeline Instant must generate a separate hypothetical branch.
+- Preserve the full baseline movement timeline.
+- Preserve the moving cyan player ghost.
+- Show the fixed gold reaction ghost at the calculated reaction opportunity.
+- Display the selected hypothetical opponent action and its predicted consequences.
+- Allow changing or clearing the hypothetical selection.
 
-1. Preserve the existing baseline timeline as the primary scrubber data.
-2. Calculate the hypothetical attack in a separate simulation without overwriting that baseline.
-3. Find the actual reaction snapshot and position. For Dash or Jump, this may occur later than the attack's selected start Instant.
-4. Position a reusable gold reaction ghost at those coordinates and mark that Instant on the timeline.
-5. When the hypothetical action or its start Instant changes, update the reaction ghost. When the hypothetical is cleared, hide it.
+Reaction mode (State 3):
 
-If the hypothetical action produces no legal reaction opportunity, the UI should say so rather than inventing a reaction location.
+- Display the already-committed opponent action clearly.
+- Do not allow a new opponent action while the opponent is busy.
+- Show an explanatory unavailable state rather than silently removing prediction controls.
+- Preserve the Continue preview and its decision-boundary stopping behavior.
 
-## **One additional improvement**
+## 3. Preserve separate timelines
 
-Eventually, I'd like to allow **multiple hypothetical reactions on the same movement timeline**, so you could see what happens if the opponent attacks at Instant 4, Instant 8, or Instant 12.
+The latest implementation correctly stores `GBranchTimeline` separately from the baseline.
 
-We don't need to implement that yet. One reaction ghost is sufficient to establish the design.
+Do not revert to replacing the main timeline with hypothetical branches.
 
-**My recommendation:** Keep the full baseline Walk prediction visible at all times, treat hypothetical attacks as independent annotations, and use the gold ghost to show the resulting reaction position. Then we can build more elaborate tactical comparisons on that foundation.
+Use `bHasBranchTimeline()` and `GetReactionSnapshot()` to display branch information independently.
+
+Verify that the right panel reports the hypothetical branch rather than merely repeating baseline snapshot information.
+
+## 4. Restore the actual-distance readout
+
+The previous `RefreshUI` changes removed the actor-position nodes used to calculate actual distance.
+
+Restore a valid distance calculation using the real fighter positions, with safe actor validation.
+
+Do not substitute the predicted distance for the actual distance.
+
+## 5. Verification
+
+Test these scenarios:
+
+A. Planning Walk, no hypothetical action: cyan ghost follows the full movement prediction.
+
+B. Planning Walk, hypothetical Heavy at Instant 5: baseline continues, gold reaction ghost appears at the actual reaction opportunity, and the hypothetical branch information is displayed.
+
+C. Change Heavy to Quick: reaction prediction updates without replacing the baseline.
+
+D. Clear hypothetical selection: gold ghost disappears; baseline remains.
+
+E. Actual Heavy reaction → Continue: existing reaction preview still works.
+
+F. Reset: all hypothetical data and reaction ghosts are cleared.
+
+G. Actual and predicted distance displays remain accurate.
+
+Read back the actual Blueprint graphs and widget properties after editing.
+
+Run all BUH tests, build, save, update notes.md and todo.md, and commit.
+
+Do not call this resolved until the user verifies the controls and ghost behavior in graphical PIE.
+
+**Critical restriction:** Do not remove existing UI nodes simply to make a headless test stop crashing. If the test cannot safely execute a gameplay-dependent widget in the editor world, fix the test environment or narrow its assertions instead.

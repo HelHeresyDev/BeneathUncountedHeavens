@@ -1928,6 +1928,26 @@ FBuhReactionInfo UBuhCombatSim::GetReactionInfoFromManager(UObject* Manager)
 	return GetReactionInfo(bOpp, Fighter, Threat, Instant, State);
 }
 
+FString UBuhCombatSim::GetActualDistanceText(UObject* Manager)
+{
+	AActor* Player = nullptr;
+	AActor* Opponent = nullptr;
+	if (Manager)
+	{
+		UClass* C = Manager->GetClass();
+		if (FObjectProperty* P = CastField<FObjectProperty>(FindFProperty<FProperty>(C, FName("PlayerFighter"))))
+			Player = Cast<AActor>(*P->ContainerPtrToValuePtr<UObject*>(Manager));
+		if (FObjectProperty* P = CastField<FObjectProperty>(FindFProperty<FProperty>(C, FName("OpponentFighter"))))
+			Opponent = Cast<AActor>(*P->ContainerPtrToValuePtr<UObject*>(Manager));
+	}
+	if (!Player || !Opponent)
+	{
+		return TEXT("D: ?");
+	}
+	const float Dist = FMath::Abs(Player->GetActorLocation().X - Opponent->GetActorLocation().X);
+	return FString::Printf(TEXT("D: %.1f"), Dist);
+}
+
 // Stage 2: the full authoritative FBuhCombatState at each snapshot index, stored
 // in parallel with GCurrentTimeline. FBuhTimelineSnapshot is presentation-only and
 // cannot resume combat; branching at an Instant requires this complete state (all

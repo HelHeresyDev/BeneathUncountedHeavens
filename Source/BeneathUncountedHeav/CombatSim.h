@@ -216,6 +216,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FBuhReactionInfo GetReactionInfoFromManager(UObject* Manager);
 
+	// Returns "D: <distance>" using the real fighter positions, with safe actor
+	// validation. Returns "D: ?" when either fighter is missing (editor world).
+	UFUNCTION(BlueprintCallable, Category = "CombatSim")
+	static FString GetActualDistanceText(UObject* Manager);
+
 	UFUNCTION(BlueprintCallable, Category = "CombatSim")
 	static FString PredictText(const FBuhCombatState& InState, int32 PlayerDecision, int32 OpponentDecision);
 
