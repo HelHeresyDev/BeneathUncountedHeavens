@@ -1,68 +1,111 @@
-I want to test how well you can use OpenSew-2 in Blender 5.3 to create clothing for my game, Beneath Uncounted Heavens.
+I want you to independently evaluate and use the Devil Designer clothing-design extension installed in Blender 5.3.
 
-You have access to Blender through Blender MCP. OpenSew-2 is already installed and its Clothing Design workspace works.
+This is an experiment for my Unreal Engine 5.8.4 wuxia/xianxia RPG, Beneath Uncounted Heavens.
 
-**Your task:** Independently create a convincing wuxia/xianxia cultivator outfit using OpenSew-2.
+**Primary objective:** Determine whether you can use Devil Designer through Blender MCP to create fitted, simulated 3D clothing suitable for our automated character-generation pipeline.
 
-### Goal
+### Phase 1 — Investigate Devil Designer
 
-Create a traditional outfit for a young male martial artist, including:
+Before attempting to create clothing:
 
-- A crossed-collar robe or tunic.
-- Long, reasonably loose sleeves.
-- A waist sash or belt.
-- Trousers underneath.
-- A blue-and-white color scheme.
+1. Locate the installed Devil Designer extension.
+2. Examine its Python source code, operators, data structures, and simulation implementation.
+3. Determine how its pattern editor represents garment panels, vertices, edges, and sewing connections.
+4. Identify how panels are positioned around a character.
+5. Determine how the simulation can be started, monitored, and stopped programmatically.
+6. Investigate whether its functionality can be accessed through Blender MCP without manual mouse interaction.
 
-The character should be able to move, fight, and perform martial-arts techniques without catastrophic clothing deformation.
+Do not assume that an operation is available just because the GUI contains a button. Verify the Python implementation.
 
-### Your approach
+### Phase 2 — Create a test garment
 
-I want you to figure out how to use OpenSew yourself.
+Start in a fresh Blender scene.
 
-1. Start a new Blender scene using OpenSew's male avatar.
-2. Inspect the installed OpenSew-2 add-on, its Python API, operators, garment presets, and simulation tools.
-3. Determine how to programmatically construct and manipulate sewing patterns through Blender MCP.
-4. Develop your own approach to creating the outfit.
-5. Use genuine OpenSew sewing patterns and garment simulation, not primitive cylinders or cones disguised as clothing.
-6. Experiment with pattern shapes, sewing connections, garment placement, collision settings, and fabric behavior.
-7. Diagnose problems and attempt sensible corrections rather than repeatedly executing the same failed operation.
-8. Inspect your results visually throughout development.
+Use MPFB or another suitable existing human-generation tool to create a male avatar.
 
-### Known issues
+Using **Devil Designer's actual garment construction and simulation functionality**, attempt to create a simple upper-body garment.
 
-During my manual testing:
+Start with a sleeveless tunic. If successful, attempt to add long sleeves and a crossed collar suitable for a wuxia cultivator.
 
-- Trousers worked reasonably well.
-- The T-shirt developed serious shoulder and sleeve distortions.
-- The tank top also bunched up around the shoulders.
-- The Relax operation did not significantly fix the upper-body garments.
+Requirements:
 
-Investigate these problems if they affect your work. Do not assume the default garment presets are reliable.
+- Construct clothing using genuine garment panels and sewing connections.
+- Position the garment correctly around the avatar.
+- Sew the panels together.
+- Run the garment simulation.
+- Evaluate how well the fabric fits the body.
+- Correct problems you discover.
 
-### Evaluation criteria
+Do not substitute cylinders, cones, or other primitive meshes for Devil Designer-generated clothing.
 
-I care about:
+### Phase 3 — Investigate automation
 
-- Whether you can independently discover and use OpenSew's functionality.
-- Whether you can construct recognizable clothing from sewing patterns.
-- Whether the resulting garment fits the avatar.
-- Whether the garment behaves plausibly during simulation.
-- Whether you can recognize and correct visible failures.
-- Whether you can develop a better approach than my initial manual experiments.
+I want this process to eventually work through OpenCode without manual assistance.
 
-You have freedom to experiment with different pattern designs, add-on settings, and construction techniques.
+Determine whether it is possible to:
 
-Do not claim visual success based solely on successful Python execution or modifier configuration. Inspect the actual result.
+- Generate patterns from Python.
+- Specify garment measurements programmatically.
+- Define seams between panels.
+- Position panels around an arbitrary MPFB character.
+- Execute simulations without manual GUI interaction.
+- Detect when simulation is complete.
+- Export or preserve the resulting mesh.
+- Transfer skin weights to a character's skeleton.
 
-### Deliverables
+If Devil Designer lacks some of these capabilities, distinguish between functionality that is missing and functionality that exists but is difficult to access.
 
-- Save your work under `blender-tests/opensew_qwen_experiment/`.
-- Create a final `.blend` file, even if the result is imperfect.
-- Save viewport screenshots showing the finished garment from multiple angles.
-- Document what you tried, what succeeded, what failed, and what you learned about OpenSew.
-- Clearly distinguish completed features from unfinished or defective ones.
+You may create experimental Python helper scripts if necessary. Do not modify the installed extension's source code without first explaining why.
 
-Do not modify my previous Blender character files or import anything into Unreal.
+### Phase 4 — Test reliability
 
-**Important:** This is an experiment in your ability to independently operate unfamiliar 3D modeling software. I want you to investigate, make decisions, test hypotheses, and evaluate your own results rather than simply follow a predetermined modeling recipe.
+Test the garment on the avatar.
+
+Inspect it from the front, side, and back. Look for:
+
+- Fabric intersections with the body.
+- Incorrect panel placement.
+- Open or misaligned seams.
+- Severe stretching or bunching.
+- Unnatural shoulder deformation.
+- Simulation instability.
+
+Be critical of your own results. Previous experiments produced visibly defective garments that were incorrectly reported as successful.
+
+Blender may temporarily become unresponsive during simulation. This does not necessarily indicate a crash. Allow legitimate calculations to complete, and avoid launching overlapping simulation operations.
+
+### Phase 5 — Deliverables
+
+Save your work under:
+
+`blender-tests/devil_designer_qwen_experiment/`
+
+Provide:
+
+1. A Blender project containing your best garment.
+2. Screenshots showing the garment from multiple angles.
+3. Any Python scripts you developed to automate Devil Designer.
+4. A report detailing what worked, what failed, and how you solved problems.
+5. An assessment of whether Devil Designer can be integrated into our automated pipeline.
+6. A comparison with OpenSew-2, particularly regarding upper-body garment construction and simulation.
+
+### Important constraints
+
+- Preserve all existing character prototypes and Blender project files.
+- Do not modify my OpenSew fork.
+- Do not modify Unreal project assets.
+- Do not install additional software unless necessary.
+- Investigate existing functionality before implementing replacements.
+- If the extension cannot reasonably be automated through Blender MCP, explain the technical obstacle rather than pretending to have completed the task.
+
+**You have substantial freedom to investigate, experiment, and solve problems independently.**
+
+The objective is not necessarily a beautiful finished outfit. It is to establish whether Devil Designer can become a reliable, AI-controlled component of our 3D asset-generation pipeline.
+
+### Status (2026-11-19)
+
+- **Phase 1 — Investigate:** DONE. Mapped operators, `Document`/`Session`/`Pattern`/`Seam` data model, `arrangement_record` panel placement, XPBD simulation, and confirmed full MCP accessibility with no mouse.
+- **Phase 2 — Test garment:** DONE (partial). Sleeveless tunic built and draped cleanly via genuine panels + seams. Long sleeves FAIL (flat flaps trap against arms, body guard rejects `keep_drape`); crossed collar has no starter.
+- **Phase 3 — Automation:** DONE. Pattern generation, measurements, seams, panel placement, simulation start/monitor/stop, and completion detection are all scriptable. **Missing:** skin-weight transfer (output is a static drape, not rigged).
+- **Phase 4 — Reliability:** DONE. Front/back clean; side-seam gap from the right; long-sleeve intersection failure documented.
+- **Phase 5 — Deliverables:** DONE. `devil_designer_tunic.blend`, `tunic_{front,right,back}.png`, `longsleeve_trapped.png`, and `devil_designer_findings.md` (report + pipeline assessment + OpenSew-2 comparison) in `blender-tests/devil_designer_qwen_experiment/`.

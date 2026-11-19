@@ -1537,3 +1537,13 @@ There is no `cd.remove_garment` operator. Deleting a garment to redraft requires
 Relax via `ops.step_relax` blocks the Blender UI until the `frames_per_call` batch completes. With `frames_per_call=50` the UI was unresponsive for 30+ seconds per call. Reducing to `frames_per_call=10` with `time_budget_s=15.0` made it manageable. Suggest the add-on yield to the event loop between frames.
 
 Materials: white trousers and inner robe, blue sash, light-blue outer robe. Three-angle renders saved to `blender-tests/opensew_qwen_experiment/cultivator_{front,right,back}.png`. Full findings in `blender-tests/opensew_qwen_experiment/opensew2_buh_1.0.4_findings.md`.
+
+### 9.73 Devil Designer headless garment experiment
+
+Evaluated the `blender_org.devil_designer` v0.13.0 extension for automated clothing. The full pipeline is scriptable with no mouse: `HumanService.create_human()` → `starters.create_tank_starter(measurements, fabric, name, extra_length, hem_flare)` → `scene.dd_document = doc.dumps()` + `scene.dd_avatar` → `arrangement.ensure_volumes(context, force=True)` → `garment.build_panels` + `compile_garment` → manual `scene.frame_set(f)` stepping → `garment.keep_drape(context)`.
+
+Background-mode gotchas: `start_playback`/`stop` are no-ops (no screen) so frames must be advanced manually; volume fitting must use the synchronous `ensure_volumes(force=True)` because the default `start_fit` is an async generator job that never completes headlessly. Extension modules import as `bl_ext.blender_org.devil_designer` / `bl_ext.blender_org.mpfb` (not top-level), and the MCP exec namespace does not inject `bpy` — every snippet must `import bpy`.
+
+Reliability: the sleeveless tunic drapes cleanly front/back but shows a see-through gap at the side seams from the right. The `create_long_sleeve_starter` is not a true set-in sleeve — it is a tee with flat rectangular flaps (`sleeve_scale=3.2`, `arrangement['flat']=True`) that trap against the arms; `keep_drape` is rejected by the body guard (`ValueError: 8 cloth points are inside Human, up to 32.2 mm`) after 300 frames. No crossed-collar starter exists. `keep_drape`'s body guard is a hard failure, not a warning.
+
+Key limitation for BUH: `keep_drape` bakes a **static** draped mesh with **no skin weights / rigging transfer**, so the garment will not deform with an animated rig. Verdict: good for rapid static concept drapes, not sufficient as the sole clothing pipeline for animated characters — OpenSew-2 (skinned, rigged output) is the better production fit. Deliverables in `blender-tests/devil_designer_qwen_experiment/` (`devil_designer_tunic.blend`, `tunic_{front,right,back}.png`, `longsleeve_trapped.png`, `devil_designer_findings.md`).
