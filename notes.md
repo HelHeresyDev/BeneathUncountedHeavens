@@ -1473,3 +1473,21 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 - Original `mpfb_cultivator_v1.blend` (2,377,339 bytes) and all previous character files unchanged; nothing imported into Unreal.
 
 **Lesson:** Judge a garment's animation suitability with a posed deformation test (arm raise + leg raise from a side orthographic view), not a static still — a closed robe tube looks fine at rest but clips the moment a leg moves. And check for a front/side slit before committing to a robe for an animated character.
+
+### 9.67 MPFB cultivator v4 kimono — texture-channel recolor + 5-pose deformation test (RESOLVED)
+
+**Problem:** Recolor `mindfront_kimono` into a male cultivator outfit (indigo robe, white trim, contrasting sash) without rebuilding the mesh, then prove it survives martial-arts movement. The garment's single material mixed robe, collar, cuffs, and sash in one texture, so a flat recolor would hit every region at once.
+
+**Approach (verified):**
+1. **Sampled face texture colors are bimodal in the G channel.** Robe faces sit at G≈0.55–0.60 (1,664 faces), trim faces at G≈0.70–0.75 (1,773 faces), with an empty gap at 0.65–0.70. `G > 0.67` cleanly separates cream trim from pink robe — no per-face hand-picking needed.
+2. **Built three `Principled BSDF` materials** (`M_Robe_Indigo` (0.03,0.04,0.18), `M_Trim_White` (0.82,0.82,0.82), `M_Sash_Crimson` (0.45,0.06,0.08)), all roughness 0.7, reusing the original `normalmapTexture` so the baked folds survive the recolor. Replaced the single material slot with these three.
+3. **Assigned per face:** `G<=0.67` → robe; cream faces with `0.82<=z<=1.02 and |x|<0.28` (full waist band, no y restriction so the back is covered) or `0.55<=z<=0.80 and |x|<0.09 and y<-0.10` (hanging tie-ends) → sash; remaining cream → trim. Final counts: robe 1,688 / trim 198 / sash 1,575.
+4. **Pose-test gotcha — local axes are not world axes.** Extracted rest-pose local X/Y/Z per bone before posing: thigh local X negative = leg forward, `upperarm_l` local X positive = forward swing, pelvis local Z ≈ world forward. Posed in the bones' local frame, not by guessing world directions.
+
+**Fix / verified state:**
+- All five combat poses (walking stride, deep wide stance, high front kick, raised-arm punch, crouch) rendered from front + side with no clipping, excessive stretch, or detached geometry. The long robe billows/flares with leg movement (expected), the sash stays at the waist, sleeves follow the arms.
+- Rest pose restored; front/side/back verification renders clean (indigo robe, white V-collar + cuffs, crimson sash band/knot/ties, open front preserved, wide sleeves intact).
+- Saved `blender-tests/mpfb_cultivator_v4_kimono.blend` (2,718,819 bytes). Re-opened in fresh background Blender: 3 materials present, face counts match, 53-bone `Human.rig` preserved, Armature modifier → `Human.rig`, parent `Human.rig`, 20 vertex groups, temp camera/light removed.
+- All prior character files (v1/v2/v3_animated/donitz/mindfront test) unchanged; nothing imported into Unreal.
+
+**Lesson:** For a single-texture garment, histogram the sampled per-face texture colors first — a clean bimodal gap gives a reliable recolor threshold without hand-painting faces. And always extract each bone's rest-pose local axes before posing; local rotation axes do not map to world directions, so posing by guessed world axes silently bends the wrong way.
