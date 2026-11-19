@@ -1491,3 +1491,11 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 - All prior character files (v1/v2/v3_animated/donitz/mindfront test) unchanged; nothing imported into Unreal.
 
 **Lesson:** For a single-texture garment, histogram the sampled per-face texture colors first — a clean bimodal gap gives a reliable recolor threshold without hand-painting faces. And always extract each bone's rest-pose local axes before posing; local rotation axes do not map to world directions, so posing by guessed world axes silently bends the wrong way.
+
+### 9.68 OpenSew2 fitting and simulation on Blender 5.3
+
+Stock OpenSew2 reproduced the shoulder and upper-back clipping on Theo. The stock T-shirt had 135 triangles intersecting the body after settling. More arrangement clearance and leaving the collar unpinned on a standalone top brought that count to zero. Positioning the jacket’s longer sleeves farther along the arms also brought its body intersections to zero. The T-shirt and jacket cleared Theo at viewport and render subdivision, and both cleared Nora at viewport subdivision. The jacket still discarded three overlong stitches on each avatar. The saved comparisons show the remaining seam and collar irregularities.
+
+Sew, Drape, Settle, and Relax now yield between frames when invoked graphically. An isolated Blender 5.3.0 test processed UI callbacks throughout Drape, cancelled Relax with Escape, and completed a subsequent Settle. The solver still takes time per frame. For Qwen, invoke with `INVOKE_DEFAULT`, poll `ops.simulation_status()`, and run `sim.body_fit()` before checking the garment visually. Check pose deformation separately for animated clothing.
+
+The tested installer is `blender-tests/OpenSew2-BUH-1.0.1.zip`. The three-angle comparisons and fitted Blender scenes are in `blender-tests/opensew2-validation/`. [OpenSew2 fork and Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/tree/buh/blender-5.3)
