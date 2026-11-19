@@ -1496,6 +1496,15 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 
 Stock OpenSew2 reproduced the shoulder and upper-back clipping on Theo. The stock T-shirt had 135 triangles intersecting the body after settling. More arrangement clearance and leaving the collar unpinned on a standalone top brought that count to zero. Positioning the jacket’s longer sleeves farther along the arms also brought its body intersections to zero. The T-shirt and jacket cleared Theo at viewport and render subdivision, and both cleared Nora at viewport subdivision. The jacket still discarded three overlong stitches on each avatar. The saved comparisons show the remaining seam and collar irregularities.
 
-Sew, Drape, Settle, and Relax now yield between frames when invoked graphically. An isolated Blender 5.3.0 test processed UI callbacks throughout Drape, cancelled Relax with Escape, and completed a subsequent Settle. The solver still takes time per frame. For Qwen, invoke with `INVOKE_DEFAULT`, poll `ops.simulation_status()`, and run `sim.body_fit()` before checking the garment visually. Check pose deformation separately for animated clothing.
+Sew, Drape, Settle, and Relax now yield between frames when invoked graphically. An isolated Blender 5.3.0 test processed UI callbacks throughout Drape, cancelled Relax with Escape, and completed a subsequent Settle. The solver still takes time per frame. In graphical Blender, Qwen can use `INVOKE_DEFAULT`, poll `ops.simulation_status()`, and run `sim.body_fit()` before checking the garment visually. For headless Blender MCP, use the frame-stepping calls in §9.69. Check pose deformation separately for animated clothing.
 
 The tested installer is `blender-tests/OpenSew2-BUH-1.0.1.zip`. The three-angle comparisons and fitted Blender scenes are in `blender-tests/opensew2-validation/`. [OpenSew2 fork and Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/tree/buh/blender-5.3)
+
+
+### 9.69 OpenSew2 headless Blender MCP
+
+Qwen’s outfit attempt reported missing selection context and a timeout on a synchronous Sew request. Blender’s headless MCP bridge waits for each Python request to finish. BUH 1.0.2 uses view-layer selection for import and finalization and lets MCP queue a named garment with `ops.start_sew(bpy.context, garment_name)`, then call `ops.step_sew(bpy.context, frames_per_call=1)` through separate requests. A single frame or weld still runs to completion within a request.
+
+Verified through the actual headless bridge on Blender 5.3.0. Theo’s T-shirt finished 12 stitch frames and 20 settle frames in 37 steps. The slowest request was 1.76 s. All 160 seam vertices welded, armature binding succeeded, and the finalized mesh had zero body intersections in the fitting pose. Import and finalize passed with selection context unavailable. Cancellation and the extension’s supported `read_homefile(use_empty=True, use_factory_startup=True)` reset both passed. The graphical Drape and Escape tests passed again.
+
+The 1.0.2 ZIP is in `blender-tests/OpenSew2-BUH-1.0.2.zip` and is installed in the local Blender 5.3 profile. The crossed-collar robe, extended sleeves, and waist sash still need garment fitting. [Headless Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#headless-blender-mcp)
