@@ -1507,7 +1507,7 @@ Qwen’s outfit attempt reported missing selection context and a timeout on a sy
 
 Verified through the actual headless bridge on Blender 5.3.0. Theo’s T-shirt finished 12 stitch frames and 20 settle frames in 37 steps. The slowest request was 1.76 s. All 160 seam vertices welded, armature binding succeeded, and the finalized mesh had zero body intersections in the fitting pose. Import and finalize passed with selection context unavailable. Cancellation and the extension’s supported `read_homefile(use_empty=True, use_factory_startup=True)` reset both passed. The graphical Drape and Escape tests passed again.
 
-The 1.0.2 installer ZIP is in `blender-tests/OpenSew2-BUH-1.0.2.zip`. The crossed-collar robe, extended sleeves, and waist sash still need garment fitting. [Headless Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#headless-blender-mcp)
+The 1.0.2 installer ZIP is in `blender-tests/OpenSew2-BUH-1.0.2.zip`. The crossed-collar robe and extended sleeves still need garment fitting. The waist sash preset is covered in §9.71. [Headless Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#headless-blender-mcp)
 
 
 ### 9.70 OpenSew2 layered sewing performance
@@ -1517,3 +1517,12 @@ Stepped sewing still took tens of seconds per MCP call on a layered outfit. Ever
 On Blender 5.3.0 with default thread settings, sewing Theo’s T-shirt in a four-garment scene dropped from 62.89 s to 12.38 s at the same mesh resolution, solver quality, and 12 stitch plus 20 settle frames. The headless MCP bridge completed it in four ten-step requests in 12.15 s total, with 3.74 s for the slowest request. All 160 seam vertices welded and the shirt had zero measured body intersections. The stepped cancellation and graphical Drape tests passed, and Sew All completed both garments in a two-layer smoke test.
 
 The 1.0.3 ZIP is in `blender-tests/OpenSew2-BUH-1.0.3.zip` and was verified in the local Blender profile. For layered garments, finish and finalize each inner garment before sewing the garment over it so the outer garment can collide with the fitted mesh without advancing another live inner solver. [Layered sewing guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#layered-sewing-performance)
+
+
+### 9.71 OpenSew2 resumable Relax and waist sash
+
+BUH 1.0.4 adds `ops.start_relax` and `ops.step_relax`. The job retains its progress between MCP requests and checks a five-second default budget between frames or phase changes. The headless bridge completed a 22-frame Relax test in eight requests with a shorter test budget. Cancellation restored the paused outer garment modifiers. Use the existing `ops.simulation_status()` and `ops.cancel_relax()` to inspect or stop the job.
+
+The two-piece `SASH` preset stayed at waist height on Theo and Nora, with all stitches welded and zero body intersections. A two-angle render and a mesh intersection check verified the sash over Theo’s sewn T-shirt. **Show 2D Patterns** hides the drafting collection while the arranged garment stays visible. From MCP, use `build.activate_garment(bpy.context, garment)` to select by name or object. Blender’s collection `find` takes a string.
+
+The saved Qwen scene held the avatar and rig only. Fresh 0.10-fit T-shirt tests on Theo and over sewn trousers showed zero body intersections, so the reported inner-robe clipping was not reproduced. The drafting operator exposes `arrangement_ease` for a repeatable clearance test. The 1.0.4 ZIP is in `blender-tests/OpenSew2-BUH-1.0.4.zip`, and the installed add-on loaded in Blender 5.3.0 and drafted the sash. [Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md)
