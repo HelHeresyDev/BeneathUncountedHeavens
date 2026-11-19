@@ -1,57 +1,68 @@
-Using Blender MCP and MPFB MCP, continue developing the cultivator character for Beneath Uncounted Heavens.
+I want to test how well you can use OpenSew-2 in Blender 5.3 to create clothing for my game, Beneath Uncounted Heavens.
 
-**Starting file:** `blender-tests/mpfb_cultivator_mindfront_kimono_test.blend`
+You have access to Blender through Blender MCP. OpenSew-2 is already installed and its Clothing Design workspace works.
 
-**Goal:** Turn the existing kimono into a visually appropriate male cultivator outfit while preserving the garment's ability to accommodate martial-arts movement.
+**Your task:** Independently create a convincing wuxia/xianxia cultivator outfit using OpenSew-2.
 
-**Status: COMPLETE.** Saved to `blender-tests/mpfb_cultivator_v4_kimono.blend` (2,718,819 bytes). Recolored to indigo robe / white trim / crimson sash, all five combat poses tested clean (no clipping, stretch, or detached geometry), rest pose restored, 53-bone armature and attachment preserved.
+### Goal
 
-### Phase 1 — Inspect [DONE]
+Create a traditional outfit for a young male martial artist, including:
 
-- Inspect the actual mesh topology, materials, armature, and vertex weights.
-- Examine the overlapping front panels and determine how they accommodate leg movement.
-- Identify any differences in fit caused by using a garment originally designed for a female character.
-- Preserve the existing 53-bone game-engine skeleton.
+- A crossed-collar robe or tunic.
+- Long, reasonably loose sleeves.
+- A waist sash or belt.
+- Trousers underneath.
+- A blue-and-white color scheme.
 
-### Phase 2 — Customize the outfit [DONE]
+The character should be able to move, fight, and perform martial-arts techniques without catastrophic clothing deformation.
 
-- Recolor the main robe deep indigo blue.
-- Use white or light-grey fabric for the inner collar and trim.
-- Create a contrasting waist sash.
-- Adjust the garment's proportions if necessary to better fit the male character.
-- Keep the existing front opening functional.
-- Preserve the wide sleeves and overall traditional silhouette.
-- Add subtle fabric roughness and folds where practical.
-- Avoid rebuilding the garment from primitive meshes.
+### Your approach
 
-Prioritize realistic garment proportions and clean geometry over elaborate decoration.
+I want you to figure out how to use OpenSew yourself.
 
-### Phase 3 — Test combat movement [DONE]
+1. Start a new Blender scene using OpenSew's male avatar.
+2. Inspect the installed OpenSew-2 add-on, its Python API, operators, garment presets, and simulation tools.
+3. Determine how to programmatically construct and manipulate sewing patterns through Blender MCP.
+4. Develop your own approach to creating the outfit.
+5. Use genuine OpenSew sewing patterns and garment simulation, not primitive cylinders or cones disguised as clothing.
+6. Experiment with pattern shapes, sewing connections, garment placement, collision settings, and fabric behavior.
+7. Diagnose problems and attempt sensible corrections rather than repeatedly executing the same failed operation.
+8. Inspect your results visually throughout development.
 
-Pose the existing skeleton to test:
+### Known issues
 
-1. A normal walking stride.
-2. A deep, wide martial-arts stance.
-3. A high front kick.
-4. A raised-arm punch.
-5. A crouch.
+During my manual testing:
 
-At each pose, inspect the garment from multiple angles and check for clipping, excessive stretching, and detached geometry.
+- Trousers worked reasonably well.
+- The T-shirt developed serious shoulder and sleeve distortions.
+- The tank top also bunched up around the shoulders.
+- The Relax operation did not significantly fix the upper-body garments.
 
-Do not reduce pose intensity merely to hide clothing problems.
+Investigate these problems if they affect your work. Do not assume the default garment presets are reliable.
 
-Correct issues where feasible without destroying the garment's original topology.
+### Evaluation criteria
 
-### Phase 4 — Verify and save [DONE]
+I care about:
 
-- Restore the character's rest pose.
-- Inspect the final appearance from the front, side, and back.
-- Capture viewport screenshots of the outfit and the strongest test poses.
-- Verify that all clothing remains attached to the armature.
-- Save as `blender-tests/mpfb_cultivator_v4_kimono.blend`.
+- Whether you can independently discover and use OpenSew's functionality.
+- Whether you can construct recognizable clothing from sewing patterns.
+- Whether the resulting garment fits the avatar.
+- Whether the garment behaves plausibly during simulation.
+- Whether you can recognize and correct visible failures.
+- Whether you can develop a better approach than my initial manual experiments.
 
-Preserve all existing Blender files.
+You have freedom to experiment with different pattern designs, add-on settings, and construction techniques.
 
-Do not import into Unreal yet.
+Do not claim visual success based solely on successful Python execution or modifier configuration. Inspect the actual result.
 
-Report visible problems honestly. In particular, do not claim that the garment is animation-ready simply because its armature modifier and vertex weights exist.
+### Deliverables
+
+- Save your work under `blender-tests/opensew_qwen_experiment/`.
+- Create a final `.blend` file, even if the result is imperfect.
+- Save viewport screenshots showing the finished garment from multiple angles.
+- Document what you tried, what succeeded, what failed, and what you learned about OpenSew.
+- Clearly distinguish completed features from unfinished or defective ones.
+
+Do not modify my previous Blender character files or import anything into Unreal.
+
+**Important:** This is an experiment in your ability to independently operate unfamiliar 3D modeling software. I want you to investigate, make decisions, test hypotheses, and evaluate your own results rather than simply follow a predetermined modeling recipe.

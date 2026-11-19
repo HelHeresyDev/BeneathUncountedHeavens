@@ -1526,3 +1526,14 @@ BUH 1.0.4 adds `ops.start_relax` and `ops.step_relax`. The job retains its progr
 The two-piece `SASH` preset stayed at waist height on Theo and Nora, with all stitches welded and zero body intersections. A two-angle render and a mesh intersection check verified the sash over Theo’s sewn T-shirt. **Show 2D Patterns** hides the drafting collection while the arranged garment stays visible. From MCP, use `build.activate_garment(bpy.context, garment)` to select by name or object. Blender’s collection `find` takes a string.
 
 The saved Qwen scene held the avatar and rig only. Fresh 0.10-fit T-shirt tests on Theo and over sewn trousers showed zero body intersections, so the reported inner-robe clipping was not reproduced. The drafting operator exposes `arrangement_ease` for a repeatable clearance test. The 1.0.4 ZIP is in `blender-tests/OpenSew2-BUH-1.0.4.zip`, and the installed add-on loaded in Blender 5.3.0 and drafted the sash. [Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md)
+
+
+### 9.72 OpenSew2 BUH 1.0.4 cultivator outfit experiment
+
+Built a four-garment wuxia/xianxia cultivator outfit (TROUSERS, TSHIRT inner robe, SASH, TSHIRT outer robe) on the `CD_Man_Body` avatar via the graphical Blender MCP bridge. The JACKET preset produced bat-wing sleeves at both fit 0.15 and 0.12 even after relax; the TSHIRT preset at fit 0.12 with `arrangement_ease=0.05` gave wide sleeves that read as intentional flowing xianxia sleeves. Final body fit after relax: 12 vertices inside, 55 intersecting triangles, max depth 0.023 m. The sash is hidden under the outer tunic.
+
+There is no `cd.remove_garment` operator. Deleting a garment to redraft requires `build.activate_garment` + `bpy.ops.cd.unsew('EXEC_DEFAULT', all_garments=False)`, manual object deletion, and removing null seams by index in reverse order.
+
+Relax via `ops.step_relax` blocks the Blender UI until the `frames_per_call` batch completes. With `frames_per_call=50` the UI was unresponsive for 30+ seconds per call. Reducing to `frames_per_call=10` with `time_budget_s=15.0` made it manageable. Suggest the add-on yield to the event loop between frames.
+
+Materials: white trousers and inner robe, blue sash, light-blue outer robe. Three-angle renders saved to `blender-tests/opensew_qwen_experiment/cultivator_{front,right,back}.png`. Full findings in `blender-tests/opensew_qwen_experiment/opensew2_buh_1.0.4_findings.md`.
