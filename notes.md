@@ -1507,4 +1507,13 @@ Qwen’s outfit attempt reported missing selection context and a timeout on a sy
 
 Verified through the actual headless bridge on Blender 5.3.0. Theo’s T-shirt finished 12 stitch frames and 20 settle frames in 37 steps. The slowest request was 1.76 s. All 160 seam vertices welded, armature binding succeeded, and the finalized mesh had zero body intersections in the fitting pose. Import and finalize passed with selection context unavailable. Cancellation and the extension’s supported `read_homefile(use_empty=True, use_factory_startup=True)` reset both passed. The graphical Drape and Escape tests passed again.
 
-The 1.0.2 ZIP is in `blender-tests/OpenSew2-BUH-1.0.2.zip` and is installed in the local Blender 5.3 profile. The crossed-collar robe, extended sleeves, and waist sash still need garment fitting. [Headless Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#headless-blender-mcp)
+The 1.0.2 installer ZIP is in `blender-tests/OpenSew2-BUH-1.0.2.zip`. The crossed-collar robe, extended sleeves, and waist sash still need garment fitting. [Headless Blender MCP guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#headless-blender-mcp)
+
+
+### 9.70 OpenSew2 layered sewing performance
+
+Stepped sewing still took tens of seconds per MCP call on a layered outfit. Every scene frame was evaluating the cloth solvers on outer garments, even though those garments were outside the selected garment’s collision collection. BUH 1.0.3 temporarily pauses unrelated outer-layer physics and the target’s unused outgoing collision modifier. Inner garments remain colliders. The modifier settings are restored on completion or cancellation.
+
+On Blender 5.3.0 with default thread settings, sewing Theo’s T-shirt in a four-garment scene dropped from 62.89 s to 12.38 s at the same mesh resolution, solver quality, and 12 stitch plus 20 settle frames. The headless MCP bridge completed it in four ten-step requests in 12.15 s total, with 3.74 s for the slowest request. All 160 seam vertices welded and the shirt had zero measured body intersections. The stepped cancellation and graphical Drape tests passed, and Sew All completed both garments in a two-layer smoke test.
+
+The 1.0.3 ZIP is in `blender-tests/OpenSew2-BUH-1.0.3.zip` and was verified in the local Blender profile. For layered garments, finish and finalize each inner garment before sewing the garment over it so the outer garment can collide with the fitted mesh without advancing another live inner solver. [Layered sewing guide](https://github.com/HelHeresyDev/opensew-2/blob/buh/blender-5.3/clothing_design/BUH_GUIDE.md#layered-sewing-performance)
