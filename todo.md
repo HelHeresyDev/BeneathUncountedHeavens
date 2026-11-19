@@ -1,139 +1,51 @@
-This looks like another regression in the Walk-targeting controls. I checked the latest GitHub commit, `63fcbad`, and the project's previous fixes.
+Using Blender MCP and MPFB MCP, inspect the installed MakeHuman clothing assets for Beneath Uncounted Heavens.
 
-Your screenshot shows `Your: None` and `No preview`. Those are normal before choosing a Walk destination, but **the cursor should remain visible and a green ground path should follow it while targeting**.
+Start from `blender-tests/mpfb_cultivator_v1.blend`. Preserve the original.
 
-### **What I found**
+**Objective:** Determine whether the premade `donitz_monk_robe` or `mindfront_kimono` can serve as the foundation for a male wuxia/xianxia cultivator outfit.
 
-The project has encountered almost this exact cursor problem before. In `notes.md` §9.24, `SetInputModeGameAndUI` was hiding the cursor because `bHideCursorDuringCapture` was enabled. Section 9.30 also established that targeting handlers need to explicitly set `ShowMouseCursor = true`.
+1. Confirm both clothing assets exist in the installed MPFB library.
+2. Create separate test copies of the character for each compatible garment.
+3. Load each garment through MPFB's clothing tools, preserving the existing 53-bone humanoid skeleton.
+4. Hide the original modern clothing.
+5. Inspect the resulting garment from the front, side, and back.
+6. Check whether the clothing follows the existing armature.
+7. Test moderate shoulder, elbow, hip, and knee rotations.
+8. Look for clipping, stretching, detached geometry, and poor proportions.
+9. Do not create replacement clothing from primitives.
+10. Do not attempt to repair fundamentally incompatible assets.
 
-There is another possible issue: the click that selects Walk might also be interpreted as the click confirming its destination, immediately ending targeting.
+Save successful tests separately under `blender-tests/`.
 
-The current targeting flow should be:
+Report which garment is the better foundation for a traditional cultivator outfit, what modifications it needs, and whether it remains usable during animation.
 
-Click Walk
+Do not import anything into Unreal or modify previous character files.
 
-TargetingAction = 6
+## Progress
 
-Cursor visible + green line follows mouse
+- [x] 1. Confirmed both assets exist: `donitz_monk_robe` (suits02, CC0, Donitz) and `mindfront_kimono` (dress01, CC0, Mindfront).
+- [x] 2. Created separate test copies: `mpfb_cultivator_donitz_robe_test.blend`, `mpfb_cultivator_mindfront_kimono_test.blend`.
+- [x] 3. Loaded each garment via MPFB `add_asset`, both rigged to the existing 53-bone `Human.rig`.
+- [x] 4. Hid original modern clothing (`male_casualsuit01`, `shoes01`, `high-poly`).
+- [x] 5. Inspected front, side, and back of each garment.
+- [x] 6. Confirmed both follow the armature (sleeves track the arms).
+- [x] 7. Tested moderate shoulder/elbow/hip/knee rotations (arm raise + leg raise).
+- [x] 8. Checked clipping/stretching/detached geometry/proportions.
+- [x] 9. No replacement clothing from primitives created.
+- [x] 10. No repair of fundamentally incompatible assets attempted.
 
-Separate ground click confirms destination
+## Report
 
-I also notice **Continue is visible in the movement submenu during ordinary planning**. That should only be available during a genuine movement reaction.
+**Better foundation: `mindfront_kimono`.**
 
-## **Next Qwen prompt**
+- `donitz_monk_robe`: strong wuxia silhouette (long brown robe, wide sleeves, tied sash, high collar) and clean back drape, but the lower robe is a **fully closed tube with no slit**. During a leg raise the hem bunches, stretches, and clips badly. Not usable for animated leg movement.
+- `mindfront_kimono`: same cultivator silhouette (long robe, wide sleeves, waist sash, high collar) but with **front crossover panels that open when the leg is raised**, letting the leg move through. Only mild hem lift, no severe clipping. Usable during animation.
 
-# BUH — Repair Walk Targeting Cursor and Missing Path
+**Modifications needed for `mindfront_kimono`:**
 
-Repository: `HelHeresyDev/BeneathUncountedHeavens`\
-Baseline: `63fcbad`
+- Recolor the material (currently default pale pink/white) to a cultivator-appropriate color (deep indigo, white, or grey).
+- Weights are interpolated (no `.mhw` file ships with the asset); the mild hem distortion is acceptable as-is but could be refined with weight painting if needed.
 
-## Reproduction
+**Animation usability:** `mindfront_kimono` is usable. The `donitz_monk_robe` is not recommended for animated leg movement because of its closed robe tube.
 
-1. Start a fresh graphical PIE session.
-2. Open the Move submenu.
-3. Click Walk.
-
-Observed:
-
-- Mouse cursor disappears.
-- No green Walk targeting line appears.
-- No destination marker appears.
-- HUD remains `Your: None`.
-- Timeline remains `No preview`.
-
-The screenshot also shows Continue visible during ordinary planning.
-
-## Investigation — identify the actual failure
-
-Inspect the saved Blueprint graphs:
-
-- `WBP_CombatUI.OnClicked(BtnWalkMove)`
-- `WBP_CombatUI.EventTick`
-- `WBP_CombatUI.RefreshUI`
-- `BP_CombatManager.BeginWalkTargeting`
-- `BP_CombatManager.CancelTargeting`
-- `BP_CombatManager.SelectWalkDestination`
-
-Read project notes §§9.23, 9.24, 9.30, 9.34 and 9.40 before modifying anything.
-
-### Check 1: Cursor capture
-
-Inspect `SetInputModeGameAndUI` in the Walk handler.
-
-Verify:
-
-- `bHideCursorDuringCapture = false`
-- `SetShowMouseCursor(true)` is called on the correct PlayerController.
-- The mouse is not being captured by the first-person controller.
-- No later event immediately hides the cursor or changes input mode.
-
-### Check 2: Targeting state
-
-Verify clicking Walk calls `BeginWalkTargeting` and sets `TargetingAction = 6`.
-
-Log the actual value immediately after clicking and on the next EventTick.
-
-Check whether another function immediately calls `CancelTargeting`, returning the value to -1.
-
-### Check 3: Same-click confirmation
-
-Investigate whether the mouse click that activates the Walk button is also detected by `WasInputKeyJustPressed(LeftMouseButton)` in EventTick.
-
-If so, targeting may start and cancel in the same frame.
-
-Targeting confirmation must require a separate mouse click after the Walk button has been released.
-
-Do not introduce arbitrary timing delays if a proper input-state transition can solve it.
-
-### Check 4: Path generation
-
-When `State == 0` and `TargetingAction == 6`:
-
-- EventTick must update the ground cursor location.
-- The ground hit test must return a valid location.
-- `DrawGroundLine` must receive the correct start and end coordinates.
-- `DestPlayer` must be positioned and visible.
-- No other function should clear the path every frame.
-
-Inspect the existing `BUHPathRenderer` rather than replacing it.
-
-## Required behavior
-
-- Clicking Walk enters targeting mode.
-- Cursor remains visible.
-- Green path follows the cursor across the ground.
-- A separate left-click confirms the destination.
-- Confirmation produces a normal Walk preview and cyan ghost.
-- Right-click or Escape cancels targeting.
-- Canceling restores normal input and removes temporary targeting geometry.
-- Walk → Dash → Jump transitions remain functional.
-- Continue is unavailable during ordinary planning and visible only when a genuine resumable movement reaction exists.
-
-## Preserve existing systems
-
-Do not modify the combat resolver, movement speed, hypothetical opponent branches, gold reaction ghost, or timeline scrubber.
-
-Avoid full EventGraph rewrites. The project previously lost entire EventTick handlers from `write_graph_dsl`. Prefer surgical node edits and read back the actual connections afterward.
-
-## Verification
-
-Perform automated checks of targeting transitions, including the same-click scenario.
-
-Inspect Blueprint compile warnings, not merely compile success.
-
-Verify C++/Blueprint wiring and saved assets.
-
-Report exactly:
-
-- Why the cursor disappeared.
-- Whether TargetingAction was set and remained active.
-- Why DrawGroundLine was not visible.
-- Which Blueprint nodes changed.
-- Automated results.
-- What still requires manual graphical PIE verification.
-
-Update notes.md and todo.md, commit and push.
-
-Do not claim that cursor visibility is verified from headless PIE.
-
-**My priority would be fixing targeting before touching predictions again.** The movement-preview architecture is working well enough now that we should stabilize how actions are selected and confirmed, rather than risk another regression in the combat simulator.
+Both test files are saved under `blender-tests/`. Original `mpfb_cultivator_v1.blend` and all previous character files are unchanged. Nothing was imported into Unreal.

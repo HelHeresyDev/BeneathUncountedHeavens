@@ -1433,3 +1433,43 @@ Rebuilt C++ (`Build.sh BeneathUncountedHeavEditor`, Result: Succeeded). Restarte
 **Regression test:** Full non-PIE `BUH.*` suite passes 26/26 (0 failures, 0 SIGSEGV). `CombatTestReport.txt` shows `V1`, `V2`, `V5`, and `V6` all PASS (71 passed, 0 failed in the combat-sim report).
 
 **Verified:** `BeneathUncountedHeavEditor` rebuilt clean. `BP_CombatManager` and `WBP_CombatUI` compiled and saved. **Graphical PIE verification is still pending** — the user must confirm in a fresh PIE that (a) selecting Walk then Continue without Execute is rejected safely with no crash, (b) a genuine reaction Continue still resumes movement, (c) opponent buttons are visible and dimmed correctly outside planning, and (d) prediction ghosts hide/show correctly.
+
+### 9.65 MPFB cultivator v3 animation — bone-axis and loop-seam gotchas (RESOLVED)
+
+**Problem:** Authoring the four in-place Actions (`Idle`, `Walk`, `QuickStrike`, `CombatStance`) for `blender-tests/mpfb_cultivator_v2.blend` produced three wrong results that had to be re-keyed: (1) the Walk splayed the legs left/right instead of swinging them forward/back; (2) the `QuickStrike` punch arm over-twisted and raised to the side/up; (3) the `CombatStance` "pelvis drop" shifted the character forward ~0.14 m instead of lowering it.
+
+**Cause:**
+1. **Thigh axis misread.** The first axis probe assumed thigh +z was forward/back. Re-probing at 20° showed the thigh **X** axis is forward/back (−x = leg forward, +x = leg back, both sides); the thigh **Z** axis is the left/right spread. The Walk was re-keyed on X.
+2. **Right upperarm axes tangled.** Probing `upperarm_r` at 30° showed every ±x/±z rotation arced the hand backward (+Y); only `upperarm_l` +x gives a clean forward swing. The `QuickStrike` was re-keyed as a **left-arm jab** with modest torso twist.
+3. **Pelvis local axes ≠ world axes.** Probing the pelvis bone location showed local X = world X, local **Y ≈ world Z** (up/down), local **Z ≈ world Y** (forward/back). A "drop" written as local Z moved the character forward. The crouch drop must use **local Y (negative)**.
+4. **Loop seam.** The neutral keyframe was first placed at frame 0, but the Actions use `frame_start=1`, so frame 1 (the loop start) interpolated between frame 0 and the next key and did not equal frame 24/48 — the loop jumped. Moving the neutral to frame 1 (= frame 24/48) made `Idle` and `Walk` loop seamlessly.
+5. **Pelvis parents the legs.** Dropping the pelvis moves the feet too; with staggered thighs the two feet land at different heights (left planted, right floating), which reads as a lunge rather than a broken pose. A small drop (local Y −0.12) + knee bend is the workable crouch.
+
+**Fix / verified state:**
+- `Walk` and `CombatStance` re-keyed on the thigh X axis; `QuickStrike` re-keyed as a left-arm jab. All verified from side views (Walk frames 6/12, QuickStrike frame 12, CombatStance frame 24) — proper stride, clean forward strike, crouched guard with staggered feet, robe/sleeves/sash deforming without major clipping.
+- `CombatStance` pelvis drop written on local Y; pelvis world X/Y confirmed constant (root stationary) across all four Actions.
+- `Idle` (1–48) and `Walk` (1–24) loops confirmed seamless (frame 1 == frame 48/24, tolerance 0.01°).
+- Saved to `blender-tests/mpfb_cultivator_v3_animated.blend` (2,625,471 bytes); v1 (2,377,339) and v2 (2,630,614) unchanged.
+
+**Blender 5.3 layered-Action API gotchas:**
+- `Action` has **no** `fcurves` or `channels` attribute (`AttributeError`). `ActionKeyframeStrip.channelbag` is a `bpy_func`, not a property. Keyframe presence is verified indirectly via `action.is_empty == False` + `frame_start`/`frame_end`, or by sampling `rig.pose.bones[*].rotation_euler` at specific frames after `frame_set`.
+- Exact-tuple comparison of `rotation_euler` across frames gives false negatives (armature-solver residuals on "zero" bones); compare with a tolerance (e.g. 0.01°).
+
+**Lesson:** Always re-probe a bone's actual rotation/translation axes at a test angle before keying — the MPFB/MakeHuman skeleton's local axes do not match intuitive world directions (thigh forward/back is X, pelvis down is local Y). And place loop-neutral keyframes at `frame_start`, not frame 0.
+
+### 9.66 MPFB garment inspection — closed robe tube vs front-crossover kimono (RESOLVED)
+
+**Problem:** Determining which premade MPFB garment (`donitz_monk_robe` or `mindfront_kimono`) is the better foundation for a male wuxia/xianxia cultivator outfit that must survive animation. Both looked correct from static front/side/back views, so the decision had to come from a deformation test, not a still image.
+
+**Cause / finding (verified from posed side views):**
+1. **`donitz_monk_robe` is a fully closed robe tube** with no side or front slit. During a leg raise (thigh −35°, calf +35°) the hem bunches, stretches, and clips badly — the leg cannot move through the fabric. Not usable for animated leg movement.
+2. **`mindfront_kimono` has front crossover panels** that open when the leg is raised, letting the leg move through. Only mild hem lift, no severe clipping. Usable during animation.
+3. **Both assets ship no `.mhw` weights file**, so MPFB interpolated the vertex weights (`import_weights` requested but the file is absent — MPFB says nothing). This contributes to the mild hem distortion on both garments but is acceptable as-is.
+4. **MPFB Bridge is not auto-started.** The `bl_ext.user_default.mpfb_bridge` extension must have its command server started in-session (`command_server.timer_internal_vars_calc(active=0.1)` → `command_server.start(cs.DEFAULT_HOST, cs.DEFAULT_PORT, cli.COMMANDS)` → `timer.register_timer()`), binding `127.0.0.1:9877`. If Blender restarts, restart it the same way or every `mpfb_*` tool fails with "Cannot connect to the MPFB Bridge".
+
+**Fix / verified state:**
+- Saved `blender-tests/mpfb_cultivator_donitz_robe_test.blend` (3,022,299 bytes) and `blender-tests/mpfb_cultivator_mindfront_kimono_test.blend` (2,715,978 bytes), each with the garment rigged to `Human.rig` and modern clothing hidden.
+- `mindfront_kimono` selected as the better foundation. It needs only a material recolor (currently default pale pink/white) to a cultivator color; the interpolated-weight hem distortion is acceptable.
+- Original `mpfb_cultivator_v1.blend` (2,377,339 bytes) and all previous character files unchanged; nothing imported into Unreal.
+
+**Lesson:** Judge a garment's animation suitability with a posed deformation test (arm raise + leg raise from a side orthographic view), not a static still — a closed robe tube looks fine at rest but clips the moment a leg moves. And check for a front/side slit before committing to a robe for an animated character.

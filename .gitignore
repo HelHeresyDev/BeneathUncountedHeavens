@@ -6,8 +6,10 @@ Saved/
 
 # Agent scratch space (MCP args, DSL captures, logs, helpers)
 tmp_opencode/
+blender-tests/
 
 # IDE / editor
+.gitignore
 .vs/
 .vscode/
 *.code-workspace
