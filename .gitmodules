@@ -1,0 +1,3 @@
+[submodule "blender-tests/opensew2-fork"]
+	path = blender-tests/opensew2-fork
+	url = https://github.com/HelHeresyDev/opensew-2.git

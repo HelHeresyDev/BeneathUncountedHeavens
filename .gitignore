@@ -8,6 +8,9 @@ Saved/
 tmp_opencode/
 # blender-tests/
 
+# Oversized Blender test artifact (>100 MB, exceeds GitHub push limit; kept on disk)
+blender-tests/opensew_qwen_experiment/cultivator_opensew2_final.blend
+
 # IDE / editor
 .gitignore
 .vs/
