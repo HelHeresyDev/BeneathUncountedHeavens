@@ -1,0 +1,6 @@
+.venv/
+.chatgarment-venv/
+.weights/
+.cache/
+__pycache__/
+outputs/

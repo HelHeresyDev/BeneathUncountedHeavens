@@ -1,0 +1,13 @@
+{
+  "wholebody_garment": {
+    "garment_name": "long wuxia outer robe",
+    "geometry_styles": {
+      "width": ["loose body", "comfortable for movement"],
+      "length": ["ankle-length"],
+      "sleeves": ["two long sleeves", "wide flowing sleeves"],
+      "collar": ["cross-collar", "diagonal wrap opening"],
+      "waist": ["loose waist", "fabric sash"],
+      "extra": ["overlapping front panels", "layered appearance", "wide straight hem"]
+    }
+  }
+}
