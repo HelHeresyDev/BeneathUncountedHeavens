@@ -1,111 +1,255 @@
-I want you to independently evaluate and use the Devil Designer clothing-design extension installed in Blender 5.3.
+# Task: Automated 3D Asset Cleanup — Stone Lantern
 
-This is an experiment for my Unreal Engine 5.8.4 wuxia/xianxia RPG, Beneath Uncounted Heavens.
+We have successfully generated our first textured 3D model using ComfyUI-3D-rocm (TripoSG + Hunyuan3D Paint) on my AMD Radeon RX 7900 XTX.
 
-**Primary objective:** Determine whether you can use Devil Designer through Blender MCP to create fitted, simulated 3D clothing suitable for our automated character-generation pipeline.
+The object is a traditional East Asian stone garden lantern intended as an environmental prop for **Beneath Uncounted Heavens**, our Unreal Engine 5.8.4 wuxia/xianxia sandbox RPG.
 
-### Phase 1 — Investigate Devil Designer
+Your task is to independently investigate, clean up, optimize, and prepare this model for eventual use in Unreal Engine.
 
-Before attempting to create clothing:
+**The broader objective is to determine whether you can automate the cleanup of AI-generated 3D assets through Blender MCP.**
 
-1. Locate the installed Devil Designer extension.
-2. Examine its Python source code, operators, data structures, and simulation implementation.
-3. Determine how its pattern editor represents garment panels, vertices, edges, and sewing connections.
-4. Identify how panels are positioned around a character.
-5. Determine how the simulation can be started, monitored, and stopped programmatically.
-6. Investigate whether its functionality can be accessed through Blender MCP without manual mouse interaction.
+## Phase 1 — Locate and inspect the original asset
 
-Do not assume that an operation is available just because the GUI contains a button. Verify the Python implementation.
+The generated file is named:
 
-### Phase 2 — Create a test garment
+`triposg_painted_00001_.glb`
 
-Start in a fresh Blender scene.
+It's in Downloads
 
-Use MPFB or another suitable existing human-generation tool to create a male avatar.
+Import the GLB into Blender 5.3 using Blender MCP.
 
-Using **Devil Designer's actual garment construction and simulation functionality**, attempt to create a simple upper-body garment.
+Before modifying anything, investigate:
 
-Start with a sleeveless tunic. If successful, attempt to add long sleeves and a crossed collar suitable for a wuxia cultivator.
+- Actual polygon and vertex counts.
+- Mesh topology and connected components.
+- Non-manifold edges, holes, and degenerate faces.
+- Inverted or inconsistent normals.
+- UV mapping and texture quality.
+- Material assignments and PBR texture channels.
+- Overall symmetry, scale, orientation, and silhouette.
+- Whether the mesh has unwanted internal geometry.
+- Any intersections between architectural elements.
 
-Requirements:
+Create front, side, rear, and three-quarter renders of the original model.
 
-- Construct clothing using genuine garment panels and sewing connections.
-- Position the garment correctly around the avatar.
-- Sew the panels together.
-- Run the garment simulation.
-- Evaluate how well the fabric fits the body.
-- Correct problems you discover.
+Save an untouched baseline.
 
-Do not substitute cylinders, cones, or other primitive meshes for Devil Designer-generated clothing.
+## Phase 2 — Identify visual defects
 
-### Phase 3 — Investigate automation
+The original reference depicts a carefully constructed stone lantern with:
 
-I want this process to eventually work through OpenCode without manual assistance.
+- A symmetrical, tiered architectural design.
+- A tall ornamental finial.
+- A broad roof with clean, straight edges.
+- An open central chamber supported by stone pillars.
+- Clearly defined openings and decorative stonework.
+- A stepped pedestal and arched base.
+- A consistent weathered-stone appearance.
 
-Determine whether it is possible to:
+Our AI-generated model preserves the general silhouette but has several defects:
 
-- Generate patterns from Python.
-- Specify garment measurements programmatically.
-- Define seams between panels.
-- Position panels around an arbitrary MPFB character.
-- Execute simulations without manual GUI interaction.
-- Detect when simulation is complete.
-- Export or preserve the resulting mesh.
-- Transfer skin weights to a character's skeleton.
+1. Warped and irregular architectural edges.
+2. Poorly defined pillars and decorative details.
+3. Asymmetrical geometry that should be symmetrical.
+4. A distorted, partially melted-looking pedestal and base.
+5. Excessive polygon density for a relatively simple environmental prop.
+6. Some inconsistent or blotchy surface textures.
 
-If Devil Designer lacks some of these capabilities, distinguish between functionality that is missing and functionality that exists but is difficult to access.
+Inspect the model yourself rather than relying entirely on this list.
 
-You may create experimental Python helper scripts if necessary. Do not modify the installed extension's source code without first explaining why.
+Determine which defects can be repaired automatically and which require reconstruction.
 
-### Phase 4 — Test reliability
+## Phase 3 — Repair the geometry
 
-Test the garment on the avatar.
+Use Blender's Python API through Blender MCP.
 
-Inspect it from the front, side, and back. Look for:
+You have freedom to investigate suitable techniques, including:
 
-- Fabric intersections with the body.
-- Incorrect panel placement.
-- Open or misaligned seams.
-- Severe stretching or bunching.
-- Unnatural shoulder deformation.
-- Simulation instability.
+- Mesh cleanup and vertex welding.
+- Normal recalculation.
+- Limited smoothing.
+- Remeshing where appropriate.
+- Topology simplification.
+- Identifying and removing unwanted internal faces.
+- Geometric symmetry correction.
+- Rebuilding damaged architectural elements.
+- Replacing malformed regions with clean procedural geometry.
 
-Be critical of your own results. Previous experiments produced visibly defective garments that were incorrectly reported as successful.
+**Important: This is architecture, not an organic sculpture.**
 
-Blender may temporarily become unresponsive during simulation. This does not necessarily indicate a crash. Allow legitimate calculations to complete, and avoid launching overlapping simulation operations.
+Do not use aggressive smoothing that rounds off sharp stone edges.
 
-### Phase 5 — Deliverables
+Do not simply decimate the entire model and declare it repaired.
 
-Save your work under:
+The lantern should have straight pillars, clean rooflines, recognizable ornamental details, and a structurally coherent base.
 
-`blender-tests/devil_designer_qwen_experiment/`
+If individual components are too badly distorted to repair, you may reconstruct them procedurally while using the original model as a visual reference.
+
+However, distinguish clearly between:
+
+1. Geometry repaired from the AI-generated mesh.
+2. Geometry replaced with newly constructed meshes.
+
+If a mostly procedural reconstruction produces a much better result, that is useful information about the limitations of TripoSG.
+
+## Phase 4 — Optimize for Unreal Engine
+
+Prepare an optimized static-mesh version.
+
+Targets:
+
+- Aim for approximately 5,000–10,000 triangles if visual quality permits.
+- Preserve important silhouette and architectural details.
+- Avoid unnecessary geometry on flat surfaces.
+- Remove invalid and unintended overlapping geometry.
+- Ensure normals are correct.
+- Preserve or rebuild UVs as necessary.
+- Keep the pivot at the bottom center.
+- Set a plausible real-world scale and document the dimensions.
+- Ensure the final model is appropriate for Unreal Engine's coordinate and asset workflows.
+
+Produce at least two versions:
+
+**Version A — Conservative Cleanup**
+
+Preserve as much of TripoSG's original geometry and textures as possible.
+
+**Version B — Best Production Result**
+
+Use any appropriate combination of mesh repair, replacement geometry, procedural reconstruction, and texture improvements to achieve the best practical result.
+
+Version B should prioritize quality over faithfulness to the generated topology.
+
+## Phase 5 — Improve the materials
+
+Inspect the existing Hunyuan3D PBR textures.
+
+Preserve useful information, but correct obvious problems.
+
+Investigate whether Blender can improve the material using:
+
+- Existing generated textures.
+- Procedural stone shaders.
+- Texture adjustments.
+- Appropriate roughness values.
+- Subtle stone surface variation.
+
+Avoid unnecessary additional AI generation for this initial experiment.
+
+The final material should resemble weathered carved stone, not plastic or randomly colored rock.
+
+If you replace the generated textures with procedural materials, explain why and ensure the exported asset retains a usable material.
+
+## Phase 6 — Add collision and test export
+
+Create a simple collision representation suitable for a static environmental prop.
+
+Collision should approximate the lantern's occupied space without reproducing every decorative detail.
+
+Export the final asset as GLB for inspection in Blender.
+
+Investigate an appropriate Unreal-compatible export path, but do not import anything into the actual game project yet.
+
+Verify the exported file by reimporting it into a fresh Blender scene.
+
+Confirm that geometry, UVs, materials, dimensions, and orientation survive export.
+
+## Phase 7 — Visual verification
+
+I want actual visual evidence, not just successful Python operations.
+
+Render both versions from identical camera positions and lighting conditions.
 
 Provide:
 
-1. A Blender project containing your best garment.
-2. Screenshots showing the garment from multiple angles.
-3. Any Python scripts you developed to automate Devil Designer.
-4. A report detailing what worked, what failed, and how you solved problems.
-5. An assessment of whether Devil Designer can be integrated into our automated pipeline.
-6. A comparison with OpenSew-2, particularly regarding upper-body garment construction and simulation.
+- Original model.
+- Conservative cleanup.
+- Best production result.
 
-### Important constraints
+Capture front, side, rear, and three-quarter views.
 
-- Preserve all existing character prototypes and Blender project files.
-- Do not modify my OpenSew fork.
-- Do not modify Unreal project assets.
-- Do not install additional software unless necessary.
-- Investigate existing functionality before implementing replacements.
-- If the extension cannot reasonably be automated through Blender MCP, explain the technical obstacle rather than pretending to have completed the task.
+Include wireframe screenshots showing topology.
 
-**You have substantial freedom to investigate, experiment, and solve problems independently.**
+Compare the versions for:
 
-The objective is not necessarily a beautiful finished outfit. It is to establish whether Devil Designer can become a reliable, AI-controlled component of our 3D asset-generation pipeline.
+- Architectural accuracy.
+- Silhouette quality.
+- Geometry cleanliness.
+- Texture quality.
+- Polygon efficiency.
+- Suitability for use in Unreal.
 
-### Status (2026-11-19)
+If possible, evaluate whether the model remains recognizable at reduced polygon counts.
 
-- **Phase 1 — Investigate:** DONE. Mapped operators, `Document`/`Session`/`Pattern`/`Seam` data model, `arrangement_record` panel placement, XPBD simulation, and confirmed full MCP accessibility with no mouse.
-- **Phase 2 — Test garment:** DONE (partial). Sleeveless tunic built and draped cleanly via genuine panels + seams. Long sleeves FAIL (flat flaps trap against arms, body guard rejects `keep_drape`); crossed collar has no starter.
-- **Phase 3 — Automation:** DONE. Pattern generation, measurements, seams, panel placement, simulation start/monitor/stop, and completion detection are all scriptable. **Missing:** skin-weight transfer (output is a static drape, not rigged).
-- **Phase 4 — Reliability:** DONE. Front/back clean; side-seam gap from the right; long-sleeve intersection failure documented.
-- **Phase 5 — Deliverables:** DONE. `devil_designer_tunic.blend`, `tunic_{front,right,back}.png`, `longsleeve_trapped.png`, and `devil_designer_findings.md` (report + pipeline assessment + OpenSew-2 comparison) in `blender-tests/devil_designer_qwen_experiment/`.
+Do not describe an obviously defective mesh as successful simply because Blender completed an operation.
+
+## Phase 8 — Save deliverables
+
+Save all experiments under:
+
+`blender-tests/triposg_lantern_cleanup/`
+
+Create:
+
+1. An untouched imported baseline `.blend`.
+2. A conservative cleaned-up `.blend`.
+3. A best-quality production `.blend`.
+4. Exported GLB versions.
+5. Before-and-after renders.
+6. Wireframe screenshots.
+7. Reusable Blender Python cleanup scripts.
+8. A Markdown report describing methods, defects, and outcomes.
+
+Use descriptive filenames.
+
+Do not overwrite the original TripoSG file.
+
+Do not modify my Unreal Engine project assets.
+
+Do not modify existing OpenSew, MPFB, or ComfyUI installations.
+
+## Phase 9 — Evaluate pipeline automation
+
+This is especially important.
+
+We eventually want OpenCode to perform the following workflow automatically:
+
+**Generate reference image → TripoSG mesh → Hunyuan3D textures → Blender cleanup → Unreal-ready static mesh**
+
+Determine which operations can be reliably automated and which require object-specific reasoning.
+
+Identify whether a generalized cleanup script could work on:
+
+- Stone lanterns.
+- Statues.
+- Treasure chests.
+- Furniture.
+- Rocks and natural formations.
+- Weapons and decorative props.
+
+Consider whether different asset categories require different cleanup strategies.
+
+Recommend a practical architecture for an automated 3D asset processing pipeline.
+
+## Final report
+
+Provide a comparison table containing:
+
+| Metric | Original | Conservative Cleanup | Best Result |
+|---|---|---|---|
+| Triangles | | | |
+| Vertices | | | |
+| Non-manifold defects | | | |
+| Materials / textures | | | |
+| Visual fidelity | | | |
+| Unreal readiness | | | |
+
+Use measured values wherever possible. Distinguish measured results from qualitative judgments.
+
+Conclude with your assessment of whether AI-generated 3D props are worth integrating into Beneath Uncounted Heavens.
+
+**You have considerable freedom to investigate and experiment independently.**
+
+Do not stop after getting a technically valid mesh. The real goal is a visually convincing, optimized asset.
+
+If the original mesh is too poor to repair efficiently, demonstrate that limitation and investigate reconstruction rather than endlessly applying ineffective mesh operations.
