@@ -1,0 +1,14 @@
+{
+  "meta.upper": "Shirt",
+  "shirt.openfront": true,
+  "shirt.length": 3.0,
+  "shirt.width": 1.26,
+  "shirt.flare": 1.35,
+  "collar.f_collar": "VNeckHalf",
+  "collar.fc_depth": 0.85,
+  "sleeve.sleeveless": false,
+  "sleeve.length": 1.1,
+  "sleeve.connecting_width": 0.65,
+  "sleeve.end_width": 1.65,
+  "sleeve.sleeve_angle": 27
+}

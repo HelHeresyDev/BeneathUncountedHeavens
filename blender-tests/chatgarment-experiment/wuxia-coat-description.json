@@ -1,0 +1,13 @@
+{
+  "wholebody_garment": {
+    "garment_name": "long open-front coat",
+    "geometry_styles": {
+      "width": ["loose"],
+      "length": ["ankle-length coat"],
+      "sleeves": ["long wide uncuffed sleeves"],
+      "collar": ["V-neck wrap collar", "diagonal opening"],
+      "waist": ["loose sash around the outside"],
+      "extra": ["separate left and right fronts", "overlapping front panels", "no attached skirt", "no waist seam"]
+    }
+  }
+}

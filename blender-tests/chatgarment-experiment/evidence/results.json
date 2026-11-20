@@ -1,0 +1,175 @@
+{
+  "checkpoint": {
+    "repo": "sy000/chatgarment_extrafiles",
+    "revision": "115bae7753818efed4a0147446ee69db23826e1f",
+    "path": "try_lr1e_4_wholebody_pose_v2_detailT2_1float_upd/pytorch_model.bin",
+    "size": 14987210682,
+    "sha256": "aa244860a81e8a39d96915388359bed46008fced60647dc144bb87389cd2e6c0"
+  },
+  "metadata_pins": {
+    "llava": {
+      "repo": "liuhaotian/llava-v1.5-7b",
+      "revision": "4481d270cc22fd5c4d1bb5df129622006ccd9234"
+    },
+    "clip": {
+      "repo": "openai/clip-vit-large-patch14-336",
+      "revision": "ce19dc912ca5cd21c8a653c79e251e808ccabcd1"
+    }
+  },
+  "layout_matches": 818,
+  "rocm_model_runs": {
+    "official_image": {
+      "seconds": 25.69,
+      "peak_allocated_bytes": 16163288064,
+      "peak_reserved_bytes": 16875782144,
+      "panels": 10,
+      "stitches": 36,
+      "self_intersecting_panels": [],
+      "worst_relative_length_delta": 0.4231624849607219,
+      "center_front_seam": true
+    },
+    "wuxia_original": {
+      "seconds": 24.59,
+      "peak_allocated_bytes": 16330662912,
+      "peak_reserved_bytes": 17070817280,
+      "panels": 20,
+      "stitches": 42,
+      "self_intersecting_panels": [
+        "wb_back",
+        "skirt_back",
+        "skirt_front"
+      ],
+      "worst_relative_length_delta": 0.4900398406374504,
+      "center_front_seam": true
+    },
+    "wuxia_coat_retry": {
+      "seconds": 24.15,
+      "peak_allocated_bytes": 16301929984,
+      "peak_reserved_bytes": 17345544192,
+      "panels": 18,
+      "stitches": 48,
+      "self_intersecting_panels": [
+        "left_sleeve_f",
+        "right_sleeve_f"
+      ],
+      "worst_relative_length_delta": 0.39092664092664164,
+      "center_front_seam": true
+    }
+  },
+  "procedural_patterns": {
+    "tshirt-verified": {
+      "panels": 8,
+      "stitches": 16,
+      "length_cm": 49.918458478140366,
+      "self_intersecting": false,
+      "worst_relative_length_delta": 0.0019632880445477163,
+      "center_front_seam": true,
+      "cpu_mesh": {
+        "vertices": 9264,
+        "faces": 18308,
+        "stitches": 16
+      }
+    },
+    "robe-verified": {
+      "panels": 8,
+      "stitches": 13,
+      "length_cm": 123.48544378923305,
+      "self_intersecting": false,
+      "worst_relative_length_delta": 0.008900046154181813,
+      "center_front_seam": false,
+      "cpu_mesh": {
+        "vertices": 30959,
+        "faces": 61260,
+        "stitches": 13
+      }
+    },
+    "qwen-robe-verified": {
+      "panels": 8,
+      "stitches": 13,
+      "length_cm": 122.85502397115327,
+      "self_intersecting": false,
+      "worst_relative_length_delta": 0.01176995856308167,
+      "center_front_seam": false
+    }
+  },
+  "local_qwen_parameters": {
+    "meta.upper": "Shirt",
+    "shirt.openfront": true,
+    "shirt.length": 3.0,
+    "shirt.width": 1.2,
+    "shirt.flare": 1.5,
+    "collar.f_collar": "VNeckHalf",
+    "collar.fc_depth": 1.5,
+    "sleeve.sleeveless": false,
+    "sleeve.length": 1.2,
+    "sleeve.connecting_width": 1.5,
+    "sleeve.end_width": 2.0,
+    "sleeve.sleeve_angle": 45
+  },
+  "blender_transfer": {
+    "blender": "5.3.0",
+    "avatar": "CD_Man_Body",
+    "panels": 8,
+    "seams": 13,
+    "stitch_springs": 284,
+    "initial_fit": {
+      "vertices": 15572,
+      "vertices_inside": 26,
+      "intersecting_triangles": 0,
+      "max_depth_m": 0.07036953316128347
+    },
+    "avatar_z_m": [
+      0.0,
+      1.8579903841018677
+    ],
+    "initial_garment_z_m": [
+      0.2324845790863037,
+      1.4837653636932373
+    ],
+    "sew": {
+      "state": "finished",
+      "operation": "CD_OT_sew",
+      "phase": "Settling",
+      "garment": "GarmentCodeRC",
+      "stage_frame": 20,
+      "stage_frames": 20,
+      "frame": 46,
+      "message": "Sewn: GarmentCodeRC (284 welded, 0 open stitches removed)"
+    },
+    "final_fit": {
+      "vertices": 14733,
+      "vertices_inside": 0,
+      "intersecting_triangles": 0,
+      "max_depth_m": 0.0
+    },
+    "remaining_loose_edges": 0,
+    "seconds": 5.19,
+    "baked_fit": {
+      "vertices": 14733,
+      "vertices_inside": 0,
+      "intersecting_triangles": 0,
+      "max_depth_m": 0.0
+    },
+    "baked_garment_z_m": [
+      -0.48869988322257996,
+      0.6252403855323792
+    ]
+  },
+  "reopened_baked_robe": {
+    "robe_z_m": [
+      -0.48932546377182007,
+      0.625323474407196
+    ],
+    "body_z_m": [
+      0.0,
+      1.8579903841018677
+    ],
+    "reopened_fit": {
+      "vertices": 14733,
+      "vertices_inside": 0,
+      "intersecting_triangles": 0,
+      "max_depth_m": 0.0
+    }
+  },
+  "unit_tests_passed": 4
+}

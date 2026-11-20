@@ -11,6 +11,9 @@ tmp_opencode/
 # Oversized Blender test artifact (>100 MB, exceeds GitHub push limit; kept on disk)
 blender-tests/opensew_qwen_experiment/cultivator_opensew2_final.blend
 
+# Nested git repo (CurioMesh fork, pushed to its own remote) — kept local, not part of this repo
+blender-tests/curiomesh-buh/
+
 # IDE / editor
 .gitignore
 .vs/
