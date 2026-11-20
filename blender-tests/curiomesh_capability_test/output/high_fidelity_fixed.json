@@ -1,0 +1,94 @@
+{
+  "input": "output/high_fidelity_clean.blend",
+  "original": "input/triposg_painted_00001_.glb",
+  "had_original": true,
+  "before": {
+    "inward": 0,
+    "sunk": 0,
+    "crossing": 0,
+    "folded_over": 12,
+    "bent": 0,
+    "flat": 0,
+    "duplicate": 0,
+    "overlap": 0,
+    "bad": 12,
+    "faces": 16116
+  },
+  "after": {
+    "inward": 0,
+    "sunk": 0,
+    "crossing": 0,
+    "folded_over": 0,
+    "bent": 3,
+    "flat": 0,
+    "duplicate": 0,
+    "overlap": 0,
+    "bad": 3,
+    "faces": 16107
+  },
+  "bad_face_ids": [
+    16103,
+    16104,
+    16105
+  ],
+  "steps": [
+    {
+      "fix": "ALL",
+      "kept": true,
+      "bad_before": 12,
+      "bad_after": 4,
+      "faces_after": 16107,
+      "by_kind": {
+        "inward": 0,
+        "sunk": 0,
+        "crossing": 0,
+        "folded_over": 0,
+        "bent": 3,
+        "flat": 0,
+        "duplicate": 0,
+        "overlap": 1
+      },
+      "round": 1
+    },
+    {
+      "fix": "ALL",
+      "kept": true,
+      "bad_before": 4,
+      "bad_after": 3,
+      "faces_after": 16107,
+      "by_kind": {
+        "inward": 0,
+        "sunk": 0,
+        "crossing": 0,
+        "folded_over": 0,
+        "bent": 3,
+        "flat": 0,
+        "duplicate": 0,
+        "overlap": 0
+      },
+      "round": 2
+    },
+    {
+      "fix": "ALL",
+      "kept": false,
+      "bad_before": 3,
+      "bad_after": 3,
+      "faces_after": 16107,
+      "by_kind": {
+        "inward": 0,
+        "sunk": 0,
+        "crossing": 0,
+        "folded_over": 0,
+        "bent": 3,
+        "flat": 0,
+        "duplicate": 0,
+        "overlap": 0
+      },
+      "round": 3
+    }
+  ],
+  "rounds": 3,
+  "improved": true,
+  "ok": true,
+  "out_file": "/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/blender-tests/curiomesh_capability_test/output/high_fidelity_fixed.glb"
+}

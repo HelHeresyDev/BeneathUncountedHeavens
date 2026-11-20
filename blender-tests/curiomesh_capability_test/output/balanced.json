@@ -1,0 +1,202 @@
+{
+  "input": "/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/blender-tests/curiomesh_capability_test/input/triposg_painted_00001_.glb",
+  "use": "GAME",
+  "detail_asked": 5.0,
+  "reduce_to": null,
+  "source_faces": 40000,
+  "blender": "5.3.0",
+  "addon": "bl_ext.user_default.curiomesh",
+  "ok": true,
+  "detail": 5.0,
+  "output": "QUADS",
+  "out_file": "/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/blender-tests/curiomesh_capability_test/output/balanced.glb",
+  "out_object": "triposg_painted_00001__Retopo",
+  "view_changed_pct": 5.32,
+  "parts": 1,
+  "notes": [],
+  "seconds": 13.9,
+  "issues": {
+    "totals": {
+      "inward": 4,
+      "folded_over": 5,
+      "pole": 267,
+      "sliver": 1217,
+      "pinched": 79,
+      "overlap": 2
+    },
+    "spots": 20,
+    "per_part": {
+      "0": {
+        "inward": 4,
+        "folded_over": 5,
+        "pole": 267,
+        "sliver": 1217,
+        "pinched": 79,
+        "overlap": 2
+      }
+    },
+    "worst": [
+      {
+        "part": 0,
+        "kinds": {
+          "inward": 1,
+          "folded_over": 3,
+          "pole": 2
+        },
+        "face_count": 3,
+        "score": 36.85,
+        "center": [
+          0.43444,
+          0.54437,
+          0.246066
+        ],
+        "radius": 0.081376
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "inward": 1,
+          "folded_over": 2,
+          "pole": 2
+        },
+        "face_count": 2,
+        "score": 31.0,
+        "center": [
+          0.374806,
+          0.467341,
+          0.266681
+        ],
+        "radius": 0.081376
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "sliver": 1187,
+          "pinched": 73,
+          "pole": 251
+        },
+        "face_count": 1425,
+        "score": 22.889,
+        "center": [
+          -0.01678,
+          0.016959,
+          -0.066142
+        ],
+        "radius": 1.073767
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "inward": 1
+        },
+        "face_count": 1,
+        "score": 10.0,
+        "center": [
+          -0.279389,
+          -0.234645,
+          -0.397076
+        ],
+        "radius": 0.081376
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "inward": 1
+        },
+        "face_count": 1,
+        "score": 10.0,
+        "center": [
+          0.441106,
+          0.525494,
+          0.250652
+        ],
+        "radius": 0.081376
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "sliver": 11,
+          "pinched": 3
+        },
+        "face_count": 13,
+        "score": 7.044,
+        "center": [
+          0.367126,
+          0.335545,
+          -0.860313
+        ],
+        "radius": 0.303975
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "overlap": 1,
+          "sliver": 1,
+          "pole": 1
+        },
+        "face_count": 1,
+        "score": 6.5,
+        "center": [
+          0.581889,
+          0.308247,
+          0.201813
+        ],
+        "radius": 0.237062
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "overlap": 1,
+          "sliver": 1
+        },
+        "face_count": 1,
+        "score": 6.0,
+        "center": [
+          0.58138,
+          0.420299,
+          0.197299
+        ],
+        "radius": 0.145811
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "sliver": 2,
+          "pole": 7
+        },
+        "face_count": 9,
+        "score": 3.904,
+        "center": [
+          0.268281,
+          -0.546363,
+          -0.872913
+        ],
+        "radius": 0.215136
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "sliver": 2,
+          "pinched": 1
+        },
+        "face_count": 3,
+        "score": 3.0,
+        "center": [
+          0.445733,
+          -0.44552,
+          -0.642859
+        ],
+        "radius": 0.081376
+      }
+    ]
+  },
+  "faces": 5809,
+  "quads": 5809,
+  "tris": 0,
+  "ngons": 0,
+  "quad_pct": 100.0,
+  "verdict": {
+    "ok": true,
+    "problems": []
+  }
+}

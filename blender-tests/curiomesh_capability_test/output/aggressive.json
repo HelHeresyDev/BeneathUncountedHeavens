@@ -1,0 +1,122 @@
+{
+  "input": "/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/blender-tests/curiomesh_capability_test/input/triposg_painted_00001_.glb",
+  "use": "GAME",
+  "detail_asked": 10.0,
+  "reduce_to": null,
+  "source_faces": 40000,
+  "blender": "5.3.0",
+  "addon": "bl_ext.user_default.curiomesh",
+  "ok": true,
+  "detail": 10.0,
+  "output": "QUADS",
+  "out_file": "/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/blender-tests/curiomesh_capability_test/output/aggressive.glb",
+  "out_object": "triposg_painted_00001__Retopo",
+  "view_changed_pct": 10.13,
+  "parts": 1,
+  "notes": [],
+  "seconds": 10.7,
+  "issues": {
+    "totals": {
+      "inward": 2,
+      "folded_over": 2,
+      "pole": 141,
+      "sliver": 653,
+      "pinched": 44
+    },
+    "spots": 5,
+    "per_part": {
+      "0": {
+        "inward": 2,
+        "folded_over": 2,
+        "pole": 141,
+        "sliver": 653,
+        "pinched": 44
+      }
+    },
+    "worst": [
+      {
+        "part": 0,
+        "kinds": {
+          "inward": 1,
+          "folded_over": 2,
+          "pole": 2
+        },
+        "face_count": 2,
+        "score": 31.0,
+        "center": [
+          0.374806,
+          0.467341,
+          0.266681
+        ],
+        "radius": 0.135643
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "sliver": 652,
+          "pinched": 44,
+          "pole": 135
+        },
+        "face_count": 772,
+        "score": 20.847,
+        "center": [
+          -0.036011,
+          0.032039,
+          -0.112559
+        ],
+        "radius": 1.068393
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "inward": 1
+        },
+        "face_count": 1,
+        "score": 10.0,
+        "center": [
+          0.245907,
+          -0.293275,
+          0.307987
+        ],
+        "radius": 0.135643
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "pole": 4
+        },
+        "face_count": 4,
+        "score": 1.5,
+        "center": [
+          0.382488,
+          0.468678,
+          0.267172
+        ],
+        "radius": 0.135643
+      },
+      {
+        "part": 0,
+        "kinds": {
+          "sliver": 1
+        },
+        "face_count": 1,
+        "score": 1.0,
+        "center": [
+          0.327519,
+          -0.374157,
+          -0.870122
+        ],
+        "radius": 0.135643
+      }
+    ]
+  },
+  "faces": 2304,
+  "quads": 2304,
+  "tris": 0,
+  "ngons": 0,
+  "quad_pct": 100.0,
+  "verdict": {
+    "ok": true,
+    "problems": []
+  }
+}

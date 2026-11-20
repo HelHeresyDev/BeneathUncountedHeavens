@@ -1,0 +1,370 @@
+{
+  "original": {
+    "vertices": 27018,
+    "faces": 40000,
+    "quads": 0,
+    "tris": 40000,
+    "ngons": 0,
+    "components": 725,
+    "non_manifold_edges": 13198,
+    "open_edges": 13198,
+    "degenerate_faces": 41,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6322119832038879,
+      -0.6069949865341187,
+      -0.9531930088996887
+    ],
+    "bbox_max": [
+      0.6029469966888428,
+      0.641431987285614,
+      0.9197019934654236
+    ],
+    "bbox_size": [
+      1.2351589798927307,
+      1.2484269738197327,
+      1.8728950023651123
+    ]
+  },
+  "high_fidelity_blend": {
+    "vertices": 16126,
+    "faces": 16116,
+    "quads": 16116,
+    "tris": 0,
+    "ngons": 0,
+    "components": 5,
+    "non_manifold_edges": 18,
+    "open_edges": 18,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6322119832038879,
+      -0.6069949865341187,
+      -0.953235387802124
+    ],
+    "bbox_max": [
+      0.6029469966888428,
+      0.641431987285614,
+      0.9197983145713806
+    ],
+    "bbox_size": [
+      1.2351589798927307,
+      1.2484269738197327,
+      1.8730337023735046
+    ]
+  },
+  "balanced_blend": {
+    "vertices": 5819,
+    "faces": 5809,
+    "quads": 5809,
+    "tris": 0,
+    "ngons": 0,
+    "components": 5,
+    "non_manifold_edges": 18,
+    "open_edges": 18,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6322119832038879,
+      -0.6074253916740417,
+      -0.9523528218269348
+    ],
+    "bbox_max": [
+      0.6041110157966614,
+      0.641676664352417,
+      0.9197198152542114
+    ],
+    "bbox_size": [
+      1.2363229990005493,
+      1.2491020560264587,
+      1.8720726370811462
+    ]
+  },
+  "aggressive_blend": {
+    "vertices": 2314,
+    "faces": 2304,
+    "quads": 2304,
+    "tris": 0,
+    "ngons": 0,
+    "components": 5,
+    "non_manifold_edges": 18,
+    "open_edges": 18,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6310874223709106,
+      -0.6077550649642944,
+      -0.9525467753410339
+    ],
+    "bbox_max": [
+      0.6039094924926758,
+      0.6411781907081604,
+      0.919162929058075
+    ],
+    "bbox_size": [
+      1.2349969148635864,
+      1.2489332556724548,
+      1.8717097043991089
+    ]
+  },
+  "high_fidelity_glb": {
+    "vertices": 27790,
+    "faces": 32232,
+    "quads": 0,
+    "tris": 32232,
+    "ngons": 0,
+    "components": 1473,
+    "non_manifold_edges": 20778,
+    "open_edges": 20778,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6322119832038879,
+      -0.6069949865341187,
+      -0.953235387802124
+    ],
+    "bbox_max": [
+      0.6029469966888428,
+      0.641431987285614,
+      0.9197983145713806
+    ],
+    "bbox_size": [
+      1.2351589798927307,
+      1.2484269738197327,
+      1.8730337023735046
+    ]
+  },
+  "balanced_glb": {
+    "vertices": 12164,
+    "faces": 11618,
+    "quads": 0,
+    "tris": 11618,
+    "ngons": 0,
+    "components": 1040,
+    "non_manifold_edges": 10744,
+    "open_edges": 10744,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6322119832038879,
+      -0.6074253916740417,
+      -0.9523528218269348
+    ],
+    "bbox_max": [
+      0.6041110157966614,
+      0.641676664352417,
+      0.9197198152542114
+    ],
+    "bbox_size": [
+      1.2363229990005493,
+      1.2491020560264587,
+      1.8720726370811462
+    ]
+  },
+  "aggressive_glb": {
+    "vertices": 5311,
+    "faces": 4608,
+    "quads": 0,
+    "tris": 4608,
+    "ngons": 0,
+    "components": 574,
+    "non_manifold_edges": 4904,
+    "open_edges": 4904,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6310874223709106,
+      -0.6077550649642944,
+      -0.9525467753410339
+    ],
+    "bbox_max": [
+      0.6039094924926758,
+      0.6411781907081604,
+      0.919162929058075
+    ],
+    "bbox_size": [
+      1.2349969148635864,
+      1.2489332556724548,
+      1.8717097043991089
+    ]
+  },
+  "fixed_glb": {
+    "vertices": 27763,
+    "faces": 32214,
+    "quads": 0,
+    "tris": 32214,
+    "ngons": 0,
+    "components": 1468,
+    "non_manifold_edges": 20752,
+    "open_edges": 20752,
+    "degenerate_faces": 0,
+    "uv_maps": 1,
+    "materials": [
+      "Material_0"
+    ],
+    "textures": [
+      {
+        "image": "Image_0",
+        "size": [
+          1024,
+          1024
+        ]
+      },
+      {
+        "image": "Image_1",
+        "size": [
+          1024,
+          1024
+        ]
+      }
+    ],
+    "bbox_min": [
+      -0.6322119832038879,
+      -0.6069949865341187,
+      -0.953235387802124
+    ],
+    "bbox_max": [
+      0.6029469966888428,
+      0.641431987285614,
+      0.9197983145713806
+    ],
+    "bbox_size": [
+      1.2351589798927307,
+      1.2484269738197327,
+      1.8730337023735046
+    ]
+  }
+}
