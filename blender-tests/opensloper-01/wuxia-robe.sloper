@@ -1,0 +1,1170 @@
+{
+  "format": "pattern",
+  "version": 1,
+  "units": "cm",
+  "notes": "",
+  "measurementFile": "wuxia-robe.slm",
+  "identity": "53c145cc-f99a-4bde-b6d1-462a8fa5a244",
+  "nextId": 108,
+  "variables": [
+    {
+      "id": 1,
+      "name": "back_ease",
+      "formula": "8",
+      "description": "Ease added across the back panel"
+    },
+    {
+      "id": 2,
+      "name": "front_ease",
+      "formula": "8",
+      "description": "Ease added across the front"
+    },
+    {
+      "id": 3,
+      "name": "over_layer_ease",
+      "formula": "6",
+      "description": "Extra width so the robe can be worn over an inner layer"
+    },
+    {
+      "id": 4,
+      "name": "hem_drop",
+      "formula": "58",
+      "description": "From the waist line down to the hem"
+    },
+    {
+      "id": 5,
+      "name": "crossover_overlap",
+      "formula": "8",
+      "description": "How far each front panel's crossover edge passes the centre front"
+    },
+    {
+      "id": 6,
+      "name": "armhole_depth",
+      "formula": "18",
+      "description": "From the shoulder line down to the underarm"
+    },
+    {
+      "id": 7,
+      "name": "armhole_control",
+      "formula": "12",
+      "description": "Control length of the body armhole curves"
+    },
+    {
+      "id": 8,
+      "name": "sleeve_length",
+      "formula": "55",
+      "description": "From the shoulder line down to the sleeve hem"
+    },
+    {
+      "id": 9,
+      "name": "sleeve_flare",
+      "formula": "12",
+      "description": "How far each sleeve side seam flares out to the hem"
+    },
+    {
+      "id": 10,
+      "name": "armhole_half_width",
+      "formula": "16",
+      "description": "Half the distance between the sleeve's two shoulder points"
+    },
+    {
+      "id": 11,
+      "name": "armhole_dip",
+      "formula": "15",
+      "description": "How far the sleeve armhole dips below the shoulder line"
+    },
+    {
+      "id": 12,
+      "name": "armhole_dip_control",
+      "formula": "11.74",
+      "description": "Control length of the sleeve armhole curves"
+    },
+    {
+      "id": 13,
+      "name": "collar_width",
+      "formula": "6",
+      "description": "Width of the collar band"
+    },
+    {
+      "id": 14,
+      "name": "sash_width",
+      "formula": "9",
+      "description": "Width of the waist sash"
+    },
+    {
+      "id": 15,
+      "name": "sash_overlap",
+      "formula": "15",
+      "description": "Overlap of the sash when tied"
+    },
+    {
+      "id": 16,
+      "name": "neck_width",
+      "formula": "16",
+      "description": "Width of the neck opening at the base of the neck"
+    },
+    {
+      "id": 17,
+      "name": "shoulder_length",
+      "formula": "@shoulder_length",
+      "description": "Neck side point to shoulder point"
+    },
+    {
+      "id": 18,
+      "name": "back_width",
+      "formula": "@across_back + {1} / 2 + {3} / 2",
+      "description": "Width of the back panel"
+    },
+    {
+      "id": 19,
+      "name": "robe_length",
+      "formula": "@neck_back_to_waist + {4}",
+      "description": "From the neck line down to the hem"
+    },
+    {
+      "id": 20,
+      "name": "waist_y",
+      "formula": "@neck_back_to_waist",
+      "description": "Height of the waist line below the neck line"
+    },
+    {
+      "id": 21,
+      "name": "inner_x",
+      "formula": "{18} / 2 + {5} / 2",
+      "description": "X of each front panel's crossover edge at the waist"
+    },
+    {
+      "id": 22,
+      "name": "collar_length",
+      "formula": "{16} + sqrt(({21} - {17}) * ({21} - {17}) + {20} * {20})",
+      "description": "Length of the collar band: neck opening plus the crossover diagonal"
+    },
+    {
+      "id": 23,
+      "name": "sash_length",
+      "formula": "@waist_circumference + {15}",
+      "description": "Length of the waist sash"
+    }
+  ],
+  "objects": [
+    {
+      "id": 24,
+      "type": "freePoint",
+      "name": "Back_shoulder_left",
+      "x": "0",
+      "y": "0"
+    },
+    {
+      "id": 25,
+      "type": "freePoint",
+      "name": "Back_neck_left",
+      "x": "{17}",
+      "y": "0"
+    },
+    {
+      "id": 26,
+      "type": "freePoint",
+      "name": "Back_neck_right",
+      "x": "{18} - {17}",
+      "y": "0"
+    },
+    {
+      "id": 27,
+      "type": "freePoint",
+      "name": "Back_shoulder_right",
+      "x": "{18}",
+      "y": "0"
+    },
+    {
+      "id": 28,
+      "type": "freePoint",
+      "name": "Back_underarm_left",
+      "x": "0",
+      "y": "{6}"
+    },
+    {
+      "id": 29,
+      "type": "freePoint",
+      "name": "Back_underarm_right",
+      "x": "{18}",
+      "y": "{6}"
+    },
+    {
+      "id": 30,
+      "type": "freePoint",
+      "name": "Back_hem_left",
+      "x": "0",
+      "y": "{19}"
+    },
+    {
+      "id": 31,
+      "type": "freePoint",
+      "name": "Back_hem_right",
+      "x": "{18}",
+      "y": "{19}"
+    },
+    {
+      "id": 32,
+      "type": "freePoint",
+      "name": "FL_neck",
+      "x": "70 + {17}",
+      "y": "0"
+    },
+    {
+      "id": 33,
+      "type": "freePoint",
+      "name": "FL_shoulder",
+      "x": "70",
+      "y": "0"
+    },
+    {
+      "id": 34,
+      "type": "freePoint",
+      "name": "FL_underarm",
+      "x": "70",
+      "y": "{6}"
+    },
+    {
+      "id": 35,
+      "type": "freePoint",
+      "name": "FL_hem_left",
+      "x": "70",
+      "y": "{19}"
+    },
+    {
+      "id": 36,
+      "type": "freePoint",
+      "name": "FL_hem_right",
+      "x": "70 + {21}",
+      "y": "{19}"
+    },
+    {
+      "id": 37,
+      "type": "freePoint",
+      "name": "FL_waist_right",
+      "x": "70 + {21}",
+      "y": "{20}"
+    },
+    {
+      "id": 38,
+      "type": "freePoint",
+      "name": "FL_slit_base",
+      "x": "70 + {21} / 2",
+      "y": "{19}"
+    },
+    {
+      "id": 39,
+      "type": "freePoint",
+      "name": "FL_slit_top",
+      "x": "70 + {21} / 2",
+      "y": "{19} - 15"
+    },
+    {
+      "id": 40,
+      "type": "freePoint",
+      "name": "FR_neck",
+      "x": "135 + {17}",
+      "y": "0"
+    },
+    {
+      "id": 41,
+      "type": "freePoint",
+      "name": "FR_shoulder",
+      "x": "135",
+      "y": "0"
+    },
+    {
+      "id": 42,
+      "type": "freePoint",
+      "name": "FR_underarm",
+      "x": "135",
+      "y": "{6}"
+    },
+    {
+      "id": 43,
+      "type": "freePoint",
+      "name": "FR_hem_left",
+      "x": "135",
+      "y": "{19}"
+    },
+    {
+      "id": 44,
+      "type": "freePoint",
+      "name": "FR_hem_right",
+      "x": "135 + {21}",
+      "y": "{19}"
+    },
+    {
+      "id": 45,
+      "type": "freePoint",
+      "name": "FR_waist_right",
+      "x": "135 + {21}",
+      "y": "{20}"
+    },
+    {
+      "id": 46,
+      "type": "freePoint",
+      "name": "SL_front_shoulder",
+      "x": "-{10}",
+      "y": "120"
+    },
+    {
+      "id": 47,
+      "type": "freePoint",
+      "name": "SL_underarm",
+      "x": "0",
+      "y": "120 + {11}"
+    },
+    {
+      "id": 48,
+      "type": "freePoint",
+      "name": "SL_back_shoulder",
+      "x": "{10}",
+      "y": "120"
+    },
+    {
+      "id": 49,
+      "type": "freePoint",
+      "name": "SL_hem_left",
+      "x": "-{10} - {9}",
+      "y": "120 + {8}"
+    },
+    {
+      "id": 50,
+      "type": "freePoint",
+      "name": "SL_hem_right",
+      "x": "{10} + {9}",
+      "y": "120 + {8}"
+    },
+    {
+      "id": 51,
+      "type": "freePoint",
+      "name": "Collar_corner",
+      "x": "70",
+      "y": "120"
+    },
+    {
+      "id": 52,
+      "type": "freePoint",
+      "name": "Sash_corner",
+      "x": "135",
+      "y": "120"
+    },
+    {
+      "id": 53,
+      "type": "line",
+      "name": "Back_shoulder_line_left",
+      "start": 24,
+      "end": 25,
+      "role": "outline"
+    },
+    {
+      "id": 54,
+      "type": "line",
+      "name": "Back_neckline",
+      "start": 25,
+      "end": 26,
+      "role": "outline"
+    },
+    {
+      "id": 55,
+      "type": "line",
+      "name": "Back_shoulder_line_right",
+      "start": 26,
+      "end": 27,
+      "role": "outline"
+    },
+    {
+      "id": 56,
+      "type": "curvePath",
+      "name": "Back_armhole_right",
+      "nodes": [
+        {
+          "point": 27,
+          "angle": "180",
+          "lengthOut": "{7}"
+        },
+        {
+          "point": 29,
+          "angle": "90",
+          "lengthIn": "{7}"
+        }
+      ],
+      "role": "outline"
+    },
+    {
+      "id": 57,
+      "type": "line",
+      "name": "Back_side_right",
+      "start": 29,
+      "end": 31,
+      "role": "outline"
+    },
+    {
+      "id": 58,
+      "type": "line",
+      "name": "Back_hem",
+      "start": 31,
+      "end": 30,
+      "role": "outline"
+    },
+    {
+      "id": 59,
+      "type": "line",
+      "name": "Back_side_left",
+      "start": 30,
+      "end": 28,
+      "role": "outline"
+    },
+    {
+      "id": 60,
+      "type": "curvePath",
+      "name": "Back_armhole_left",
+      "nodes": [
+        {
+          "point": 28,
+          "angle": "270",
+          "lengthOut": "{7}"
+        },
+        {
+          "point": 24,
+          "angle": "180",
+          "lengthIn": "{7}"
+        }
+      ],
+      "role": "outline"
+    },
+    {
+      "id": 61,
+      "type": "curvePath",
+      "name": "FL_armhole",
+      "nodes": [
+        {
+          "point": 33,
+          "angle": "0",
+          "lengthOut": "{7}"
+        },
+        {
+          "point": 34,
+          "angle": "90",
+          "lengthIn": "{7}"
+        }
+      ],
+      "role": "outline"
+    },
+    {
+      "id": 62,
+      "type": "line",
+      "name": "FL_side",
+      "start": 34,
+      "end": 35,
+      "role": "outline"
+    },
+    {
+      "id": 63,
+      "type": "line",
+      "name": "FL_hem",
+      "start": 35,
+      "end": 36,
+      "role": "outline"
+    },
+    {
+      "id": 64,
+      "type": "line",
+      "name": "FL_inner",
+      "start": 36,
+      "end": 37,
+      "role": "outline"
+    },
+    {
+      "id": 65,
+      "type": "line",
+      "name": "FL_diagonal",
+      "start": 37,
+      "end": 32,
+      "role": "outline"
+    },
+    {
+      "id": 66,
+      "type": "line",
+      "name": "FL_slit",
+      "start": 38,
+      "end": 39,
+      "role": "cut"
+    },
+    {
+      "id": 67,
+      "type": "curvePath",
+      "name": "FR_armhole",
+      "nodes": [
+        {
+          "point": 41,
+          "angle": "0",
+          "lengthOut": "{7}"
+        },
+        {
+          "point": 42,
+          "angle": "90",
+          "lengthIn": "{7}"
+        }
+      ],
+      "role": "outline"
+    },
+    {
+      "id": 68,
+      "type": "line",
+      "name": "FR_side",
+      "start": 42,
+      "end": 43,
+      "role": "outline"
+    },
+    {
+      "id": 69,
+      "type": "line",
+      "name": "FR_hem",
+      "start": 43,
+      "end": 44,
+      "role": "outline"
+    },
+    {
+      "id": 70,
+      "type": "line",
+      "name": "FR_inner",
+      "start": 44,
+      "end": 45,
+      "role": "outline"
+    },
+    {
+      "id": 71,
+      "type": "line",
+      "name": "FR_diagonal",
+      "start": 45,
+      "end": 40,
+      "role": "outline"
+    },
+    {
+      "id": 72,
+      "type": "curvePath",
+      "name": "SL_armhole_front",
+      "nodes": [
+        {
+          "point": 46,
+          "angle": "90",
+          "lengthOut": "{12}"
+        },
+        {
+          "point": 47,
+          "angle": "0",
+          "lengthIn": "{12}"
+        }
+      ],
+      "role": "outline"
+    },
+    {
+      "id": 73,
+      "type": "curvePath",
+      "name": "SL_armhole_back",
+      "nodes": [
+        {
+          "point": 47,
+          "angle": "0",
+          "lengthOut": "{12}"
+        },
+        {
+          "point": 48,
+          "angle": "270",
+          "lengthIn": "{12}"
+        }
+      ],
+      "role": "outline"
+    },
+    {
+      "id": 74,
+      "type": "line",
+      "name": "SL_side_back",
+      "start": 48,
+      "end": 50,
+      "role": "outline"
+    },
+    {
+      "id": 75,
+      "type": "line",
+      "name": "SL_hem",
+      "start": 50,
+      "end": 49,
+      "role": "outline"
+    },
+    {
+      "id": 76,
+      "type": "line",
+      "name": "SL_side_front",
+      "start": 49,
+      "end": 46,
+      "role": "outline"
+    },
+    {
+      "id": 77,
+      "type": "line",
+      "name": "FL_shoulder_line",
+      "start": 32,
+      "end": 33,
+      "role": "outline"
+    },
+    {
+      "id": 78,
+      "type": "line",
+      "name": "FR_shoulder_line",
+      "start": 40,
+      "end": 41,
+      "role": "outline"
+    },
+    {
+      "id": 79,
+      "type": "offsetPoint",
+      "name": "A",
+      "base": 51,
+      "mode": "cartesian",
+      "dx": "{22}",
+      "dy": "0"
+    },
+    {
+      "id": 80,
+      "type": "offsetPoint",
+      "name": "B",
+      "base": 51,
+      "mode": "cartesian",
+      "dx": "0",
+      "dy": "{13}"
+    },
+    {
+      "id": 81,
+      "type": "offsetPoint",
+      "name": "C",
+      "base": 79,
+      "mode": "cartesian",
+      "dx": "0",
+      "dy": "{80}.y - {51}.y"
+    },
+    {
+      "id": 82,
+      "type": "line",
+      "start": 51,
+      "end": 79,
+      "role": "outline"
+    },
+    {
+      "id": 83,
+      "type": "line",
+      "start": 79,
+      "end": 81,
+      "role": "outline"
+    },
+    {
+      "id": 84,
+      "type": "line",
+      "start": 81,
+      "end": 80,
+      "role": "outline"
+    },
+    {
+      "id": 85,
+      "type": "line",
+      "start": 80,
+      "end": 51,
+      "role": "outline"
+    },
+    {
+      "id": 86,
+      "type": "offsetPoint",
+      "name": "D",
+      "base": 52,
+      "mode": "cartesian",
+      "dx": "{23}",
+      "dy": "0"
+    },
+    {
+      "id": 87,
+      "type": "offsetPoint",
+      "name": "E",
+      "base": 52,
+      "mode": "cartesian",
+      "dx": "0",
+      "dy": "{14}"
+    },
+    {
+      "id": 88,
+      "type": "offsetPoint",
+      "name": "F",
+      "base": 86,
+      "mode": "cartesian",
+      "dx": "0",
+      "dy": "{87}.y - {52}.y"
+    },
+    {
+      "id": 89,
+      "type": "line",
+      "start": 52,
+      "end": 86,
+      "role": "outline"
+    },
+    {
+      "id": 90,
+      "type": "line",
+      "start": 86,
+      "end": 88,
+      "role": "outline"
+    },
+    {
+      "id": 91,
+      "type": "line",
+      "start": 88,
+      "end": 87,
+      "role": "outline"
+    },
+    {
+      "id": 92,
+      "type": "line",
+      "start": 87,
+      "end": 52,
+      "role": "outline"
+    },
+    {
+      "id": 96,
+      "type": "piece",
+      "name": "Sleeve",
+      "path": [
+        {
+          "edge": 73,
+          "reversed": false
+        },
+        {
+          "edge": 74,
+          "reversed": false
+        },
+        {
+          "edge": 75,
+          "reversed": false
+        },
+        {
+          "edge": 76,
+          "reversed": false
+        },
+        {
+          "edge": 72,
+          "reversed": false
+        }
+      ],
+      "allowance": "1",
+      "grainline": {
+        "angle": "90"
+      },
+      "cut": {
+        "count": 2,
+        "mirrored": true
+      }
+    },
+    {
+      "id": 97,
+      "type": "piece",
+      "name": "Collar",
+      "path": [
+        {
+          "edge": 82,
+          "reversed": false
+        },
+        {
+          "edge": 83,
+          "reversed": false
+        },
+        {
+          "edge": 84,
+          "reversed": false
+        },
+        {
+          "edge": 85,
+          "reversed": false
+        }
+      ],
+      "allowance": "1",
+      "grainline": {
+        "angle": "90"
+      },
+      "cut": {
+        "count": 1,
+        "mirrored": false
+      }
+    },
+    {
+      "id": 98,
+      "type": "piece",
+      "name": "Sash",
+      "path": [
+        {
+          "edge": 89,
+          "reversed": false
+        },
+        {
+          "edge": 90,
+          "reversed": false
+        },
+        {
+          "edge": 91,
+          "reversed": false
+        },
+        {
+          "edge": 92,
+          "reversed": false
+        }
+      ],
+      "allowance": "1",
+      "grainline": {
+        "angle": "90"
+      },
+      "cut": {
+        "count": 1,
+        "mirrored": false
+      }
+    },
+    {
+      "id": 93,
+      "type": "piece",
+      "name": "Back",
+      "path": [
+        {
+          "edge": 54,
+          "reversed": false
+        },
+        {
+          "edge": 55,
+          "reversed": false
+        },
+        {
+          "edge": 56,
+          "reversed": false
+        },
+        {
+          "edge": 57,
+          "reversed": false
+        },
+        {
+          "edge": 58,
+          "reversed": false
+        },
+        {
+          "edge": 59,
+          "reversed": false
+        },
+        {
+          "edge": 60,
+          "reversed": false
+        },
+        {
+          "edge": 53,
+          "reversed": false
+        }
+      ],
+      "allowance": "1",
+      "grainline": {
+        "angle": "90"
+      },
+      "notches": [
+        {
+          "point": 24
+        },
+        {
+          "point": 27
+        },
+        {
+          "point": 28
+        },
+        {
+          "point": 29
+        }
+      ],
+      "cut": {
+        "count": 1,
+        "mirrored": false
+      }
+    },
+    {
+      "id": 94,
+      "type": "piece",
+      "name": "Front_left",
+      "path": [
+        {
+          "edge": 77,
+          "reversed": true
+        },
+        {
+          "edge": 65,
+          "reversed": true
+        },
+        {
+          "edge": 64,
+          "reversed": true
+        },
+        {
+          "edge": 63,
+          "reversed": true
+        },
+        {
+          "edge": 62,
+          "reversed": true
+        },
+        {
+          "edge": 61,
+          "reversed": true
+        }
+      ],
+      "allowance": "1",
+      "grainline": {
+        "angle": "90"
+      },
+      "notches": [
+        {
+          "point": 33
+        },
+        {
+          "point": 34
+        }
+      ],
+      "markings": [
+        {
+          "kind": "line",
+          "edge": 66
+        }
+      ],
+      "cut": {
+        "count": 1,
+        "mirrored": false
+      }
+    },
+    {
+      "id": 95,
+      "type": "piece",
+      "name": "Front_right",
+      "path": [
+        {
+          "edge": 78,
+          "reversed": true
+        },
+        {
+          "edge": 71,
+          "reversed": true
+        },
+        {
+          "edge": 70,
+          "reversed": true
+        },
+        {
+          "edge": 69,
+          "reversed": true
+        },
+        {
+          "edge": 68,
+          "reversed": true
+        },
+        {
+          "edge": 67,
+          "reversed": true
+        }
+      ],
+      "allowance": "1",
+      "grainline": {
+        "angle": "90"
+      },
+      "notches": [
+        {
+          "point": 41
+        },
+        {
+          "point": 42
+        }
+      ],
+      "cut": {
+        "count": 1,
+        "mirrored": false
+      }
+    },
+    {
+      "id": 99,
+      "type": "seam",
+      "name": "Shoulder_left",
+      "sideA": [
+        {
+          "piece": 93,
+          "edge": 53
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 94,
+          "edge": 77
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 100,
+      "type": "seam",
+      "name": "Shoulder_right",
+      "sideA": [
+        {
+          "piece": 93,
+          "edge": 55
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 95,
+          "edge": 78
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 101,
+      "type": "seam",
+      "name": "Side_left",
+      "sideA": [
+        {
+          "piece": 93,
+          "edge": 59
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 94,
+          "edge": 62
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 102,
+      "type": "seam",
+      "name": "Side_right",
+      "sideA": [
+        {
+          "piece": 93,
+          "edge": 57
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 95,
+          "edge": 68
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 103,
+      "type": "seam",
+      "name": "Armhole_front_left",
+      "sideA": [
+        {
+          "piece": 94,
+          "edge": 61
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 96,
+          "edge": 72
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 104,
+      "type": "seam",
+      "name": "Armhole_front_right",
+      "sideA": [
+        {
+          "piece": 95,
+          "edge": 67
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 96,
+          "edge": 72
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 105,
+      "type": "seam",
+      "name": "Armhole_back_left",
+      "sideA": [
+        {
+          "piece": 93,
+          "edge": 60
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 96,
+          "edge": 73
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 106,
+      "type": "seam",
+      "name": "Armhole_back_right",
+      "sideA": [
+        {
+          "piece": 93,
+          "edge": 56
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 96,
+          "edge": 73
+        }
+      ],
+      "reversed": false,
+      "ease": "0",
+      "tolerance": "0.1"
+    },
+    {
+      "id": 107,
+      "type": "seam",
+      "name": "Collar_crossover",
+      "sideA": [
+        {
+          "piece": 97,
+          "edge": 82
+        }
+      ],
+      "sideB": [
+        {
+          "piece": 94,
+          "edge": 65
+        }
+      ],
+      "reversed": false,
+      "ease": "-{16}",
+      "tolerance": "0.1"
+    }
+  ]
+}

@@ -1,0 +1,724 @@
+{
+  "pattern": "wuxia-robe.sloper",
+  "measurements": "wuxia-robe.slm",
+  "variables": [
+    {
+      "id": 1,
+      "name": "back_ease",
+      "state": "valid",
+      "value": 8
+    },
+    {
+      "id": 2,
+      "name": "front_ease",
+      "state": "valid",
+      "value": 8
+    },
+    {
+      "id": 3,
+      "name": "over_layer_ease",
+      "state": "valid",
+      "value": 6
+    },
+    {
+      "id": 4,
+      "name": "hem_drop",
+      "state": "valid",
+      "value": 58
+    },
+    {
+      "id": 5,
+      "name": "crossover_overlap",
+      "state": "valid",
+      "value": 8
+    },
+    {
+      "id": 6,
+      "name": "armhole_depth",
+      "state": "valid",
+      "value": 18
+    },
+    {
+      "id": 7,
+      "name": "armhole_control",
+      "state": "valid",
+      "value": 12
+    },
+    {
+      "id": 8,
+      "name": "sleeve_length",
+      "state": "valid",
+      "value": 55
+    },
+    {
+      "id": 9,
+      "name": "sleeve_flare",
+      "state": "valid",
+      "value": 12
+    },
+    {
+      "id": 10,
+      "name": "armhole_half_width",
+      "state": "valid",
+      "value": 16
+    },
+    {
+      "id": 11,
+      "name": "armhole_dip",
+      "state": "valid",
+      "value": 15
+    },
+    {
+      "id": 12,
+      "name": "armhole_dip_control",
+      "state": "valid",
+      "value": 11.74
+    },
+    {
+      "id": 13,
+      "name": "collar_width",
+      "state": "valid",
+      "value": 6
+    },
+    {
+      "id": 14,
+      "name": "sash_width",
+      "state": "valid",
+      "value": 9
+    },
+    {
+      "id": 15,
+      "name": "sash_overlap",
+      "state": "valid",
+      "value": 15
+    },
+    {
+      "id": 16,
+      "name": "neck_width",
+      "state": "valid",
+      "value": 16
+    },
+    {
+      "id": 17,
+      "name": "shoulder_length",
+      "state": "valid",
+      "value": 19
+    },
+    {
+      "id": 18,
+      "name": "back_width",
+      "state": "valid",
+      "value": 54
+    },
+    {
+      "id": 19,
+      "name": "robe_length",
+      "state": "valid",
+      "value": 100
+    },
+    {
+      "id": 20,
+      "name": "waist_y",
+      "state": "valid",
+      "value": 42
+    },
+    {
+      "id": 21,
+      "name": "inner_x",
+      "state": "valid",
+      "value": 31
+    },
+    {
+      "id": 22,
+      "name": "collar_length",
+      "state": "valid",
+      "value": 59.680659
+    },
+    {
+      "id": 23,
+      "name": "sash_length",
+      "state": "valid",
+      "value": 99
+    }
+  ],
+  "objects": [
+    {
+      "id": 24,
+      "name": "Back_shoulder_left",
+      "state": "valid",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": 25,
+      "name": "Back_neck_left",
+      "state": "valid",
+      "x": 190,
+      "y": 0
+    },
+    {
+      "id": 26,
+      "name": "Back_neck_right",
+      "state": "valid",
+      "x": 350,
+      "y": 0
+    },
+    {
+      "id": 27,
+      "name": "Back_shoulder_right",
+      "state": "valid",
+      "x": 540,
+      "y": 0
+    },
+    {
+      "id": 28,
+      "name": "Back_underarm_left",
+      "state": "valid",
+      "x": 0,
+      "y": 180
+    },
+    {
+      "id": 29,
+      "name": "Back_underarm_right",
+      "state": "valid",
+      "x": 540,
+      "y": 180
+    },
+    {
+      "id": 30,
+      "name": "Back_hem_left",
+      "state": "valid",
+      "x": 0,
+      "y": 1000
+    },
+    {
+      "id": 31,
+      "name": "Back_hem_right",
+      "state": "valid",
+      "x": 540,
+      "y": 1000
+    },
+    {
+      "id": 32,
+      "name": "FL_neck",
+      "state": "valid",
+      "x": 890,
+      "y": 0
+    },
+    {
+      "id": 33,
+      "name": "FL_shoulder",
+      "state": "valid",
+      "x": 700,
+      "y": 0
+    },
+    {
+      "id": 34,
+      "name": "FL_underarm",
+      "state": "valid",
+      "x": 700,
+      "y": 180
+    },
+    {
+      "id": 35,
+      "name": "FL_hem_left",
+      "state": "valid",
+      "x": 700,
+      "y": 1000
+    },
+    {
+      "id": 36,
+      "name": "FL_hem_right",
+      "state": "valid",
+      "x": 1010,
+      "y": 1000
+    },
+    {
+      "id": 37,
+      "name": "FL_waist_right",
+      "state": "valid",
+      "x": 1010,
+      "y": 420
+    },
+    {
+      "id": 38,
+      "name": "FL_slit_base",
+      "state": "valid",
+      "x": 855,
+      "y": 1000
+    },
+    {
+      "id": 39,
+      "name": "FL_slit_top",
+      "state": "valid",
+      "x": 855,
+      "y": 850
+    },
+    {
+      "id": 40,
+      "name": "FR_neck",
+      "state": "valid",
+      "x": 1540,
+      "y": 0
+    },
+    {
+      "id": 41,
+      "name": "FR_shoulder",
+      "state": "valid",
+      "x": 1350,
+      "y": 0
+    },
+    {
+      "id": 42,
+      "name": "FR_underarm",
+      "state": "valid",
+      "x": 1350,
+      "y": 180
+    },
+    {
+      "id": 43,
+      "name": "FR_hem_left",
+      "state": "valid",
+      "x": 1350,
+      "y": 1000
+    },
+    {
+      "id": 44,
+      "name": "FR_hem_right",
+      "state": "valid",
+      "x": 1660,
+      "y": 1000
+    },
+    {
+      "id": 45,
+      "name": "FR_waist_right",
+      "state": "valid",
+      "x": 1660,
+      "y": 420
+    },
+    {
+      "id": 46,
+      "name": "SL_front_shoulder",
+      "state": "valid",
+      "x": -160,
+      "y": 1200
+    },
+    {
+      "id": 47,
+      "name": "SL_underarm",
+      "state": "valid",
+      "x": 0,
+      "y": 1350
+    },
+    {
+      "id": 48,
+      "name": "SL_back_shoulder",
+      "state": "valid",
+      "x": 160,
+      "y": 1200
+    },
+    {
+      "id": 49,
+      "name": "SL_hem_left",
+      "state": "valid",
+      "x": -280,
+      "y": 1750
+    },
+    {
+      "id": 50,
+      "name": "SL_hem_right",
+      "state": "valid",
+      "x": 280,
+      "y": 1750
+    },
+    {
+      "id": 51,
+      "name": "Collar_corner",
+      "state": "valid",
+      "x": 700,
+      "y": 1200
+    },
+    {
+      "id": 52,
+      "name": "Sash_corner",
+      "state": "valid",
+      "x": 1350,
+      "y": 1200
+    },
+    {
+      "id": 53,
+      "name": "Back_shoulder_line_left",
+      "state": "valid",
+      "length": 190
+    },
+    {
+      "id": 54,
+      "name": "Back_neckline",
+      "state": "valid",
+      "length": 160
+    },
+    {
+      "id": 55,
+      "name": "Back_shoulder_line_right",
+      "state": "valid",
+      "length": 190
+    },
+    {
+      "id": 56,
+      "name": "Back_armhole_right",
+      "state": "valid",
+      "length": 280.963547
+    },
+    {
+      "id": 57,
+      "name": "Back_side_right",
+      "state": "valid",
+      "length": 820
+    },
+    {
+      "id": 58,
+      "name": "Back_hem",
+      "state": "valid",
+      "length": 540
+    },
+    {
+      "id": 59,
+      "name": "Back_side_left",
+      "state": "valid",
+      "length": 820
+    },
+    {
+      "id": 60,
+      "name": "Back_armhole_left",
+      "state": "valid",
+      "length": 280.963547
+    },
+    {
+      "id": 61,
+      "name": "FL_armhole",
+      "state": "valid",
+      "length": 280.963547
+    },
+    {
+      "id": 62,
+      "name": "FL_side",
+      "state": "valid",
+      "length": 820
+    },
+    {
+      "id": 63,
+      "name": "FL_hem",
+      "state": "valid",
+      "length": 310
+    },
+    {
+      "id": 64,
+      "name": "FL_inner",
+      "state": "valid",
+      "length": 580
+    },
+    {
+      "id": 65,
+      "name": "FL_diagonal",
+      "state": "valid",
+      "length": 436.806593
+    },
+    {
+      "id": 66,
+      "name": "FL_slit",
+      "state": "valid",
+      "length": 150
+    },
+    {
+      "id": 67,
+      "name": "FR_armhole",
+      "state": "valid",
+      "length": 280.963547
+    },
+    {
+      "id": 68,
+      "name": "FR_side",
+      "state": "valid",
+      "length": 820
+    },
+    {
+      "id": 69,
+      "name": "FR_hem",
+      "state": "valid",
+      "length": 310
+    },
+    {
+      "id": 70,
+      "name": "FR_inner",
+      "state": "valid",
+      "length": 580
+    },
+    {
+      "id": 71,
+      "name": "FR_diagonal",
+      "state": "valid",
+      "length": 436.806593
+    },
+    {
+      "id": 72,
+      "name": "SL_armhole_front",
+      "state": "valid",
+      "length": 280.972171
+    },
+    {
+      "id": 73,
+      "name": "SL_armhole_back",
+      "state": "valid",
+      "length": 280.972171
+    },
+    {
+      "id": 74,
+      "name": "SL_side_back",
+      "state": "valid",
+      "length": 562.938718
+    },
+    {
+      "id": 75,
+      "name": "SL_hem",
+      "state": "valid",
+      "length": 560
+    },
+    {
+      "id": 76,
+      "name": "SL_side_front",
+      "state": "valid",
+      "length": 562.938718
+    },
+    {
+      "id": 77,
+      "name": "FL_shoulder_line",
+      "state": "valid",
+      "length": 190
+    },
+    {
+      "id": 78,
+      "name": "FR_shoulder_line",
+      "state": "valid",
+      "length": 190
+    },
+    {
+      "id": 79,
+      "name": "A",
+      "state": "valid",
+      "x": 1296.806593,
+      "y": 1200
+    },
+    {
+      "id": 80,
+      "name": "B",
+      "state": "valid",
+      "x": 700,
+      "y": 1260
+    },
+    {
+      "id": 81,
+      "name": "C",
+      "state": "valid",
+      "x": 1296.806593,
+      "y": 1260
+    },
+    {
+      "id": 82,
+      "name": "Line_Collar_corner_A",
+      "state": "valid",
+      "length": 596.806593
+    },
+    {
+      "id": 83,
+      "name": "Line_A_C",
+      "state": "valid",
+      "length": 60
+    },
+    {
+      "id": 84,
+      "name": "Line_C_B",
+      "state": "valid",
+      "length": 596.806593
+    },
+    {
+      "id": 85,
+      "name": "Line_B_Collar_corner",
+      "state": "valid",
+      "length": 60
+    },
+    {
+      "id": 86,
+      "name": "D",
+      "state": "valid",
+      "x": 2340,
+      "y": 1200
+    },
+    {
+      "id": 87,
+      "name": "E",
+      "state": "valid",
+      "x": 1350,
+      "y": 1290
+    },
+    {
+      "id": 88,
+      "name": "F",
+      "state": "valid",
+      "x": 2340,
+      "y": 1290
+    },
+    {
+      "id": 89,
+      "name": "Line_Sash_corner_D",
+      "state": "valid",
+      "length": 990
+    },
+    {
+      "id": 90,
+      "name": "Line_D_F",
+      "state": "valid",
+      "length": 90
+    },
+    {
+      "id": 91,
+      "name": "Line_F_E",
+      "state": "valid",
+      "length": 990
+    },
+    {
+      "id": 92,
+      "name": "Line_E_Sash_corner",
+      "state": "valid",
+      "length": 90
+    },
+    {
+      "id": 96,
+      "name": "Sleeve",
+      "state": "valid",
+      "area": 214573.039745,
+      "perimeter": 2247.77842,
+      "cutArea": 237435.669038
+    },
+    {
+      "id": 97,
+      "name": "Collar",
+      "state": "valid",
+      "area": 35808.395601,
+      "perimeter": 1313.613187,
+      "cutArea": 49344.56
+    },
+    {
+      "id": 98,
+      "name": "Sash",
+      "state": "valid",
+      "area": 89100,
+      "perimeter": 2160,
+      "cutArea": 111100
+    },
+    {
+      "id": 93,
+      "name": "Back",
+      "state": "valid",
+      "area": 522726.661714,
+      "perimeter": 3281.873052,
+      "cutArea": 555258.778503
+    },
+    {
+      "id": 94,
+      "name": "Front_left",
+      "state": "valid",
+      "area": 276163.330857,
+      "perimeter": 2617.743119,
+      "cutArea": 302387.000196
+    },
+    {
+      "id": 95,
+      "name": "Front_right",
+      "state": "valid",
+      "area": 276163.330857,
+      "perimeter": 2617.743119,
+      "cutArea": 302387.000196
+    },
+    {
+      "id": 99,
+      "name": "Shoulder_left",
+      "state": "valid",
+      "lengthA": 190,
+      "lengthB": 190,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 100,
+      "name": "Shoulder_right",
+      "state": "valid",
+      "lengthA": 190,
+      "lengthB": 190,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 101,
+      "name": "Side_left",
+      "state": "valid",
+      "lengthA": 820,
+      "lengthB": 820,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 102,
+      "name": "Side_right",
+      "state": "valid",
+      "lengthA": 820,
+      "lengthB": 820,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 103,
+      "name": "Armhole_front_left",
+      "state": "valid",
+      "lengthA": 280.963547,
+      "lengthB": 280.972171,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 104,
+      "name": "Armhole_front_right",
+      "state": "valid",
+      "lengthA": 280.963547,
+      "lengthB": 280.972171,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 105,
+      "name": "Armhole_back_left",
+      "state": "valid",
+      "lengthA": 280.963547,
+      "lengthB": 280.972171,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 106,
+      "name": "Armhole_back_right",
+      "state": "valid",
+      "lengthA": 280.963547,
+      "lengthB": 280.972171,
+      "ease": 0,
+      "tolerance": 1
+    },
+    {
+      "id": 107,
+      "name": "Collar_crossover",
+      "state": "valid",
+      "lengthA": 596.806593,
+      "lengthB": 436.806593,
+      "ease": -160,
+      "tolerance": 1
+    }
+  ]
+}

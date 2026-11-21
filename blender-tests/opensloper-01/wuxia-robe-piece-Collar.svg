@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="618mm" height="82mm" viewBox="690 1190 618 82">
+<rect x="690" y="1190" width="618" height="82" fill="#ffffff"/>
+<path data-id="96" data-name="Sleeve" d="M 158.786 1160.543 L 161.466 1161.694 L 163.547 1163.258 L 165.026 1164.906 L 166.189 1166.68 L 167.358 1169.305 L 168.159 1172.087 L 168.721 1174.962 L 169.143 1178.091 L 169.465 1181.57 L 169.704 1185.462 L 169.872 1189.847 L 169.986 1198.858 L 292.417 1760 L -292.417 1760 L -169.986 1198.858 L -169.872 1189.847 L -169.704 1185.462 L -169.465 1181.57 L -169.143 1178.091 L -168.721 1174.962 L -168.159 1172.087 L -167.358 1169.305 L -166.189 1166.68 L -165.026 1164.906 L -163.547 1163.258 L -161.466 1161.694 L -158.786 1160.543 L -155.828 1160.122 L -153.078 1160.436 L -150.822 1161.211 L -148.832 1162.304 L -146.607 1164.128 L -144.785 1166.168 L -143.258 1168.251 L -141.841 1170.465 L -140.421 1172.91 L -137.609 1178.261 L -134.556 1184.562 L -131.247 1191.685 L -123.772 1208.044 L -119.545 1217.145 L -115.036 1226.591 L -110.198 1236.358 L -104.989 1246.398 L -102.304 1251.37 L -99.49 1256.429 L -96.615 1261.434 L -93.674 1266.383 L -90.626 1271.331 L -87.498 1276.215 L -84.288 1281.025 L -81.002 1285.739 L -77.621 1290.365 L -74.174 1294.855 L -70.629 1299.234 L -67.027 1303.437 L -63.332 1307.496 L -59.598 1311.34 L -55.762 1315.022 L -51.854 1318.499 L -47.906 1321.734 L -43.87 1324.756 L -39.785 1327.525 L -35.632 1330.045 L -31.361 1332.332 L -29.283 1333.334 L -27.133 1334.294 L -25.001 1335.169 L -22.808 1335.992 L -20.603 1336.739 L -18.414 1337.403 L -16.162 1338.006 L -13.942 1338.521 L -11.667 1338.967 L -9.391 1339.332 L -7.081 1339.621 L -4.733 1339.83 L -2.391 1339.956 L 0 1339.998 L 2.391 1339.956 L 4.733 1339.83 L 7.081 1339.621 L 9.391 1339.332 L 11.667 1338.967 L 13.942 1338.521 L 16.162 1338.006 L 18.414 1337.403 L 20.603 1336.739 L 22.808 1335.992 L 25.001 1335.169 L 27.133 1334.294 L 29.283 1333.334 L 31.361 1332.332 L 35.632 1330.045 L 39.785 1327.525 L 43.87 1324.756 L 47.906 1321.734 L 51.854 1318.499 L 55.762 1315.022 L 59.598 1311.34 L 63.332 1307.496 L 67.027 1303.437 L 70.629 1299.234 L 74.174 1294.855 L 77.621 1290.365 L 81.002 1285.739 L 84.288 1281.025 L 87.498 1276.215 L 90.626 1271.331 L 93.674 1266.383 L 96.615 1261.434 L 99.49 1256.429 L 102.304 1251.37 L 104.989 1246.398 L 110.198 1236.358 L 115.036 1226.591 L 119.545 1217.145 L 123.772 1208.044 L 131.247 1191.685 L 134.556 1184.562 L 137.609 1178.261 L 140.421 1172.91 L 141.841 1170.465 L 143.258 1168.251 L 144.785 1166.168 L 146.607 1164.128 L 148.832 1162.304 L 150.822 1161.211 L 153.078 1160.436 L 155.828 1160.122 Z" fill="#ceddea" stroke="#202020" stroke-width="0.927"/>
+<path data-id="97" data-name="Collar" d="M 1306.807 1190 L 1306.807 1270 L 690 1270 L 690 1190 Z" fill="#ceddea" stroke="#202020" stroke-width="0.927"/>
+<path data-id="98" data-name="Sash" d="M 2350 1190 L 2350 1300 L 1340 1300 L 1340 1190 Z" fill="#ceddea" stroke="#202020" stroke-width="0.927"/>
+<path data-id="93" data-name="Back" d="M 190 -10 L 350 -10 L 540 -10 L 540.197 9.998 L 537.618 10.049 L 535.358 10.186 L 533.197 10.409 L 531.131 10.715 L 529.179 11.096 L 527.263 11.564 L 525.492 12.089 L 523.775 12.691 L 522.145 13.357 L 520.585 14.09 L 519.086 14.89 L 517.669 15.744 L 516.3 16.669 L 514.996 17.651 L 513.724 18.714 L 512.513 19.834 L 511.357 21.013 L 510.229 22.278 L 509.155 23.602 L 508.123 24.998 L 507.127 26.475 L 506.187 28.003 L 505.278 29.62 L 504.422 31.291 L 503.599 33.056 L 502.83 34.865 L 502.104 36.743 L 501.448 38.618 L 500.198 42.778 L 499.154 47.105 L 498.295 51.647 L 497.623 56.372 L 497.132 61.281 L 496.818 66.347 L 496.676 71.588 L 496.704 76.904 L 496.892 82.316 L 497.236 87.822 L 497.733 93.44 L 498.363 99.012 L 499.135 104.677 L 500.03 110.33 L 501.036 115.925 L 502.152 121.5 L 503.383 127.082 L 504.692 132.538 L 506.116 138.018 L 507.58 143.261 L 509.121 148.418 L 510.741 153.498 L 512.402 158.394 L 514.099 163.096 L 515.838 167.633 L 517.59 171.933 L 519.333 175.957 L 521.103 179.787 L 522.854 183.333 L 524.591 186.601 L 526.259 189.504 L 527.884 192.096 L 529.16 193.936 L 529.324 192.901 L 529.686 189.275 L 529.918 184.967 L 530.001 179.837 L 550 180 L 550 1010 L -10 1010 L -10 180 L 9.999 179.837 L 10.081 184.967 L 10.313 189.275 L 10.675 192.901 L 10.839 193.936 L 12.115 192.096 L 13.741 189.504 L 15.408 186.601 L 17.145 183.333 L 18.896 179.787 L 20.666 175.957 L 22.409 171.933 L 24.161 167.633 L 25.9 163.096 L 27.597 158.394 L 29.258 153.498 L 30.878 148.418 L 32.419 143.261 L 33.883 138.018 L 35.307 132.538 L 36.616 127.082 L 37.847 121.5 L 38.963 115.925 L 39.969 110.33 L 40.864 104.677 L 41.636 99.012 L 42.266 93.44 L 42.763 87.822 L 43.107 82.316 L 43.295 76.904 L 43.323 71.588 L 43.181 66.347 L 42.867 61.281 L 42.376 56.372 L 41.704 51.647 L 40.845 47.105 L 39.801 42.778 L 38.551 38.618 L 37.895 36.743 L 37.169 34.865 L 36.4 33.056 L 35.577 31.291 L 34.721 29.62 L 33.812 28.003 L 32.872 26.475 L 31.876 24.998 L 30.844 23.602 L 29.77 22.278 L 28.642 21.013 L 27.486 19.834 L 26.275 18.714 L 25.003 17.651 L 23.699 16.669 L 22.33 15.744 L 20.913 14.89 L 19.414 14.09 L 17.854 13.357 L 16.224 12.691 L 14.507 12.089 L 12.736 11.564 L 10.82 11.096 L 8.868 10.715 L 6.802 10.409 L 4.641 10.186 L 2.381 10.049 L -0.197 9.998 L 0 -10 Z" fill="#ceddea" stroke="#202020" stroke-width="0.927"/>
+<path data-id="94" data-name="Front_left" d="M 897.543 -10 L 1020 418.599 L 1020 1010 L 690 1010 L 690 180 L 709.999 179.837 L 710.081 184.967 L 710.313 189.275 L 710.675 192.901 L 710.839 193.936 L 712.115 192.096 L 713.741 189.504 L 715.408 186.601 L 717.145 183.333 L 718.896 179.787 L 720.666 175.957 L 722.409 171.933 L 724.161 167.633 L 725.9 163.096 L 727.597 158.394 L 729.258 153.498 L 730.878 148.418 L 732.419 143.261 L 733.883 138.018 L 735.307 132.538 L 736.616 127.082 L 737.847 121.5 L 738.963 115.925 L 739.969 110.33 L 740.864 104.677 L 741.636 99.012 L 742.266 93.44 L 742.763 87.822 L 743.107 82.316 L 743.295 76.904 L 743.323 71.588 L 743.181 66.347 L 742.867 61.281 L 742.376 56.372 L 741.704 51.647 L 740.845 47.105 L 739.801 42.778 L 738.551 38.618 L 737.895 36.743 L 737.169 34.865 L 736.4 33.056 L 735.577 31.291 L 734.721 29.62 L 733.812 28.003 L 732.872 26.475 L 731.876 24.998 L 730.844 23.602 L 729.77 22.278 L 728.642 21.013 L 727.486 19.834 L 726.275 18.714 L 725.003 17.651 L 723.699 16.669 L 722.33 15.744 L 720.913 14.89 L 719.414 14.09 L 717.854 13.357 L 716.224 12.691 L 714.507 12.089 L 712.736 11.564 L 710.82 11.096 L 708.868 10.715 L 706.802 10.409 L 704.641 10.186 L 702.381 10.049 L 699.803 9.998 L 700 -10 Z" fill="#ceddea" stroke="#202020" stroke-width="0.927"/>
+<path data-id="95" data-name="Front_right" d="M 1547.543 -10 L 1670 418.599 L 1670 1010 L 1340 1010 L 1340 180 L 1359.999 179.837 L 1360.081 184.967 L 1360.313 189.275 L 1360.675 192.901 L 1360.839 193.936 L 1362.115 192.096 L 1363.741 189.504 L 1365.408 186.601 L 1367.145 183.333 L 1368.896 179.787 L 1370.666 175.957 L 1372.409 171.933 L 1374.161 167.633 L 1375.9 163.096 L 1377.597 158.394 L 1379.258 153.498 L 1380.878 148.418 L 1382.419 143.261 L 1383.883 138.018 L 1385.307 132.538 L 1386.616 127.082 L 1387.847 121.5 L 1388.963 115.925 L 1389.969 110.33 L 1390.864 104.677 L 1391.636 99.012 L 1392.266 93.44 L 1392.763 87.822 L 1393.107 82.316 L 1393.295 76.904 L 1393.323 71.588 L 1393.181 66.347 L 1392.867 61.281 L 1392.376 56.372 L 1391.704 51.647 L 1390.845 47.105 L 1389.801 42.778 L 1388.551 38.618 L 1387.895 36.743 L 1387.169 34.865 L 1386.4 33.056 L 1385.577 31.291 L 1384.721 29.62 L 1383.812 28.003 L 1382.872 26.475 L 1381.876 24.998 L 1380.844 23.602 L 1379.77 22.278 L 1378.642 21.013 L 1377.486 19.834 L 1376.275 18.714 L 1375.003 17.651 L 1373.699 16.669 L 1372.33 15.744 L 1370.913 14.89 L 1369.414 14.09 L 1367.854 13.357 L 1366.224 12.691 L 1364.507 12.089 L 1362.736 11.564 L 1360.82 11.096 L 1358.868 10.715 L 1356.802 10.409 L 1354.641 10.186 L 1352.381 10.049 L 1349.803 9.998 L 1350 -10 Z" fill="#ceddea" stroke="#202020" stroke-width="0.927"/>
+<path data-id="66" data-name="FL_slit" d="M 855 1000 L 855 850" fill="none" stroke="#00838f" stroke-width="0.695"/>
+<text x="857.781" y="922.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_slit</text>
+<path data-id="53" data-name="Back_shoulder_line_left" d="M 0 0 L 190 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="97.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_shoulder_line_left</text>
+<path data-id="54" data-name="Back_neckline" d="M 190 0 L 350 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="272.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_neckline</text>
+<path data-id="55" data-name="Back_shoulder_line_right" d="M 350 0 L 540 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="447.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_shoulder_line_right</text>
+<path data-id="56" data-name="Back_armhole_right" d="M 540 0 C 420 0 540 300 540 180" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="492.743" y="107.969" font-family="sans-serif" font-size="8.652" fill="#202020">Back_armhole_right</text>
+<path data-id="57" data-name="Back_side_right" d="M 540 180 L 540 1000" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="542.781" y="587.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_side_right</text>
+<path data-id="58" data-name="Back_hem" d="M 540 1000 L 0 1000" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="272.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_hem</text>
+<path data-id="59" data-name="Back_side_left" d="M 0 1000 L 0 180" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="2.781" y="587.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_side_left</text>
+<path data-id="60" data-name="Back_armhole_left" d="M 0 180 C 0 300 120 0 0 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="52.819" y="107.969" font-family="sans-serif" font-size="8.652" fill="#202020">Back_armhole_left</text>
+<path data-id="61" data-name="FL_armhole" d="M 700 0 C 820 0 700 300 700 180" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="752.819" y="107.969" font-family="sans-serif" font-size="8.652" fill="#202020">FL_armhole</text>
+<path data-id="62" data-name="FL_side" d="M 700 180 L 700 1000" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="702.781" y="587.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_side</text>
+<path data-id="63" data-name="FL_hem" d="M 700 1000 L 1010 1000" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="857.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_hem</text>
+<path data-id="64" data-name="FL_inner" d="M 1010 1000 L 1010 420" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1012.781" y="707.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_inner</text>
+<path data-id="65" data-name="FL_diagonal" d="M 1010 420 L 890 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="952.781" y="207.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_diagonal</text>
+<path data-id="67" data-name="FR_armhole" d="M 1350 0 C 1470 0 1350 300 1350 180" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1402.819" y="107.969" font-family="sans-serif" font-size="8.652" fill="#202020">FR_armhole</text>
+<path data-id="68" data-name="FR_side" d="M 1350 180 L 1350 1000" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1352.781" y="587.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_side</text>
+<path data-id="69" data-name="FR_hem" d="M 1350 1000 L 1660 1000" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1507.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_hem</text>
+<path data-id="70" data-name="FR_inner" d="M 1660 1000 L 1660 420" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1662.781" y="707.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_inner</text>
+<path data-id="71" data-name="FR_diagonal" d="M 1660 420 L 1540 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1602.781" y="207.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_diagonal</text>
+<path data-id="72" data-name="SL_armhole_front" d="M -160 1200 C -160 1082.6 -117.4 1350 0 1350" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="-102.389" y="1263.836" font-family="sans-serif" font-size="8.652" fill="#202020">SL_armhole_front</text>
+<path data-id="73" data-name="SL_armhole_back" d="M 0 1350 C 117.4 1350 160 1082.6 160 1200" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="107.951" y="1263.836" font-family="sans-serif" font-size="8.652" fill="#202020">SL_armhole_back</text>
+<path data-id="74" data-name="SL_side_back" d="M 160 1200 L 280 1750" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="222.781" y="1472.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_side_back</text>
+<path data-id="75" data-name="SL_hem" d="M 280 1750 L -280 1750" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="2.781" y="1747.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_hem</text>
+<path data-id="76" data-name="SL_side_front" d="M -280 1750 L -160 1200" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="-217.219" y="1472.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_side_front</text>
+<path data-id="77" data-name="FL_shoulder_line" d="M 890 0 L 700 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="797.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">FL_shoulder_line</text>
+<path data-id="78" data-name="FR_shoulder_line" d="M 1540 0 L 1350 0" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1447.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">FR_shoulder_line</text>
+<path data-id="82" data-name="Line_Collar_corner_A" d="M 700 1200 L 1296.807 1200" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1001.184" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_Collar_corner_A</text>
+<path data-id="83" data-name="Line_A_C" d="M 1296.807 1200 L 1296.807 1260" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1299.588" y="1227.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_A_C</text>
+<path data-id="84" data-name="Line_C_B" d="M 1296.807 1260 L 700 1260" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1001.184" y="1257.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_C_B</text>
+<path data-id="85" data-name="Line_B_Collar_corner" d="M 700 1260 L 700 1200" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="702.781" y="1227.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_B_Collar_corner</text>
+<path data-id="89" data-name="Line_Sash_corner_D" d="M 1350 1200 L 2340 1200" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1847.781" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_Sash_corner_D</text>
+<path data-id="90" data-name="Line_D_F" d="M 2340 1200 L 2340 1290" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="2342.781" y="1242.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_D_F</text>
+<path data-id="91" data-name="Line_F_E" d="M 2340 1290 L 1350 1290" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1847.781" y="1287.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_F_E</text>
+<path data-id="92" data-name="Line_E_Sash_corner" d="M 1350 1290 L 1350 1200" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1352.781" y="1242.219" font-family="sans-serif" font-size="8.652" fill="#202020">Line_E_Sash_corner</text>
+<path data-id="96" data-marks="Sleeve" d="M 0 1634.041 L 0 1286.162 M 0 1286.162 L -4.226 1295.225 M 0 1286.162 L 4.226 1295.225 M 0 1634.041 L 4.226 1624.978 M 0 1634.041 L -4.226 1624.978" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="0" y="1460.102" font-family="sans-serif" font-size="8.652" fill="#202020">Sleeve, cut 2 mirrored</text>
+<path data-id="97" data-marks="Collar" d="M 998.403 1248 L 998.403 1212 M 998.403 1212 L 994.177 1221.063 M 998.403 1212 L 1002.629 1221.063 M 998.403 1248 L 1002.629 1238.937 M 998.403 1248 L 994.177 1238.937" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="998.403" y="1230" font-family="sans-serif" font-size="8.652" fill="#202020">Collar, cut 1</text>
+<path data-id="98" data-marks="Sash" d="M 1845 1272 L 1845 1218 M 1845 1218 L 1840.774 1227.063 M 1845 1218 L 1849.226 1227.063 M 1845 1272 L 1849.226 1262.937 M 1845 1272 L 1840.774 1262.937" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1845" y="1245" font-family="sans-serif" font-size="8.652" fill="#202020">Sash, cut 1</text>
+<path data-id="93" data-marks="Back" d="M 270 800 L 270 200 M 270 200 L 265.774 209.063 M 270 200 L 274.226 209.063 M 270 800 L 274.226 790.937 M 270 800 L 265.774 790.937 M 0 -10 L 0 -4 M 540.017 10 L 540.007 4 M 10 179.993 L 4 179.997 M 550 180 L 544 180" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="270" y="500" font-family="sans-serif" font-size="8.652" fill="#202020">Back, cut 1</text>
+<path data-id="94" data-marks="Front_left" d="M 855 800 L 855 200 M 855 200 L 850.774 209.063 M 855 200 L 859.226 209.063 M 855 800 L 859.226 790.937 M 855 800 L 850.774 790.937 M 699.983 10 L 699.993 4 M 710 179.993 L 704 179.997" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="855" y="500" font-family="sans-serif" font-size="8.652" fill="#202020">Front_left, cut 1</text>
+<path data-id="95" data-marks="Front_right" d="M 1505 800 L 1505 200 M 1505 200 L 1500.774 209.063 M 1505 200 L 1509.226 209.063 M 1505 800 L 1509.226 790.937 M 1505 800 L 1500.774 790.937 M 1349.983 10 L 1349.993 4 M 1360 179.993 L 1354 179.997" fill="none" stroke="#202020" stroke-width="0.927"/>
+<text x="1505" y="500" font-family="sans-serif" font-size="8.652" fill="#202020">Front_right, cut 1</text>
+<circle data-id="24" data-name="Back_shoulder_left" cx="0" cy="0" r="1.854" fill="#202020"/>
+<text x="2.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_shoulder_left</text>
+<circle data-id="25" data-name="Back_neck_left" cx="190" cy="0" r="1.854" fill="#202020"/>
+<text x="192.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_neck_left</text>
+<circle data-id="26" data-name="Back_neck_right" cx="350" cy="0" r="1.854" fill="#202020"/>
+<text x="352.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_neck_right</text>
+<circle data-id="27" data-name="Back_shoulder_right" cx="540" cy="0" r="1.854" fill="#202020"/>
+<text x="542.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">Back_shoulder_right</text>
+<circle data-id="28" data-name="Back_underarm_left" cx="0" cy="180" r="1.854" fill="#202020"/>
+<text x="2.781" y="177.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_underarm_left</text>
+<circle data-id="29" data-name="Back_underarm_right" cx="540" cy="180" r="1.854" fill="#202020"/>
+<text x="542.781" y="177.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_underarm_right</text>
+<circle data-id="30" data-name="Back_hem_left" cx="0" cy="1000" r="1.854" fill="#202020"/>
+<text x="2.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_hem_left</text>
+<circle data-id="31" data-name="Back_hem_right" cx="540" cy="1000" r="1.854" fill="#202020"/>
+<text x="542.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">Back_hem_right</text>
+<circle data-id="32" data-name="FL_neck" cx="890" cy="0" r="1.854" fill="#202020"/>
+<text x="892.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">FL_neck</text>
+<circle data-id="33" data-name="FL_shoulder" cx="700" cy="0" r="1.854" fill="#202020"/>
+<text x="702.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">FL_shoulder</text>
+<circle data-id="34" data-name="FL_underarm" cx="700" cy="180" r="1.854" fill="#202020"/>
+<text x="702.781" y="177.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_underarm</text>
+<circle data-id="35" data-name="FL_hem_left" cx="700" cy="1000" r="1.854" fill="#202020"/>
+<text x="702.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_hem_left</text>
+<circle data-id="36" data-name="FL_hem_right" cx="1010" cy="1000" r="1.854" fill="#202020"/>
+<text x="1012.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_hem_right</text>
+<circle data-id="37" data-name="FL_waist_right" cx="1010" cy="420" r="1.854" fill="#202020"/>
+<text x="1012.781" y="417.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_waist_right</text>
+<circle data-id="38" data-name="FL_slit_base" cx="855" cy="1000" r="1.854" fill="#202020"/>
+<text x="857.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_slit_base</text>
+<circle data-id="39" data-name="FL_slit_top" cx="855" cy="850" r="1.854" fill="#202020"/>
+<text x="857.781" y="847.219" font-family="sans-serif" font-size="8.652" fill="#202020">FL_slit_top</text>
+<circle data-id="40" data-name="FR_neck" cx="1540" cy="0" r="1.854" fill="#202020"/>
+<text x="1542.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">FR_neck</text>
+<circle data-id="41" data-name="FR_shoulder" cx="1350" cy="0" r="1.854" fill="#202020"/>
+<text x="1352.781" y="-2.781" font-family="sans-serif" font-size="8.652" fill="#202020">FR_shoulder</text>
+<circle data-id="42" data-name="FR_underarm" cx="1350" cy="180" r="1.854" fill="#202020"/>
+<text x="1352.781" y="177.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_underarm</text>
+<circle data-id="43" data-name="FR_hem_left" cx="1350" cy="1000" r="1.854" fill="#202020"/>
+<text x="1352.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_hem_left</text>
+<circle data-id="44" data-name="FR_hem_right" cx="1660" cy="1000" r="1.854" fill="#202020"/>
+<text x="1662.781" y="997.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_hem_right</text>
+<circle data-id="45" data-name="FR_waist_right" cx="1660" cy="420" r="1.854" fill="#202020"/>
+<text x="1662.781" y="417.219" font-family="sans-serif" font-size="8.652" fill="#202020">FR_waist_right</text>
+<circle data-id="46" data-name="SL_front_shoulder" cx="-160" cy="1200" r="1.854" fill="#202020"/>
+<text x="-157.219" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_front_shoulder</text>
+<circle data-id="47" data-name="SL_underarm" cx="0" cy="1350" r="1.854" fill="#202020"/>
+<text x="2.781" y="1347.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_underarm</text>
+<circle data-id="48" data-name="SL_back_shoulder" cx="160" cy="1200" r="1.854" fill="#202020"/>
+<text x="162.781" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_back_shoulder</text>
+<circle data-id="49" data-name="SL_hem_left" cx="-280" cy="1750" r="1.854" fill="#202020"/>
+<text x="-277.219" y="1747.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_hem_left</text>
+<circle data-id="50" data-name="SL_hem_right" cx="280" cy="1750" r="1.854" fill="#202020"/>
+<text x="282.781" y="1747.219" font-family="sans-serif" font-size="8.652" fill="#202020">SL_hem_right</text>
+<circle data-id="51" data-name="Collar_corner" cx="700" cy="1200" r="1.854" fill="#202020"/>
+<text x="702.781" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">Collar_corner</text>
+<circle data-id="52" data-name="Sash_corner" cx="1350" cy="1200" r="1.854" fill="#202020"/>
+<text x="1352.781" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">Sash_corner</text>
+<circle data-id="79" data-name="A" cx="1296.807" cy="1200" r="1.854" fill="#202020"/>
+<text x="1299.588" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">A</text>
+<circle data-id="80" data-name="B" cx="700" cy="1260" r="1.854" fill="#202020"/>
+<text x="702.781" y="1257.219" font-family="sans-serif" font-size="8.652" fill="#202020">B</text>
+<circle data-id="81" data-name="C" cx="1296.807" cy="1260" r="1.854" fill="#202020"/>
+<text x="1299.588" y="1257.219" font-family="sans-serif" font-size="8.652" fill="#202020">C</text>
+<circle data-id="86" data-name="D" cx="2340" cy="1200" r="1.854" fill="#202020"/>
+<text x="2342.781" y="1197.219" font-family="sans-serif" font-size="8.652" fill="#202020">D</text>
+<circle data-id="87" data-name="E" cx="1350" cy="1290" r="1.854" fill="#202020"/>
+<text x="1352.781" y="1287.219" font-family="sans-serif" font-size="8.652" fill="#202020">E</text>
+<circle data-id="88" data-name="F" cx="2340" cy="1290" r="1.854" fill="#202020"/>
+<text x="2342.781" y="1287.219" font-family="sans-serif" font-size="8.652" fill="#202020">F</text>
+</svg>

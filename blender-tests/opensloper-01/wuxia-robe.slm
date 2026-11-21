@@ -1,0 +1,94 @@
+{
+  "format": "measurements",
+  "version": 1,
+  "units": "mm",
+  "name": "Wuxia robe baseline",
+  "notes": "Baseline adult body measurements for the cross-collar wuxia robe experiment. Documented assumptions: a 175 cm tall adult with a 100 cm chest, 84 cm waist and 98 cm hip. All values in millimetres. The robe is cut loose so it can be worn over an inner layer; the pattern adds its own ease on top of these numbers.",
+  "measurements": [
+    {
+      "key": "height",
+      "value": 1750,
+      "description": "Stature, standing"
+    },
+    {
+      "key": "neck_circumference",
+      "value": 380,
+      "description": "Around the base of the neck"
+    },
+    {
+      "key": "shoulder_width",
+      "value": 440,
+      "description": "Shoulder tip to shoulder tip, across the back"
+    },
+    {
+      "key": "shoulder_length",
+      "value": 190,
+      "description": "Neck side point to shoulder tip"
+    },
+    {
+      "key": "bust_circumference",
+      "value": 1000,
+      "description": "Around the fullest part of the chest"
+    },
+    {
+      "key": "under_bust_circumference",
+      "value": 950,
+      "description": "Around the body under the chest"
+    },
+    {
+      "key": "waist_circumference",
+      "value": 840,
+      "description": "Around the natural waist"
+    },
+    {
+      "key": "hip_circumference",
+      "value": 980,
+      "description": "Around the fullest part of the hips"
+    },
+    {
+      "key": "across_chest",
+      "value": 500,
+      "description": "Across the chest between the arm creases"
+    },
+    {
+      "key": "across_back",
+      "value": 470,
+      "description": "Across the back between the arm creases"
+    },
+    {
+      "key": "neck_back_to_waist",
+      "value": 420,
+      "description": "Back neck to waist, at the centre back"
+    },
+    {
+      "key": "neck_to_waist_front",
+      "value": 440,
+      "description": "Front neck to waist, at the centre front"
+    },
+    {
+      "key": "arm_length",
+      "value": 580,
+      "description": "Shoulder tip to wrist, arm relaxed"
+    },
+    {
+      "key": "underarm_to_wrist",
+      "value": 400,
+      "description": "Underarm to wrist"
+    },
+    {
+      "key": "wrist_circumference",
+      "value": 170,
+      "description": "Around the wrist"
+    },
+    {
+      "key": "waist_to_hip_side",
+      "value": 200,
+      "description": "Waist to hip line, at the side"
+    },
+    {
+      "key": "waist_to_knee",
+      "value": 500,
+      "description": "Waist to knee, at the side"
+    }
+  ]
+}
