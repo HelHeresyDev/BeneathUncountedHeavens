@@ -1,36 +1,27 @@
-# Codex Task: Get ChatGarment Working Locally on AMD ROCm
+# Task: Integrate ComfyUI-3D, CurioMesh-BUH, and Headless Unreal into One Automated Asset Pipeline
 
 ## Objective
 
-Investigate, install, adapt, and test **ChatGarment** on my Ubuntu Linux workstation with an AMD Radeon RX 7900 XTX.
+I want you to be able to autonomously generate, optimize, and import 3D assets into my Unreal Engine 5.8.4 game, **Beneath Uncounted Heavens**.
 
-The intended application is creating Chinese wuxia/xianxia clothing for my Unreal Engine game, *Beneath Uncounted Heavens*.
+We already have the necessary tools. Your job is to connect and validate them, not build another 3D generation or retopology system.
 
-I want to determine whether ChatGarment can be integrated into my existing autonomous character-creation workflow.
+The intended workflow is:
 
-**Do the actual engineering work wherever feasible. Do not stop after producing installation instructions.**
+1. Generate a 3D mesh using ComfyUI-3D.
+2. Paint and texture the mesh using Hunyuan3D Paint.
+3. Process the textured GLB using CurioMesh-BUH and Blender.
+4. Import the optimized asset into Unreal Engine.
+5. Generate and verify LODs and collision.
+6. Report results and make the validated asset available for use in the game.
 
-However, this is an experimental tool. Do not spend substantial effort rewriting its neural network or simulator without first establishing whether the required model checkpoints are available and usable.
+**The crucial requirement is intelligent GPU resource management.**
 
-## 1. Repositories
+You can remain awake while Blender and headless Unreal perform their work, but you must sleep during ComfyUI generation and graphical Unreal rendering.
 
-Official ChatGarment:
+---
 
-https://github.com/biansy000/ChatGarment
-
-Official GarmentCodeRC:
-
-https://github.com/biansy000/GarmentCodeRC
-
-ChatGarment also references ContourCraft-CG for garment simulation. Investigate it if necessary, but do not assume that the simulation component is required for initial sewing-pattern generation.
-
-Check for existing local clones before downloading anything.
-
-If missing, clone into `~/AI/`.
-
-Preserve upstream repositories and track any necessary changes in isolated development branches.
-
-## 2. My development environment
+## 1. Environment
 
 Hardware:
 
@@ -39,350 +30,476 @@ Hardware:
 - Blender 5.3
 - Unreal Engine 5.8.4
 
-Existing local AI tools:
+Unreal executable:
 
-- Qwen 27B coding model hosted through llama.cpp/Vulkan
-- OpenCode
-- ComfyUI with a separate ROCm-based 3D-generation environment
-- TripoSG
-- Hunyuan3D Paint
-- Blender MCP
-- MPFB / MakeHuman
-- OpenSew2
-- CurioMesh-BUH
+`/home/depressedtsukasa/Apps/Linux_Unreal_Engine_5.8.4/Engine/Binaries/Linux/UnrealEditor-Cmd`
 
 Unreal project:
 
-`/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/`
+`/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/BeneathUncountedHeav.uproject`
 
-My clothing workflow already supports some automated character generation and Blender-based garment processing.
+ComfyUI-3D:
 
-The purpose of ChatGarment is to improve the generation of sewing patterns from descriptions and reference images, particularly for traditional Chinese clothing.
+`~/AI/ComfyUI-3D-sandbox`
 
-Do not replace the existing clothing tools.
+ComfyUI server:
 
-## 3. First priority: Verify pretrained model availability
+`http://127.0.0.1:8189`
 
-Before installing heavy dependencies, investigate the pretrained ChatGarment checkpoint.
+OpenCode tools:
 
-The official installation expects:
+`~/.config/opencode/tools/`
 
-`checkpoints/try_7b_lr1e_4_v3_garmentcontrol_4h100_v4_final/pytorch_model.bin`
+ComfyUI workflow:
 
-A known GitHub issue reports that the original SharePoint download no longer works:
+`~/.config/opencode/comfy3d-workflow-api.json`
 
-https://github.com/biansy000/ChatGarment/issues/30
+CurioMesh-BUH repository:
 
-The author suggested a Hugging Face alternative, but users reported that the available checkpoint files did not match the names required by the inference scripts.
+https://github.com/HelHeresyDev/CurioMesh-BUH
 
-Investigate the current situation.
+Development branch:
 
-### Required tasks
+`buh/blender-5.3`
 
-1. Inspect the official model-loading code.
-2. Identify the model architecture and expected checkpoint structure.
-3. Check the official checkpoint link.
-4. Inspect the author's Hugging Face repository and available files.
-5. Search for legitimate mirrors or updated inference instructions.
-6. Determine whether alternative released checkpoints are compatible.
-7. Verify architecture, tensor keys, dimensions, and loading requirements where possible.
-8. Review model and checkpoint licenses.
+Verified Milestone 3 commit:
 
-Do not assume differently named checkpoints are interchangeable.
+`01eaebc85ae4afbd1880b148a765ce75cc9497fa`
 
-Do not fabricate or randomly rename missing weights.
+Locate the existing CurioMesh-BUH checkout rather than cloning a duplicate unnecessarily.
 
-Do not download an entire large checkpoint merely to discover that it is incompatible if metadata can establish that first.
+Unreal MCP helper:
 
-If a compatible checkpoint is available, record its exact source, revision, size, and expected memory requirements.
+`/home/depressedtsukasa/Documents/Unreal Projects/BeneathUncountedHeav/tmp_opencode/mcp_do.py`
 
-If the checkpoint cannot be obtained or validated, document that obstacle and continue with the independent GarmentCodeRC investigation.
+Inspect the actual files and installed tools before making changes.
 
-## 4. Investigate AMD ROCm compatibility
+---
 
-Read ChatGarment's installation requirements and inspect its inference code.
+## 2. GPU management rules
 
-Identify dependencies on:
+### ComfyUI-3D: Qwen must sleep
 
-- PyTorch
-- FlashAttention
-- DeepSpeed
-- bitsandbytes
-- CUDA-specific operators
-- CUDA device assumptions
-- Custom extensions
-- Transformers and LLaVA components
+We already have a functioning, VRAM-safe ComfyUI-3D OpenCode bridge.
 
-Determine which dependencies are necessary for inference versus training.
+It has been verified to:
 
-**We do not need to train ChatGarment. We only need inference.**
+- Acquire `/tmp/opencode-image-generation.lock`.
+- Wait for llama.cpp to report `is_sleeping=true`.
+- Verify VRAM consumption is below the configured threshold.
+- Start ComfyUI automatically if necessary.
+- Generate the mesh and textures.
+- Collect the GLBs.
+- Release ComfyUI GPU memory.
+- Stop only the ComfyUI instance it launched.
+- Return control to Qwen after the operation finishes.
 
-Avoid installing unnecessary training dependencies.
+**Reuse the existing bridge. Do not reimplement this handoff.**
 
-### Adaptation strategy
+The bridge previously generated a complete textured GLB in approximately 74 seconds, excluding startup.
 
-Prefer:
+Preserve its existing safeguards.
 
-1. Native ROCm-compatible PyTorch.
-2. Standard PyTorch scaled-dot-product attention where feasible.
-3. Compatible inference implementations without custom CUDA kernels.
-4. Disabling optional acceleration features that are not essential.
-5. CPU fallbacks for small preprocessing tasks.
+### Blender: Qwen may stay awake
 
-Do not attempt to install NVIDIA CUDA drivers or switch the system away from AMD.
+CurioMesh-BUH processing can run in headless Blender while Qwen remains loaded.
 
-Avoid patching unrelated global packages.
+Use CPU-based Blender processing where practical.
 
-### GPU memory
+There is no need to put Qwen to sleep simply to perform retopology, repair, UV validation, or file export.
 
-The RX 7900 XTX has 24 GB VRAM.
+### Headless Unreal: Qwen may stay awake
 
-Estimate and measure whether the model can run within that limit.
+Use:
 
-My local Qwen model occupies much of the GPU memory when loaded.
+`UnrealEditor-Cmd -nullrhi -unattended`
 
-Coordinate GPU-heavy tests so ChatGarment does not compete with loaded Qwen, ComfyUI, or graphical Unreal.
+This configuration has previously run with negligible additional GPU memory usage while Qwen was loaded.
 
-Do not permanently modify my existing Qwen service or GPU configuration.
+Use headless Unreal for:
 
-## 5. Create an isolated environment
+- Static mesh imports.
+- LOD generation.
+- Geometry inspection.
+- UV and material validation.
+- Collision generation.
+- Collision traces and capsule sweeps.
+- Automated PIE collision tests.
+- Numerical and structural quality checks.
 
-Create an independent ChatGarment environment using an appropriate Python version and verified ROCm-compatible dependencies.
+Do not initiate the graphical editor for these operations.
 
-Do not modify existing virtual environments belonging to:
+Monitor actual VRAM consumption during the initial integration test. If headless Unreal unexpectedly consumes substantial VRAM, stop the operation safely and report the problem.
 
-- ComfyUI
-- Qwen
-- Blender
-- OpenSew2
-- CurioMesh-BUH
-- Unreal
+### Graphical Unreal: Qwen must sleep
 
-Investigate the actual Python and PyTorch compatibility requirements before selecting versions.
+Graphical Unreal may only run through the established GPU handoff mechanism.
 
-Avoid copying old installation commands blindly if those dependency versions are incompatible with current ROCm.
+Requirements:
 
-Document all installed packages and versions.
+1. Acquire the shared GPU lock.
+2. Wait until Qwen is sleeping.
+3. Verify that sufficient VRAM is available.
+4. Start graphical Unreal using the established XWayland workaround.
+5. Perform the required renders or graphical PIE tests.
+6. Save screenshots and results.
+7. Close only the editor process started by the tool.
+8. Verify that Unreal has exited and GPU memory has been released.
+9. Return control to Qwen.
 
-Prefer a reproducible setup script or dependency lockfile.
+Never launch graphical Unreal directly from an ordinary OpenCode shell command while Qwen is awake.
 
-If the installation fails, preserve the logs and identify the root cause before trying another approach.
+Do not terminate manually started Unreal sessions.
 
-## 6. Test ChatGarment inference
+If safe GPU handoff cannot be established, skip graphical verification and report that it remains untested.
 
-If a compatible checkpoint and working inference stack are available, perform real inference.
+**Graphical validation must be optional. It must not prevent ordinary headless asset processing.**
 
-### Test A: Official example
+---
 
-Use an example included in the ChatGarment repository.
+## 3. Inspect the existing tools
 
-Run image-based garment reconstruction or another supported inference route.
+Before developing anything, inspect:
 
-Verify that the model actually loads and produces garment parameters or sewing-pattern JSON.
+### ComfyUI-3D OpenCode bridge
 
-Inspect the output format and validate it against GarmentCodeRC.
+Locate the existing tools, including:
 
-Do not count a successful model import as successful inference.
+- `comfy3d.ts`
+- `comfy3d_bridge.py`
+- `comfy3d_safe.py`
 
-### Test B: Wuxia garment
+Identify their supported commands and how generation results are returned.
 
-Create a test using this clothing description:
+Do not change the working ComfyUI implementation unless a specific integration defect requires it.
 
-"A traditional Chinese wuxia cultivator's outer robe, inspired by historical hanfu. Cross-collar front, wide flowing sleeves, ankle-length body, overlapping front panels, loose waist with fabric sash, layered appearance, designed for a male martial artist. Practical for movement but elegant and flowing."
+### CurioMesh-BUH
 
-The garment should have:
+Read:
 
-- A clearly identifiable front opening or overlap.
-- Two wide sleeves.
-- A separate torso section.
-- Suitable length and proportions.
-- Logical sewing-pattern pieces.
-- Reasonable symmetry.
-- Adjustable garment dimensions.
+- `README.md`
+- `DEVELOPMENT.md`
+- `TEST_RESULTS.md`
+- The `curiomesh-retopo` agent skill
+- `curiomesh_process.py`
+- The Unreal validation scripts
 
-Generate the pattern and inspect whether the topology and sewing information are structurally meaningful.
+Milestone 3 already validated:
 
-If the checkpoint cannot handle this garment type, document the limitation rather than claiming success.
+- Retopology and geometry-safe repair.
+- Textured GLB export.
+- A single Unreal Static Mesh containing three LODs.
+- Valid UVs and materials across all LODs.
+- Convex and complex collision.
+- Headless PIE collision checks.
+- Graphical LOD verification.
 
-## 7. Investigate GarmentCodeRC independently
+Reuse this implementation.
 
-This phase is important even if ChatGarment inference fails.
+### Unreal automation
 
-GarmentCodeRC may still provide useful procedural clothing functionality without requiring the ChatGarment language model.
+Inspect the existing MCP configuration, startup scripts, and validation toolset.
 
-Inspect its supported garment representations, parameter systems, and standalone pattern-generation capabilities.
+Determine how to start and stop a headless Unreal session, connect through MCP, import assets, and execute the existing validation operations.
 
-### Test basic pattern generation
+Reuse the established project tools where possible.
 
-Using its existing examples or Python interface:
+---
 
-1. Generate a garment configuration.
-2. Produce 2D sewing-pattern pieces.
-3. Verify seams and panel dimensions.
-4. Export supported pattern data.
-5. Check whether these outputs can be reused or edited programmatically.
+## 4. Implement the integrated workflow
 
-Explore its existing support for open-front garments, which may help with hanfu-like designs.
+I want one convenient OpenCode-facing operation that can accept:
 
-### Simulation compatibility
+- A reference image or an already-generated GLB.
+- An asset name.
+- An asset category.
+- A CurioMesh preset.
+- Optional ComfyUI parameter overrides.
+- LOD generation options.
+- Collision configuration.
+- An Unreal destination or test run ID.
+- Whether graphical verification is requested.
 
-Investigate whether its cloth simulation requires NVIDIA Warp or another CUDA-specific implementation.
+The operation should orchestrate the existing tools instead of duplicating their implementations.
 
-Determine whether:
+It may be implemented as an OpenCode tool, a Python command-line wrapper, or a small combination of both.
 
-- Pattern generation works on CPU.
-- Garment meshing works without GPU simulation.
-- Simulation can run on CPU.
-- An alternative cloth simulator can be used.
-- Blender or OpenSew2 could consume the pattern output.
+Prefer whatever integrates most cleanly with the current OpenCode installation.
 
-Do not undertake a major CUDA-to-ROCm simulation rewrite during this experiment.
+### Stage A — Generate
 
-**A working 2D pattern generator is already a useful result, even without successful draping.**
+When given a reference image:
 
-## 8. Investigate integration with Blender and OpenSew2
+1. Inspect the saved ComfyUI workflow.
+2. Apply requested parameter overrides.
+3. Execute the VRAM-safe ComfyUI generation tool.
+4. Collect both base and painted GLBs.
+5. Confirm the painted GLB contains geometry, UVs, and textures.
+6. Record the generation parameters and output paths.
 
-Our long-term goal is:
+When given an existing GLB, skip generation entirely.
 
-**Clothing reference or description → sewing patterns → garment mesh → fitting/rigging → Unreal Engine**
+### Stage B — Optimize
 
-Investigate how ChatGarment/GarmentCodeRC outputs could feed our existing Blender clothing workflow.
+Process the painted GLB using CurioMesh-BUH.
 
-Specifically, determine whether generated patterns can be:
+Support:
 
-- Exported as SVG, DXF, JSON, or another supported representation.
-- Imported into Blender.
-- Converted into usable garment panels.
-- Sewn or assembled using existing tools.
-- Fitted to a MakeHuman/MPFB character.
-- Prepared for rigging and animation.
+- Balanced, High Fidelity, and Aggressive presets.
+- Existing geometry-aware repair.
+- Preservation of original materials and textures.
+- LOD generation at configurable ratios.
+- Collision configuration.
+- Quality checks and JSON reports.
 
-OpenSew2 is already under active development in my toolchain. Avoid building a separate garment simulation system if the existing tools can be reused.
+Use Balanced as the initial default.
 
-If possible, demonstrate one minimal pattern-to-Blender transfer using supported formats.
+Do not silently switch presets or override a geometry-safety rejection.
 
-Use isolated test scenes.
+Respect `PASS`, `REVIEW`, and `FAIL` outcomes.
 
-Do not modify existing character or clothing assets.
+### Stage C — Headless Unreal import
 
-## 9. Investigate local Qwen integration
+Start Unreal using the existing headless command and MCP setup.
 
-The published ChatGarment workflow uses GPT-4o for some text-generation and editing preprocessing.
+Import the optimized asset into an isolated test location:
 
-Investigate whether those steps can instead use my existing local Qwen model or deterministic prompt templates.
+`/Game/Developer/CurioMeshBUHTests/<run_id>/`
 
-The important distinction is:
+Verify:
 
-- Qwen may be able to prepare garment descriptions and parameters.
-- ChatGarment's fine-tuned model is responsible for generating its learned garment representation.
+- Static Mesh created successfully.
+- Expected triangle counts.
+- LOD0, LOD1, and LOD2 exist.
+- LOD0 matches the accepted optimized mesh.
+- UV channels are valid.
+- Materials and textures are assigned correctly.
+- Normals are valid.
+- Collision geometry exists where requested.
+- Collision probes pass.
+- PIE validation succeeds where supported.
 
-Do not assume Qwen can directly replace ChatGarment's model.
+Keep Qwen awake during this stage.
 
-Test a substitution only where the actual interfaces support it.
+Stop the headless Unreal instance when the operation finishes.
 
-If ChatGarment inference is unavailable, assess whether Qwen could generate valid GarmentCodeRC parameters directly, with schema validation and executable tests.
+Do not close any editor session you did not start.
 
-That would provide an alternative workflow without requiring ChatGarment model weights.
+### Stage D — Optional visual verification
 
-## 10. Quality evaluation
+If graphical validation is requested, use the existing GPU handoff.
 
-For each successful output, evaluate:
+Capture views of the asset in graphical Unreal and verify the output as far as the available automated comparisons allow.
 
-- Sewing-pattern validity.
-- Panel completeness.
-- Seam consistency.
-- Parametric editability.
-- Front-opening structure.
-- Sleeve design.
-- Symmetry where appropriate.
-- Blender interoperability.
-- Potential for character fitting.
-- Potential for animation.
-- Failure modes and limitations.
+Store the screenshots for inspection after Qwen wakes.
 
-Do not claim a garment is animation-ready solely because it can be displayed in Blender.
+Do not claim visual verification succeeded merely because a material or texture is assigned.
 
-A complete animated garment requires further fitting, rigging, and deformation verification.
+If graphical validation is not requested, finish using headless results alone and explicitly mark visual appearance as untested.
 
-## 11. Development scope and safeguards
+---
 
-This is an investigation and limited compatibility implementation—not authorization for an unlimited rewrite.
+## 5. Start with an existing GLB
+
+**Do not generate another mesh just to test the Unreal integration.**
+
+We already have successfully generated assets.
+
+The latest ComfyUI-3D integration test saved outputs beneath:
+
+`~/AI/comfy3d-opencode-runs/`
+
+Locate the most recent complete, textured GLB from that test.
+
+It was approximately 1.9 MB and contained two baked texture images and UVs.
+
+First run:
+
+**Existing painted GLB → CurioMesh-BUH → headless Unreal → validation report.**
+
+This isolates the new integration work from the already-verified ComfyUI generation stage.
+
+Once that succeeds, perform one complete end-to-end test from a saved reference image if practical and if GPU handoff is available.
+
+Do not repeatedly generate new meshes unnecessarily.
+
+---
+
+## 6. Handle failures safely
+
+The workflow must handle:
+
+- ComfyUI not running.
+- ComfyUI generation failures.
+- Qwen not entering sleep.
+- Insufficient free VRAM.
+- GPU lock already held.
+- Invalid GLB exports.
+- CurioMesh quality-gate rejection.
+- Unreal startup failure.
+- Unreal MCP connection failure.
+- Missing UVs or textures.
+- LOD validation failure.
+- Collision validation failure.
+- Unreal process crash.
+- Timeouts and interrupted tool calls.
+
+On failure:
+
+1. Preserve useful intermediate results.
+2. Record the actual error.
+3. Stop child processes started by the workflow.
+4. Release only locks owned by the current operation.
+5. Avoid leaving GPU-intensive processes running unnecessarily.
+6. Do not delete source assets.
+7. Return a meaningful error to OpenCode.
+
+Use unique run IDs and output directories.
+
+Do not overwrite existing production assets or validated test results.
+
+Never bypass the GPU safeguards simply to complete a test.
+
+---
+
+## 7. Report results to Qwen
+
+Each completed run should produce a machine-readable report containing:
+
+- Input image or GLB path.
+- ComfyUI parameters, when applicable.
+- Generated mesh paths.
+- CurioMesh preset.
+- Original and optimized triangle counts.
+- Remaining geometry warnings.
+- Texture and UV validation.
+- Unreal asset path.
+- LOD triangle counts.
+- Collision settings and probe results.
+- Headless PIE validation status.
+- Optional graphical verification status.
+- Execution times.
+- Errors and warnings.
+- Final `PASS`, `REVIEW`, or `FAIL` verdict.
+
+Distinguish stages that passed, failed, or were not tested.
+
+Provide a concise summary in OpenCode after the operation completes.
+
+---
+
+## 8. Preserve the existing project
 
 Do not:
 
-- Alter my existing AI environments.
-- Install NVIDIA drivers.
-- Download huge model files from unverified sources.
-- Start an expensive training run.
-- Replace my OpenSew2 installation.
-- Modify production Unreal assets.
-- Rebuild the entire garment simulator without evidence that it is necessary.
-- Introduce cloud inference dependencies without documenting them.
-- Publish proprietary model weights to GitHub.
+- Rebuild CurioMesh-BUH.
+- Replace the ComfyUI installation.
+- Change existing model weights.
+- Modify Qwen's llama.cpp service.
+- Modify production game assets.
+- Overwrite the installed CurioMesh extension.
+- Change Unreal project rendering settings globally.
+- Install NVIDIA CUDA.
+- Introduce a second independent GPU lock system.
+- Launch graphical Unreal while Qwen is loaded.
 
-Use upstream-compatible changes where practical.
+Use existing APIs, skills, scripts, and tested GPU-management infrastructure.
 
-If a small, well-defined patch enables ROCm inference, implement and test it.
+Any necessary integration code should remain small, documented, and independently testable.
 
-If the checkpoint is unavailable or the architecture is fundamentally incompatible, stop pursuing that path after documenting the evidence. Continue on GarmentCodeRC where useful.
+---
 
-## 12. Deliverables
+## 9. Verify the completed integration
 
-Create a report:
+Perform the following tests:
 
-`CHATGARMENT_FEASIBILITY.md`
+**Test 1: Existing GLB to headless Unreal**
 
-Include:
+- Use the existing painted GLB.
+- Run CurioMesh-BUH.
+- Import through headless Unreal.
+- Validate LODs, materials, and collision.
+- Confirm Qwen remained awake.
+- Confirm Unreal exited cleanly.
 
-1. Source repositories and revisions.
-2. Exact checkpoint availability.
-3. Checkpoint compatibility findings.
-4. Dependency audit.
-5. AMD ROCm compatibility.
-6. Environment setup and installed versions.
-7. Actual inference results or errors.
-8. GarmentCodeRC standalone results.
-9. Wuxia robe experiment results.
-10. Blender/OpenSew2 integration findings.
-11. GPU memory usage where measured.
-12. Remaining blockers and their likely difficulty.
-13. Reproducible commands.
-14. Final recommendation.
+**Test 2: Failure handling**
 
-Also save any generated sewing patterns, JSON files, SVGs, previews, or Blender test scenes in a dedicated experimental directory.
+Simulate or safely exercise an Unreal startup/MCP failure.
 
-Include appropriate scripts and tests for any changes made.
+Confirm that the tool reports the error without damaging assets or leaving orphan processes.
 
-If a useful tool or compatibility layer is produced, commit it to a separate development branch or repository with proper upstream attribution. Do not publish checkpoints or modify unrelated repositories.
+**Test 3: Full generation workflow**
 
-## Final decision
+If the first two tests pass, run one complete reference-image-to-Unreal test.
 
-At the end, classify ChatGarment as one of:
+Use the existing ComfyUI sleep safeguards.
 
-**WORKING** — Actual model inference works locally and produces valid garment-pattern data.
+Verify that Qwen sleeps during generation and can remain awake during Blender and headless Unreal.
 
-**PARTIALLY WORKING** — Some meaningful functionality works, but the full model or downstream workflow is blocked.
+Do not require graphical Unreal for this test.
 
-**BLOCKED** — The required model or runtime cannot currently be made operational within reasonable scope.
+**Test 4: Optional graphical validation**
 
-**NOT WORTH PURSUING** — The technical effort outweighs its practical benefit to our existing Blender/OpenSew2 workflow.
+Inspect whether the existing GPU handoff can be reused for graphical Unreal.
 
-Evaluate GarmentCodeRC separately, because it may be useful even if ChatGarment is blocked.
+Only run a real graphical test if the handoff is already safely implemented or can be integrated with a small, verified change.
 
-## Execution instructions
+Otherwise, document this as a separate optional capability.
 
-Start by inspecting the official checkpoint sources and dependency requirements.
+---
 
-Do not immediately install every dependency.
+## 10. Final deliverables
 
-Once the checkpoint situation is understood, establish the smallest viable inference environment.
+Provide:
 
-Attempt a genuine model test if technically possible.
+1. The OpenCode tool or orchestration wrapper.
+2. Usage instructions.
+3. A successful end-to-end test report.
+4. Actual asset paths and Unreal test paths.
+5. Confirmation of the GPU behavior at each stage.
+6. Logs from headless Unreal.
+7. Confirmation that no unnecessary processes were left running.
+8. Any unresolved blockers.
 
-Then investigate GarmentCodeRC as an independent route to procedural garment creation.
+**Success means I can tell you to create a 3D asset, and you can use ComfyUI-3D, CurioMesh-BUH, and headless Unreal to produce and validate that asset without me manually launching the applications.**
 
-Work through the achievable phases without repeatedly asking for confirmation.
+Focus on making existing tools work together reliably. Do not turn this into another major tool-development project.
 
-Provide a final technical report with verified results, useful outputs, exact blockers, and a recommendation on whether to continue development.
+Begin by inspecting the installed tools and testing the existing painted GLB through headless Unreal.
 
-**The goal is to determine whether ChatGarment will actually help us create better wuxia clothing—not to spend weeks maintaining another complex AI tool for its own sake.**
+---
+
+## Test results
+
+### Test 1: Existing GLB to headless Unreal — PASS
+
+- Run ID: `comfy3d00002_m3b`
+- Input: `~/AI/comfy3d-opencode-runs/4391cc8f-3ae4-4f6c-9460-545306174b08/opencode3d_545643a07a97_00002_.glb` (1,936,224 bytes, 2 baked textures).
+- CurioMesh-BUH: balanced preset, retopo 3,676 faces (100% quad), repair ok, export 7,352 tris / 2 embedded PBR images.
+- Unreal: headless editor PID 139767 on port 8191, import to `/Game/Developer/CurioMeshBUHTests/comfy3d00002_m3b/`, static mesh + 3 LODs (7,352 / 3,676 / 1,838 tris), convex collision (1 hull, 24 verts), calibrated probe trace passed.
+- Qwen remained awake throughout. Editor exited cleanly; port 8191 had 0 listeners after.
+- Disposition: REVIEW (collision probes passed; LOD visual validation pending without PIE).
+
+### Test 2: Failure handling — PASS
+
+- Run ID: `comfy3d00002_m3c`
+- No editor on port 8191. Pipeline exited 0 with `ok: true`, disposition REVIEW.
+- `unreal.status: "unavailable"` with detail `Unreal MCP helper exited 1 … Connection refused`.
+- `lods` and `collision` reported `untested`. Retopo and repair still `ok: true`.
+- Local `out.glb` preserved. Source GLB byte-identical (1,936,224 bytes before and after).
+- No orphan Blender or Unreal processes. Ports 8000/8191 had 0 listeners.
+
+### Test 3: Full generation workflow — PASS
+
+- Run ID: `comfy3d00003_m3d`
+- ComfyUI-3D stage: `prompt_id 4e517017-950c-49cb-8aec-8b28d3941836`, `history_status: success`. Qwen sleeping during generation (`qwen_sleeping: true`, VRAM 1.24 GiB < 4.0 threshold). ComfyUI auto-started and stopped by the tool.
+- Generated two GLBs: base mesh (29,610,200 bytes, 274,142 tris, no textures) and painted asset (4,116,732 bytes, 10,001 tris, 2 embedded textures).
+- CurioMesh-BUH: balanced preset, `hard_surface` category, retopo 3,676 faces (100% quad), repair ok (1 residual inward face, 3 collapsed UV faces — human-review flags), export 7,352 tris / 2 embedded PBR images.
+- Unreal: headless editor PID 165784 on port 8191, import to `/Game/Developer/CurioMeshBUHTests/comfy3d00003_m3d/`, static mesh + 3 LODs (7,352 / 3,676 / 1,838 tris), convex collision (1 hull, 24 verts, `CTF_USE_SIMPLE_AND_COMPLEX`), probe validation untested (no chest-calibrated probes).
+- Qwen awake during Blender and headless Unreal. Editor exited cleanly; port 8191 had 0 listeners after.
+- Source GLB byte-identical (4,116,732 bytes before and after).
+- Disposition: REVIEW (collision queries untested, LOD visual validation pending, residual geometry flags).
+
+### Test 4: Optional graphical validation — NOT RUN
+
+No graphical Unreal handoff was exercised. LOD visual validation and graphical PIE remain untested by design (headless-only scope for this integration task).

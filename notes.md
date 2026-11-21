@@ -1587,3 +1587,13 @@ UE 5.8.4 imported the Balanced lantern as both GLB and FBX in `/Game/Developer/C
 The Milestone 2 FBX-derived mesh rendered with its paint at all three forced LODs after reopening. Geometry Script found UVs in render data where the source-mesh UV query returned zero for generated LODs. The trigger for the earlier gray captures is unresolved. Direct import of the accepted Balanced GLB produced one textured static mesh with 11,612, 5,806, and 2,902 render triangles and preserved LOD0 source and render geometry. Disable Nanite for conventional LOD validation and inspect render UV channels directly. In graphical PIE, automatic selection matched forced LOD0, LOD1, and LOD2 at three camera distances in all three tested angles.
 
 The lantern's convex collision passed the window probe and blocked the small base arch. With LOD0 triangle collision, all four line and capsule probes passed in graphical and headless PIE, including both openings and the pawn-size sweep. The painted stump and chest from Downloads rendered at all forced LODs and passed their PIE probes with five and one convex hulls respectively. The chest retains UV warnings. Keep collision and visual checks separate in automated reports because a true source or render UV count says little about a visible opening or paint. [Milestone 3 results and replay commands](https://github.com/HelHeresyDev/CurioMesh-BUH/blob/buh/blender-5.3/TEST_RESULTS.md#milestone-3-static-asset-validation)
+
+### 9.80 CurioMesh-BUH exports-dir placement gotcha (RESOLVED)
+
+**Problem.** Test 3 pipeline exited 1 with `unreal.status: "fail"` and error `Supply a GLB or FBX file in the validation export directory`, while all Blender stages (retopo, repair, export) succeeded.
+
+**Cause.** `curiomesh_process.py` line 132 passes only `{"filename": output.name}` to the Unreal toolset's `build_static_asset`. The toolset's `export_file(filename)` resolves `EXPORT_DIR / filename` where `EXPORT_DIR = Path(os.environ["CURIOMESH_VALIDATION_EXPORTS"]).resolve()`. The `--out` GLB must therefore live **inside** the exports directory and be named after the run ID. Test 1's proven layout was `--out …/exports/comfy3d00002_m3.glb`; Test 3 initially used `--out …/out.glb` in the run dir (outside the exports subdir), so the toolset could not find it.
+
+**Verified fix.** Re-run with `--out /tmp/opencode/curiomesh-validation/comfy3d00003_m3d/exports/comfy3d00003_m3d.glb`. Pipeline exited 0, Unreal import passed, source GLB byte-identical.
+
+**Lesson.** Always set `--out` to a path inside the exports directory (`$RUN/exports/<run_id>.glb`) when using `--unreal-mcp-helper`. The toolset receives only the bare filename and looks it up relative to `CURIOMESH_VALIDATION_EXPORTS`.
